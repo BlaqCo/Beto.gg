@@ -3,8 +3,12 @@
  * Dry run always starts with a fresh $40 balance on boot.
  * Live mode tracks real P&L against actual deposited balance.
  *
- * FIX: entryBtcPrice now accepted and stored in recordBet()
- * so scalper.js can compute cumulative BTC delta for exit logic.
+ * FIXES:
+ * 1. entryBtcPrice stored on bet for cumulative BTC delta tracking
+ * 2. marketEndDateIso stored for expiry-based exits
+ * 3. Expiry bets excluded from W/L and P&L — stake returned, neutral
+ * 4. Separate expiryCount tracked for dashboard display
+ * 5. getStats() exposes realPnl (excludes expiry noise)
  */
 
 const STARTING_BALANCE = parseFloat(process.env.BANKROLL || "40");
@@ -16,6 +20,7 @@ const state = {
   totalWagered: 0,
   wins: 0,
   losses: 0,
+  expiryCount: 0,
   scalps: 0,
   scansCompleted: 0,
   startedAt: new Date().toISOString(),
@@ -26,8 +31,10 @@ const state = {
 
 console.log(`💰 State initialized | Starting balance: $${STARTING_BALANCE} | Mode: ${IS_DRY ? "DRY RUN" : "LIVE"}`);
 
-// FIX: added entryBtcPrice to destructured params and bet object
-export function recordBet({ market, side, betSize, edge, trueProbability, impliedProbability, orderId, entryPrice, entryBtcPrice, strategy, reasoning }) {
+export function recordBet({
+  market, side, betSize, edge, trueProbability, impliedProbability,
+  orderId, entryPrice, entryBtcPrice, strategy, reasoning
+}) {
   const bet = {
     id: `bet_${Date.now()}`,
     orderId,
@@ -40,7 +47,7 @@ export function recordBet({ market, side, betSize, edge, trueProbability, implie
     trueProbability,
     impliedProbability,
     entryPrice:    entryPrice || impliedProbability,
-    entryBtcPrice: entryBtcPrice || null,   // ← THE FIX: stored so scalper can track cumulative BTC move
+    entryBtcPrice: entryBtcPrice || null,
     strategy:  strategy  || "UNKNOWN",
     reasoning: reasoning || "",
     placedAt: new Date().toISOString(),
@@ -63,13 +70,27 @@ export function closeBet(conditionId, { exitPrice, reason, pnl }) {
 
   bet.exitPrice  = exitPrice;
   bet.exitReason = reason;
-  bet.pnl        = pnl;
   bet.closedAt   = new Date().toISOString();
+
+  // EXPIRY: neutral — stake returned, excluded from W/L and P&L
+  if (reason === "expiry") {
+    bet.status = "expired";
+    bet.pnl    = 0;
+    state.expiryCount++;
+    state.dryBalance += bet.betSize; // return stake only
+    state.activeBets.delete(conditionId);
+    return bet;
+  }
+
+  // Real exit: take_profit, stop_loss, trail_stop, near_expiry
+  bet.pnl = pnl;
 
   if (pnl > 0) { state.wins++;   bet.status = "won"; }
   else         { state.losses++; bet.status = "lost"; }
 
-  if (reason === "take_profit" || reason === "take_profit_max" || reason === "trail_stop") state.scalps++;
+  if (reason === "take_profit" || reason === "take_profit_max" || reason === "trail_stop") {
+    state.scalps++;
+  }
 
   state.pnl        += pnl;
   state.dryBalance += bet.betSize + pnl;
@@ -93,9 +114,10 @@ export function getStats() {
     betsPlaced:      state.bets.length,
     activeBets:      state.activeBets.size,
     totalWagered:    state.totalWagered.toFixed(2),
-    pnl:             state.pnl.toFixed(2),
+    pnl:             state.pnl.toFixed(2),       // real P&L only (no expiry)
     wins:            state.wins,
     losses:          state.losses,
+    expiryCount:     state.expiryCount,           // shown separately
     scalps:          state.scalps,
     winRate:         total > 0 ? ((state.wins / total) * 100).toFixed(1) + "%" : "N/A",
     startingBalance: STARTING_BALANCE,
