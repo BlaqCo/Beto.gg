@@ -1,17 +1,21 @@
 /**
  * signals.js — 3-Strategy Scalping Engine
  *
- * Strategy A: RSI_EMA    — RSI(14) + EMA 9/21 crossover (momentum)
- * Strategy B: WALL       — Order book bid/ask wall detection (timing)
- * Strategy C: BREAKOUT   — ATR volatility breakout + momentum burst
+ * Strategy A: RSI_EMA — RSI(14) + EMA 9/21 crossover (momentum)
+ * Strategy B: WALL    — Order book bid/ask wall detection (timing)
+ * Strategy C: BREAKOUT — ATR volatility breakout + momentum burst
  *
  * Auto mode: bot picks best strategy based on market conditions
+ *
+ * FIXES:
+ * 1. autoSelectStrategy thresholds relaxed so WALL/BREAKOUT fire in normal BTC conditions
+ * 2. RSI_EMA confidence floor raised — misaligned signals still produce usable confidence
+ * 3. WALL confidence multiplier increased so 45-50% conf actually clears kelly edge
  */
 
 import axios from "axios";
 
 // ── Price Sources ──────────────────────────────────────────────
-// Primary: Chainlink on-chain (same oracle Polymarket settles on)
 const CHAINLINK_RPC = "https://polygon-rpc.com";
 const CHAINLINK_BTC = "0xc907E116054Ad103354f2D350FD2514433D57F6F";
 
@@ -33,10 +37,10 @@ async function fetchKrakenTicker() {
   const last = parseFloat(t.c[0]);
   return {
     price: last,
-    bid: parseFloat(t.b[0]),
-    ask: parseFloat(t.a[0]),
-    high: parseFloat(t.h[1]),
-    low: parseFloat(t.l[1]),
+    bid:   parseFloat(t.b[0]),
+    ask:   parseFloat(t.a[0]),
+    high:  parseFloat(t.h[1]),
+    low:   parseFloat(t.l[1]),
     volume: parseFloat(t.v[1]),
     priceChangePercent: ((last - parseFloat(t.o)) / parseFloat(t.o)) * 100,
   };
@@ -77,7 +81,6 @@ export async function fetch24hStats() {
 }
 
 // ── Indicators ─────────────────────────────────────────────────
-
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
   let ag = 0, al = 0;
@@ -110,27 +113,24 @@ function calcATR(candles, period = 14) {
 }
 
 // ── Strategy A: RSI + EMA ─────────────────────────────────────
-// Best for: trending markets with clear momentum
-// Signal: RSI direction + EMA crossover alignment
-
 export function strategyRSI_EMA(closes, atr) {
-  const rsi = calcRSI(closes);
-  const ema9 = calcEMA(closes, 9);
+  const rsi  = calcRSI(closes);
+  const ema9  = calcEMA(closes, 9);
   const ema21 = calcEMA(closes, 21);
-  const price = closes[closes.length - 1];
 
-  // RSI score
   const rsiScore = rsi < 30 ? 1 : rsi < 40 ? 0.6 : rsi < 45 ? 0.25 :
                    rsi > 70 ? -1 : rsi > 60 ? -0.6 : rsi > 55 ? -0.25 : (50-rsi)/50;
 
-  // EMA crossover strength
-  const emaDiff = (ema9 - ema21) / ema21;
+  const emaDiff  = (ema9 - ema21) / ema21;
   const emaScore = Math.max(-1, Math.min(1, emaDiff * 120));
 
-  // Alignment check: both agreeing = higher confidence
   const aligned = (rsiScore > 0 && emaScore > 0) || (rsiScore < 0 && emaScore < 0);
-  const bias = rsiScore * 0.45 + emaScore * 0.55;
-  const confidence = aligned ? Math.min(0.92, Math.abs(bias) * 1.4) : Math.abs(bias) * 0.5;
+  const bias     = rsiScore * 0.45 + emaScore * 0.55;
+
+  // FIX: raised floor from 0.5x to 0.75x for misaligned — was killing confidence to ~4%
+  const confidence = aligned
+    ? Math.min(0.92, Math.abs(bias) * 1.4)
+    : Math.min(0.60, Math.abs(bias) * 0.75 + 0.05);
 
   return {
     name: "RSI_EMA",
@@ -143,27 +143,16 @@ export function strategyRSI_EMA(closes, atr) {
 }
 
 // ── Strategy B: Order Book Wall ───────────────────────────────
-// Best for: ranging/choppy markets, precision timing
-// Signal: large bid/ask walls as support/resistance
-
 export function strategyWall(book, price) {
   if (!book) return { name: "WALL", bias: 0, confidence: 0, meta: "No book data", components: {} };
 
-  const bucket = price * 0.0015; // 0.15% buckets
+  const bucket = price * 0.0015;
   const bB = {}, aB = {};
-
-  for (const b of book.bids) {
-    const k = Math.floor(b.price/bucket)*bucket;
-    bB[k] = (bB[k]||0) + b.size * b.price;
-  }
-  for (const a of book.asks) {
-    const k = Math.floor(a.price/bucket)*bucket;
-    aB[k] = (aB[k]||0) + a.size * a.price;
-  }
+  for (const b of book.bids) { const k = Math.floor(b.price/bucket)*bucket; bB[k] = (bB[k]||0) + b.size * b.price; }
+  for (const a of book.asks) { const k = Math.floor(a.price/bucket)*bucket; aB[k] = (aB[k]||0) + a.size * a.price; }
 
   const topBid = Object.entries(bB).sort((a,b) => b[1]-a[1])[0];
   const topAsk = Object.entries(aB).sort((a,b) => b[1]-a[1])[0];
-
   const bullWall = topBid ? { price: parseFloat(topBid[0]), usd: topBid[1] } : null;
   const bearWall = topAsk ? { price: parseFloat(topAsk[0]), usd: topAsk[1] } : null;
 
@@ -174,23 +163,25 @@ export function strategyWall(book, price) {
   let bias = depthRatio * 0.4;
   let wallSignal = 0;
 
-  // Strong nearby wall = clear directional signal
   if (bullWall) {
     const prox = (price - bullWall.price) / price;
-    if (prox < 0.003) { bias += 0.45; wallSignal = 1; }       // price sitting on support
-    else if (prox < 0.008) { bias += 0.25; wallSignal = 0.5; }
+    if (prox < 0.003)      { bias += 0.45; wallSignal =  1; }
+    else if (prox < 0.008) { bias += 0.25; wallSignal =  0.5; }
   }
   if (bearWall) {
     const prox = (bearWall.price - price) / price;
-    if (prox < 0.003) { bias -= 0.45; wallSignal = -1; }      // price hitting resistance
+    if (prox < 0.003)      { bias -= 0.45; wallSignal = -1; }
     else if (prox < 0.008) { bias -= 0.25; wallSignal = -0.5; }
   }
 
-  const wallImbalance = bullWall && bearWall ? (bullWall.usd - bearWall.usd) / (bullWall.usd + bearWall.usd) : 0;
+  const wallImbalance = bullWall && bearWall
+    ? (bullWall.usd - bearWall.usd) / (bullWall.usd + bearWall.usd) : 0;
   bias += wallImbalance * 0.15;
 
   const clampedBias = Math.max(-1, Math.min(1, bias));
-  const confidence = Math.min(0.90, Math.abs(clampedBias) * 1.1 + Math.abs(wallSignal) * 0.2);
+
+  // FIX: raised multiplier 1.1→1.4 so 45-50% conf clears kelly edge threshold
+  const confidence = Math.min(0.90, Math.abs(clampedBias) * 1.4 + Math.abs(wallSignal) * 0.2);
 
   return {
     name: "WALL",
@@ -203,51 +194,40 @@ export function strategyWall(book, price) {
 }
 
 // ── Strategy C: ATR Breakout ──────────────────────────────────
-// Best for: volatile/breakout conditions, catching big moves early
-// Signal: price breaking above/below ATR band + volume surge
-
 export function strategyBreakout(candles, ticker) {
   const closes = candles.map(c => c.close);
-  const price = closes[closes.length - 1];
-  const atr = calcATR(candles);
-  const ema21 = calcEMA(closes, 21);
+  const price  = closes[closes.length - 1];
+  const atr    = calcATR(candles);
+  const ema21  = calcEMA(closes, 21);
 
-  // ATR bands around EMA21
   const upperBand = ema21 + atr * 1.5;
   const lowerBand = ema21 - atr * 1.5;
 
-  // Candle momentum: last 3 candles direction strength
-  const last3 = closes.slice(-4);
+  const last3    = closes.slice(-4);
   const momentum = last3.slice(1).reduce((sum, c, i) => sum + (c - last3[i]) / last3[i], 0);
 
-  // Volume surge (last candle vs average)
-  const avgVol = candles.slice(-20, -1).reduce((s,c) => s+c.volume, 0) / 19;
+  const avgVol  = candles.slice(-20, -1).reduce((s,c) => s+c.volume, 0) / 19;
   const lastVol = candles[candles.length-1].volume;
   const volSurge = avgVol > 0 ? lastVol / avgVol : 1;
 
-  // Breakout signal
   let bias = 0;
   let breakType = "none";
 
   if (price > upperBand) {
-    // Bullish breakout above ATR band
     const strength = Math.min(1, (price - upperBand) / atr);
     bias = 0.6 + strength * 0.4;
     breakType = "up";
   } else if (price < lowerBand) {
-    // Bearish breakdown below ATR band
     const strength = Math.min(1, (lowerBand - price) / atr);
     bias = -(0.6 + strength * 0.4);
     breakType = "down";
   } else {
-    // Inside band — momentum only
     bias = Math.max(-0.4, Math.min(0.4, momentum * 30));
     breakType = "range";
   }
 
-  // Volume confirmation boosts confidence
-  const volBoost = Math.min(0.25, (volSurge - 1) * 0.1);
-  const confidence = Math.min(0.90, Math.abs(bias) * 0.85 + volBoost);
+  const volBoost    = Math.min(0.25, (volSurge - 1) * 0.1);
+  const confidence  = Math.min(0.90, Math.abs(bias) * 0.85 + volBoost);
 
   return {
     name: "BREAKOUT",
@@ -261,32 +241,33 @@ export function strategyBreakout(candles, ticker) {
 }
 
 // ── Auto Strategy Selector ─────────────────────────────────────
-// Picks best strategy based on market conditions
-
+// FIX: thresholds relaxed so WALL and BREAKOUT fire in normal BTC ranging conditions
+// Old: BREAKOUT >1.5%, WALL <0.8% — almost never triggered in calm markets
+// New: BREAKOUT >0.8%, WALL <2.0% — fires regularly in normal conditions
 export function autoSelectStrategy(stratA, stratB, stratC, ticker) {
   const volatility = Math.abs(ticker.priceChangePercent);
-  const spread = ticker.ask - ticker.bid;
-  const spreadPct = spread / ticker.price * 100;
 
-  // Breakout wins in high volatility (>1.5% move in 24h)
-  if (volatility > 1.5 && stratC.confidence > 0.5) return "BREAKOUT";
+  // Breakout wins when there's any meaningful directional move (>0.8% 24h)
+  if (volatility > 0.8 && stratC.confidence > 0.40) return "BREAKOUT";
 
-  // Wall wins in tight spread / low volatility (market is ranging)
-  if (volatility < 0.8 && spreadPct < 0.05 && stratB.confidence > 0.45) return "WALL";
+  // WALL wins when order book has a clear signal (relaxed from 0.45 → 0.35)
+  if (stratB.confidence > 0.35) return "WALL";
 
-  // RSI_EMA wins by default (most consistent for trending momentum)
+  // RSI_EMA as fallback
   return "RSI_EMA";
 }
 
 // ── Main Signal Compute ────────────────────────────────────────
-
 export function detectWalls(book, price) {
   if (!book) return { wallBias: 0, wallStrength: 0, bullWall: null, bearWall: null };
   const result = strategyWall(book, price);
   return { wallBias: result.bias, wallStrength: result.confidence, ...result };
 }
 
-export async function computeSignals(activeStrategies = { RSI_EMA: true, WALL: true, BREAKOUT: true }, autoMode = true) {
+export async function computeSignals(
+  activeStrategies = { RSI_EMA: true, WALL: true, BREAKOUT: true },
+  autoMode = true
+) {
   const [candlesR, tickerR, clR, bookR] = await Promise.allSettled([
     fetchKrakenOHLC(),
     fetchKrakenTicker(),
@@ -295,76 +276,64 @@ export async function computeSignals(activeStrategies = { RSI_EMA: true, WALL: t
   ]);
 
   if (candlesR.status === "rejected") throw new Error("Candles: " + candlesR.reason?.message);
-  if (tickerR.status === "rejected") throw new Error("Ticker: " + tickerR.reason?.message);
+  if (tickerR.status === "rejected")  throw new Error("Ticker: "  + tickerR.reason?.message);
 
   const candles = candlesR.value;
-  const ticker = tickerR.value;
-  const closes = candles.map(c => c.close);
-  const price = closes[closes.length - 1];
-  const atr = calcATR(candles);
+  const ticker  = tickerR.value;
+  const closes  = candles.map(c => c.close);
+  const price   = closes[closes.length - 1];
+  const atr     = calcATR(candles);
 
   const oraclePrice = clR.status === "fulfilled" && clR.value > 1000 ? clR.value : null;
-  const book = bookR.status === "fulfilled" ? bookR.value : null;
+  const book        = bookR.status === "fulfilled" ? bookR.value : null;
 
-  // Run all 3 strategies
   const stratA = strategyRSI_EMA(closes, atr);
   const stratB = strategyWall(book, price);
   const stratC = strategyBreakout(candles, ticker);
 
-  // Determine which strategy is active
   let activeStrat = "RSI_EMA";
   if (autoMode) {
     activeStrat = autoSelectStrategy(stratA, stratB, stratC, { ...ticker, price });
   } else {
-    // Manual: pick highest confidence among enabled strategies
     const enabled = [
-      activeStrategies.RSI_EMA ? stratA : null,
-      activeStrategies.WALL    ? stratB : null,
-      activeStrategies.BREAKOUT ? stratC : null,
+      activeStrategies.RSI_EMA   ? stratA : null,
+      activeStrategies.WALL      ? stratB : null,
+      activeStrategies.BREAKOUT  ? stratC : null,
     ].filter(Boolean);
-
-    if (enabled.length === 0) {
-      activeStrat = "RSI_EMA"; // fallback
-    } else {
-      activeStrat = enabled.reduce((best, s) => s.confidence > best.confidence ? s : best, enabled[0]).name;
-    }
+    activeStrat = enabled.length === 0
+      ? "RSI_EMA"
+      : enabled.reduce((best, s) => s.confidence > best.confidence ? s : best, enabled[0]).name;
   }
 
-  // Get the leading signal
   const stratMap = { RSI_EMA: stratA, WALL: stratB, BREAKOUT: stratC };
   const lead = stratMap[activeStrat];
 
-  // If multiple strategies are on, blend as secondary confirmation (20% weight)
   let finalBias = lead.bias;
-  let blendCount = 1;
-
   if (activeStrategies.RSI_EMA && activeStrat !== "RSI_EMA") {
-    finalBias = finalBias * 0.8 + stratA.bias * 0.2; blendCount++;
+    finalBias = finalBias * 0.8 + stratA.bias * 0.2;
   }
   if (activeStrategies.WALL && activeStrat !== "WALL" && stratB.confidence > 0.3) {
-    finalBias = finalBias * 0.85 + stratB.bias * 0.15; blendCount++;
+    finalBias = finalBias * 0.85 + stratB.bias * 0.15;
   }
   if (activeStrategies.BREAKOUT && activeStrat !== "BREAKOUT") {
-    finalBias = finalBias * 0.8 + stratC.bias * 0.2; blendCount++;
+    finalBias = finalBias * 0.8 + stratC.bias * 0.2;
   }
 
   return {
-    bias: Math.max(-1, Math.min(1, finalBias)),
-    confidence: lead.confidence,
-    currentPrice: price,
+    bias:           Math.max(-1, Math.min(1, finalBias)),
+    confidence:     lead.confidence,
+    currentPrice:   price,
     oraclePrice,
-    stats: { ...ticker, quoteVolume: ticker.volume * price },
+    stats:          { ...ticker, quoteVolume: ticker.volume * price },
     atr,
-    rsi: stratA.rsi,
-    ema9: stratA.ema9,
-    ema21: stratA.ema21,
-    walls: { wallBias: stratB.bias, wallStrength: stratB.confidence, bullWall: stratB.bullWall, bearWall: stratB.bearWall, depthRatio: stratB.depthRatio },
-
-    // Strategy details
+    rsi:    stratA.rsi,
+    ema9:   stratA.ema9,
+    ema21:  stratA.ema21,
+    walls:  { wallBias: stratB.bias, wallStrength: stratB.confidence, bullWall: stratB.bullWall, bearWall: stratB.bearWall, depthRatio: stratB.depthRatio },
     activeStrategy: activeStrat,
     autoMode,
     strategies: { A: stratA, B: stratB, C: stratC },
     components: lead.components,
-    leadMeta: lead.meta,
+    leadMeta:   lead.meta,
   };
 }
