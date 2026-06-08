@@ -75,10 +75,15 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
 
     let shouldExit = false, exitReason = "", exitPrice = currentPrice;
 
+    // SharpShooter: force-close after 2 min regardless of price — guarantees slot cycling
+    const heldMs = bet.placedAt ? Date.now() - new Date(bet.placedAt).getTime() : 0;
+    const timeExpired = ssMode && heldMs >= 2 * 60 * 1000;
+
     if      (pnlPct >= TP_HIGH)                                { shouldExit = true; exitReason = "take_profit_max"; }
     else if (pnlPct >= TP_LOW)                                 { shouldExit = true; exitReason = "take_profit"; }
     else if (trail.trailStop && currentPrice <= trail.trailStop){ shouldExit = true; exitReason = "trail_stop"; }
     else if (pnlPct <= -STOP_LOSS)                             { shouldExit = true; exitReason = "stop_loss"; }
+    else if (timeExpired)                                       { shouldExit = true; exitReason = "timeout"; }
 
     // Expiry check
     const endDate = bet.marketEndDateIso;
