@@ -1,9 +1,8 @@
 /**
  * scalper.js — PolyBettor exit engine
  *
- * Key insight: synthetic markets regenerate each scan with new conditionIds.
- * We use CUMULATIVE BTC move from entryBtcPrice — not market object price.
- * Delta ~0.40 near ATM: 0.15% BTC move → ~6% contract gain → TP_LOW fires.
+ * SHARPSHOOTER mode: tighter TP (3-5% of bet), same stop loss
+ * NORMAL mode: existing TP_LOW/TP_HIGH thresholds
  */
 import axios from "axios";
 import { getAllActiveBets, closeBet } from "./state.js";
@@ -26,6 +25,7 @@ function estimateContractPrice(bet, currentBtc) {
   const btcChangePct = (currentBtc - bet.entryBtcPrice) / bet.entryBtcPrice;
   const q = (bet.marketQuestion || "").toLowerCase();
   const isUpOrDown = q.includes("up or down") || q.includes("up/down");
+
   let isLong;
   if (isUpOrDown) {
     isLong = bet.side === "YES";
@@ -33,23 +33,29 @@ function estimateContractPrice(bet, currentBtc) {
     const isBullQ = q.includes("above") || q.includes("higher") || q.includes("rise") || q.includes("reach");
     isLong = isBullQ ? bet.side === "YES" : bet.side === "NO";
   }
+
   const distFromMid = Math.abs(bet.entryPrice - 0.5);
   const delta = Math.max(0.20, 0.45 - distFromMid * 0.4);
   const priceMove = btcChangePct * delta * (isLong ? 1 : -1);
   return Math.max(0.02, Math.min(0.98, bet.entryPrice + priceMove));
 }
 
-export async function checkScalpExits(markets, signals, dryRun = true) {
+// ssMode passed in from bot.js so exit thresholds adapt
+export async function checkScalpExits(markets, signals, dryRun = true, ssMode = false) {
   const active = getAllActiveBets();
   if (active.length === 0) return { exits: [], currentBtc: null };
 
   const currentBtc = await getLiveBtcPrice();
 
-  const TP_LOW    = parseFloat(process.env.TP_LOW     || "0.06");
-  const TP_HIGH   = parseFloat(process.env.TP_HIGH    || "0.14");
-  const STOP_LOSS = parseFloat(process.env.STOP_LOSS  || "0.15");
-  const TRAIL_AT  = parseFloat(process.env.TRAIL_AFTER|| "0.05");
-  const TRAIL_PCT = parseFloat(process.env.TRAIL_PCT  || "0.035");
+  // SharpShooter: 3% TP, 5% max TP, tight stop 8%
+  // Normal: env-configurable
+  // SharpShooter: ultra-tight TP so exits fire on small BTC moves in sideways markets
+  // 0.5% TP = ~$0.01 profit per $2 bet, but 10 slots cycling fast adds up
+  const TP_LOW   = ssMode ? 0.005 : parseFloat(process.env.TP_LOW    || "0.06");
+  const TP_HIGH  = ssMode ? 0.015 : parseFloat(process.env.TP_HIGH   || "0.14");
+  const STOP_LOSS= ssMode ? 0.04  : parseFloat(process.env.STOP_LOSS || "0.15");
+  const TRAIL_AT = ssMode ? 0.005 : parseFloat(process.env.TRAIL_AFTER|| "0.05");
+  const TRAIL_PCT= ssMode ? 0.003 : parseFloat(process.env.TRAIL_PCT  || "0.035");
 
   const exits = [];
   const trailState = checkScalpExits._trail || (checkScalpExits._trail = new Map());
@@ -69,22 +75,19 @@ export async function checkScalpExits(markets, signals, dryRun = true) {
 
     let shouldExit = false, exitReason = "", exitPrice = currentPrice;
 
-    // Exit triggers
-    if      (pnlPct >= TP_HIGH)                                      { shouldExit = true; exitReason = "TAKE_PROFIT_MAX"; }
-    else if (pnlPct >= TP_LOW)                                        { shouldExit = true; exitReason = "TAKE_PROFIT"; }
-    else if (trail.trailStop && currentPrice <= trail.trailStop)      { shouldExit = true; exitReason = "TRAIL_STOP"; }
-    else if (pnlPct <= -STOP_LOSS)                                    { shouldExit = true; exitReason = "STOP_LOSS"; }
+    if      (pnlPct >= TP_HIGH)                                { shouldExit = true; exitReason = "take_profit_max"; }
+    else if (pnlPct >= TP_LOW)                                 { shouldExit = true; exitReason = "take_profit"; }
+    else if (trail.trailStop && currentPrice <= trail.trailStop){ shouldExit = true; exitReason = "trail_stop"; }
+    else if (pnlPct <= -STOP_LOSS)                             { shouldExit = true; exitReason = "stop_loss"; }
 
     // Expiry check
     const endDate = bet.marketEndDateIso;
     if (endDate) {
       const msLeft = new Date(endDate) - Date.now();
       if (msLeft > 0 && msLeft < 90 * 1000 && pnlPct <= 0 && !shouldExit) {
-        // Near expiry: only exit losers — let winners ride to settlement
-        shouldExit = true; exitReason = "NEAR_EXPIRY";
+        shouldExit = true; exitReason = "near_expiry";
       } else if (msLeft <= 0 && !shouldExit) {
-        shouldExit = true; exitReason = "EXPIRED";
-        // Settle based on actual BTC direction vs entry
+        shouldExit = true; exitReason = "expiry";
         const q = (bet.marketQuestion || "").toLowerCase();
         const isUpOrDown = q.includes("up or down") || q.includes("up/down");
         const isLong = isUpOrDown
@@ -99,16 +102,18 @@ export async function checkScalpExits(markets, signals, dryRun = true) {
       const btcMov = currentBtc && bet.entryBtcPrice
         ? ((currentBtc - bet.entryBtcPrice) / bet.entryBtcPrice * 100).toFixed(3) + "%"
         : "?%";
-      console.log(`  📊 HOLD ${bet.side} $${bet.betSize} | entry:${(bet.entryPrice*100).toFixed(0)}¢ now:${(currentPrice*100).toFixed(0)}¢ | ${pnlPct >= 0 ? "+" : ""}${(pnlPct*100).toFixed(1)}% | BTC cumulative:${btcMov}`);
+      const ssTag = bet.sharpShooter ? " ⚡" : "";
+      console.log(`  📊 HOLD${ssTag} ${bet.side} $${bet.betSize} | entry:${(bet.entryPrice*100).toFixed(0)}¢ now:${(currentPrice*100).toFixed(0)}¢ | ${pnlPct >= 0 ? "+" : ""}${(pnlPct*100).toFixed(1)}% | BTC cumulative:${btcMov}`);
       continue;
     }
 
+    const isExpiry = exitReason === "expiry" || exitReason === "near_expiry";
     const finalPnlPct = (exitPrice - bet.entryPrice) / bet.entryPrice;
     const finalPnl    = parseFloat((bet.betSize * finalPnlPct).toFixed(2));
-    const isExpiry    = exitReason === "EXPIRED" || exitReason === "NEAR_EXPIRY";
 
     if (!isExpiry) {
-      console.log(`  🎯 EXIT [${exitReason}] ${bet.side} $${bet.betSize} | ${(bet.entryPrice*100).toFixed(0)}¢→${(exitPrice*100).toFixed(0)}¢ | ${finalPnl >= 0 ? "+" : ""}$${finalPnl} (${finalPnl >= 0 ? "+" : ""}${(finalPnlPct*100).toFixed(1)}%)`);
+      const ssTag = bet.sharpShooter ? "⚡SS " : "";
+      console.log(`  🎯 ${ssTag}EXIT [${exitReason.toUpperCase()}] ${bet.side} $${bet.betSize} | ${(bet.entryPrice*100).toFixed(0)}¢→${(exitPrice*100).toFixed(0)}¢ | ${finalPnl >= 0 ? "+" : ""}$${finalPnl} (${(finalPnlPct*100).toFixed(1)}%)`);
     } else {
       console.log(`  ⏱ EXPIRED ${bet.side} $${bet.betSize} | refunded (excluded from P&L)`);
     }
@@ -116,13 +121,20 @@ export async function checkScalpExits(markets, signals, dryRun = true) {
     closeBet(bet.marketConditionId, {
       exitPrice,
       reason: isExpiry ? "expiry"
-            : exitReason.startsWith("TAKE_PROFIT") ? "take_profit"
-            : exitReason === "TRAIL_STOP" ? "trail_stop"
-            : "stop_loss",
+        : exitReason === "take_profit_max" ? "take_profit_max"
+        : exitReason === "take_profit"     ? "take_profit"
+        : exitReason === "trail_stop"      ? "trail_stop"
+        : "stop_loss",
       pnl: finalPnl,
     });
+
     trailState.delete(bet.marketConditionId);
-    exits.push({ market: bet.marketQuestion, side: bet.side, pnlPct: finalPnlPct, pnl: finalPnl, reason: isExpiry ? "expiry" : exitReason.toLowerCase() });
+    exits.push({
+      market: bet.marketQuestion, side: bet.side,
+      pnlPct: finalPnlPct, pnl: finalPnl,
+      reason: isExpiry ? "expiry" : exitReason,
+      sharpShooter: bet.sharpShooter || false,
+    });
   }
 
   return { exits, currentBtc };
@@ -141,10 +153,11 @@ export function scalpQuality(market, signals) {
   if (market.endDateIso || market.endDate) {
     const minLeft = (new Date(market.endDateIso || market.endDate) - Date.now()) / 60000;
     if (minLeft < 3 || minLeft > 180) return 0;
-    if (minLeft >= 4 && minLeft <= 20)       score += 0.40;
-    else if (minLeft <= 90)                  score += 0.25;
-    else                                     score += 0.10;
+    if (minLeft >= 4 && minLeft <= 20) score += 0.40;
+    else if (minLeft <= 90)            score += 0.25;
+    else                               score += 0.10;
   } else score += 0.20;
+
   score += Math.min(0.40, signals.confidence * 0.45);
   score += Math.min(0.20, Math.abs(signals.bias) * 0.25);
   return Math.min(1, score);
