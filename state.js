@@ -9,6 +9,7 @@
  * 3. Expiry bets excluded from W/L and P&L — stake returned, neutral
  * 4. Separate expiryCount tracked for dashboard display
  * 5. getStats() exposes realPnl (excludes expiry noise)
+ * 6. timeout exits count as scalps when profitable (SharpShooter)
  */
 
 const STARTING_BALANCE = parseFloat(process.env.BANKROLL || "40");
@@ -33,7 +34,7 @@ console.log(`💰 State initialized | Starting balance: $${STARTING_BALANCE} | M
 
 export function recordBet({
   market, side, betSize, edge, trueProbability, impliedProbability,
-  orderId, entryPrice, entryBtcPrice, strategy, reasoning
+  orderId, entryPrice, entryBtcPrice, strategy, reasoning, sharpShooter
 }) {
   const bet = {
     id: `bet_${Date.now()}`,
@@ -48,8 +49,9 @@ export function recordBet({
     impliedProbability,
     entryPrice:    entryPrice || impliedProbability,
     entryBtcPrice: entryBtcPrice || null,
-    strategy:  strategy  || "UNKNOWN",
-    reasoning: reasoning || "",
+    strategy:      strategy    || "UNKNOWN",
+    reasoning:     reasoning   || "",
+    sharpShooter:  sharpShooter || false,
     placedAt: new Date().toISOString(),
     status: "open",
     pnl: null,
@@ -82,13 +84,13 @@ export function closeBet(conditionId, { exitPrice, reason, pnl }) {
     return bet;
   }
 
-  // Real exit: take_profit, stop_loss, trail_stop, near_expiry
+  // Real exit: take_profit, stop_loss, trail_stop, near_expiry, timeout
   bet.pnl = pnl;
 
   if (pnl > 0) { state.wins++;   bet.status = "won"; }
   else         { state.losses++; bet.status = "lost"; }
 
-  if (reason === "take_profit" || reason === "take_profit_max" || reason === "trail_stop") {
+  if (reason === "take_profit" || reason === "take_profit_max" || reason === "trail_stop" || reason === "timeout") {
     state.scalps++;
   }
 
@@ -114,10 +116,10 @@ export function getStats() {
     betsPlaced:      state.bets.length,
     activeBets:      state.activeBets.size,
     totalWagered:    state.totalWagered.toFixed(2),
-    pnl:             state.pnl.toFixed(2),       // real P&L only (no expiry)
+    pnl:             state.pnl.toFixed(2),
     wins:            state.wins,
     losses:          state.losses,
-    expiryCount:     state.expiryCount,           // shown separately
+    expiryCount:     state.expiryCount,
     scalps:          state.scalps,
     winRate:         total > 0 ? ((state.wins / total) * 100).toFixed(1) + "%" : "N/A",
     startingBalance: STARTING_BALANCE,
