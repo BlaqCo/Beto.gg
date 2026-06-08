@@ -1,18 +1,18 @@
 import express from "express";
-import dotenv from "dotenv";
+import dotenv  from "dotenv";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { dirname, join }  from "path";
 dotenv.config();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const config = {
   bot: {
-    maxBetSize:          parseFloat(process.env.MAX_BET_SIZE          || "5"),
-    minEdge:             parseFloat(process.env.MIN_EDGE               || "0.015"),
+    maxBetSize:          parseFloat(process.env.MAX_BET_SIZE           || "5"),
+    minEdge:             parseFloat(process.env.MIN_EDGE               || "0.010"),
     kellyFraction:       parseFloat(process.env.KELLY_FRACTION         || "0.30"),
-    scanIntervalSeconds: parseInt  (process.env.SCAN_INTERVAL_SECONDS  || "8"),
+    scanIntervalSeconds: parseInt (process.env.SCAN_INTERVAL_SECONDS   || "8"),
     bankroll:            parseFloat(process.env.BANKROLL               || "40"),
     dryRun:              process.env.DRY_RUN !== "false",
     tpLow:               parseFloat(process.env.TP_LOW                 || "0.06"),
@@ -49,7 +49,14 @@ import("./bot.js").then(async ({ runScanCycle, botSettings }) => {
 
   app.get("/", async (_, res) => {
     const { getStats } = await import("./state.js");
-    res.json({ bot: "PolyBettor", mode: botSettings.dryRun ? "DRY_RUN" : "LIVE", config: config.bot, stats: getStats(), settings: botSettings });
+    res.json({
+      bot: "PolyBettor",
+      mode: botSettings.dryRun ? "DRY_RUN" : "LIVE",
+      config: config.bot,
+      stats: getStats(),
+      settings: botSettings,
+      sharpShooter: botSettings.sharpShooter,   // ← exposed for dashboard
+    });
   });
 
   app.get("/bets",    async (_, res) => { const { getAllBets }       = await import("./state.js"); res.json(getAllBets()); });
@@ -68,35 +75,42 @@ import("./bot.js").then(async ({ runScanCycle, botSettings }) => {
   app.get("/settings", (_, res) => res.json(botSettings));
 
   app.post("/settings", (req, res) => {
-    const { strategies, autoMode, enabled, dryRun, configUpdate } = req.body;
+    const { strategies, autoMode, enabled, dryRun, configUpdate, sharpShooter } = req.body;
     const changes = [];
 
-    // Live env var updates from settings panel
     if (configUpdate) {
       for (const [k, v] of Object.entries(configUpdate)) {
         const num = parseFloat(v);
-        if (!isNaN(num)) {
-          config.bot[k] = num;
-          changes.push(`Config ${k} → ${v}`);
-          addLog("info", `Config updated: ${k} = ${v}`);
-        }
+        if (!isNaN(num)) { config.bot[k] = num; changes.push(`Config ${k} → ${v}`); addLog("info", `Config updated: ${k} = ${v}`); }
       }
     }
 
     if (typeof dryRun === "boolean" && dryRun !== botSettings.dryRun) {
       botSettings.dryRun = dryRun; runtimeDryRun = dryRun;
-      const msg = dryRun ? "⚠️  Switched to DRY RUN" : "🔴 LIVE MODE — real money ENABLED";
+      const msg = dryRun ? "⚠️ Switched to DRY RUN" : "🔴 LIVE MODE — real money ENABLED";
       changes.push(msg); addLog(dryRun ? "warn" : "err", msg);
     }
+
     if (typeof enabled === "boolean" && enabled !== botSettings.enabled) {
       botSettings.enabled = enabled;
       const msg = enabled ? "Bot RESUMED" : "Bot PAUSED";
       changes.push(msg); addLog(enabled ? "ok" : "warn", msg);
     }
+
     if (typeof autoMode === "boolean" && autoMode !== botSettings.autoMode) {
       botSettings.autoMode = autoMode;
       changes.push(`Auto mode: ${autoMode}`); addLog("info", `Auto mode: ${autoMode}`);
     }
+
+    // ── SharpShooter toggle ──
+    if (typeof sharpShooter === "boolean" && sharpShooter !== botSettings.sharpShooter) {
+      botSettings.sharpShooter = sharpShooter;
+      const msg = sharpShooter
+        ? "⚡ SharpShooter ON — 10 slots · $2 flat · 3-5% TP"
+        : "SharpShooter OFF — normal mode restored";
+      changes.push(msg); addLog(sharpShooter ? "ok" : "info", msg);
+    }
+
     if (strategies) {
       for (const [key, val] of Object.entries(strategies)) {
         if (typeof val === "boolean" && botSettings.strategies[key] !== val) {
@@ -106,6 +120,7 @@ import("./bot.js").then(async ({ runScanCycle, botSettings }) => {
         }
       }
     }
+
     res.json({ ok: true, settings: botSettings, changes });
   });
 
@@ -118,11 +133,11 @@ import("./bot.js").then(async ({ runScanCycle, botSettings }) => {
     if (isScanning) return;
     isScanning = true;
     try {
-      const { computeSignals } = await import("./signals.js");
+      const { computeSignals }  = await import("./signals.js");
       const { fetchBTCMarkets } = await import("./polymarket.js");
-      const { sizeBet } = await import("./kelly.js");
-      const { scoreSentiment } = await import("./sentiment.js");
-      const { scalpQuality } = await import("./scalper.js");
+      const { sizeBet }         = await import("./kelly.js");
+      const { scoreSentiment }  = await import("./sentiment.js");
+      const { scalpQuality }    = await import("./scalper.js");
 
       const sigR = await Promise.allSettled([computeSignals(botSettings.strategies, botSettings.autoMode)]);
       if (sigR[0].status === "fulfilled") {
@@ -144,7 +159,7 @@ import("./bot.js").then(async ({ runScanCycle, botSettings }) => {
       const result = await runScanCycle();
       if (result?.exits?.length > 0) {
         for (const e of result.exits) {
-          addLog(e.pnl > 0 ? "ok" : "warn", `EXIT [${e.reason}] ${e.side} ${e.pnl >= 0 ? "+" : ""}$${e.pnl} | ${e.market?.slice(0,45)}`);
+          addLog(e.pnl > 0 ? "ok" : "warn", `EXIT [${e.reason}] ${e.side} ${e.pnl>=0?"+":""}$${e.pnl} | ${e.market?.slice(0,45)}`);
         }
       }
       if (result?.betsPlaced > 0) {
@@ -165,4 +180,5 @@ import("./bot.js").then(async ({ runScanCycle, botSettings }) => {
   setInterval(scan, config.bot.scanIntervalSeconds * 1000);
   addLog("info", `Scanner started — every ${config.bot.scanIntervalSeconds}s`);
   scan();
+
 }).catch(err => { console.error("Boot failed:", err.message); process.exit(1); });
