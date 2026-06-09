@@ -28,9 +28,9 @@ export const botSettings = {
 };
 
 const NORMAL_MAX          = 3;
-const SS_MAX              = 10;
-const SS_BET_SIZE         = 5.00;
-const SS_ENTRIES_PER_SCAN = 3;
+const SS_MAX              = 20;
+const SS_BET_SIZE         = 10.00;
+const SS_ENTRIES_PER_SCAN = 5;
 
 export async function runScanCycle() {
   if (!botSettings.enabled) return { signals: null, exits: [], betsPlaced: 0 };
@@ -107,7 +107,11 @@ export async function runScanCycle() {
     let finalBet, decision;
 
     if (SS_MODE) {
-      // SharpShooter: flat $2, direction from bias
+      // SharpShooter: only enter when there is actual momentum (not flat/dead market)
+      // Require at least 0.05% BTC move in last candle OR bias confidence > 15%
+      const btcMomentum = Math.abs(signals.bias) > 0.08 || signals.confidence > 0.15;
+      if (!btcMomentum) continue;
+
       finalBet = SS_BET_SIZE;
       if (balance < finalBet) continue;
 
