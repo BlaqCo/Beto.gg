@@ -55,11 +55,15 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
   // Normal: env-configurable
   // SharpShooter: ultra-tight TP so exits fire on small BTC moves in sideways markets
   // 0.5% TP = ~$0.01 profit per $2 bet, but 10 slots cycling fast adds up
-  const TP_LOW   = ssMode ? 0.005 : parseFloat(process.env.TP_LOW    || "0.06");
-  const TP_HIGH  = ssMode ? 0.015 : parseFloat(process.env.TP_HIGH   || "0.14");
-  const STOP_LOSS= ssMode ? 0.04  : parseFloat(process.env.STOP_LOSS || "0.15");
-  const TRAIL_AT = ssMode ? 0.005 : parseFloat(process.env.TRAIL_AFTER|| "0.05");
-  const TRAIL_PCT= ssMode ? 0.003 : parseFloat(process.env.TRAIL_PCT  || "0.035");
+  // SS mode: BTC move thresholds
+  // TP_LOW  = 0.2% BTC move → ~$0.004 profit on $2 bet  (fires often)
+  // TP_HIGH = 0.5% BTC move → ~$0.01 profit on $2 bet   (bigger win)
+  // STOP_LOSS = 0.4% against → cut losers fast
+  const TP_LOW   = ssMode ? 0.002 : parseFloat(process.env.TP_LOW    || "0.06");
+  const TP_HIGH  = ssMode ? 0.005 : parseFloat(process.env.TP_HIGH   || "0.14");
+  const STOP_LOSS= ssMode ? 0.004 : parseFloat(process.env.STOP_LOSS || "0.15");
+  const TRAIL_AT = ssMode ? 0.002 : parseFloat(process.env.TRAIL_AFTER|| "0.05");
+  const TRAIL_PCT= ssMode ? 0.001 : parseFloat(process.env.TRAIL_PCT  || "0.035");
 
   const exits = [];
   const trailState = checkScalpExits._trail || (checkScalpExits._trail = new Map());
@@ -67,8 +71,21 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
   for (const bet of active) {
     if (!bet.entryPrice) continue;
 
-    const currentPrice = estimateContractPrice(bet, currentBtc, ssMode);
-    const pnlPct = (currentPrice - bet.entryPrice) / bet.entryPrice;
+    // SS mode: use raw BTC movement as P&L proxy — faster, more responsive
+    // Normal mode: use contract price estimator
+    let currentPrice, pnlPct;
+    if (ssMode && currentBtc && bet.entryBtcPrice) {
+      const btcChangePct = (currentBtc - bet.entryBtcPrice) / bet.entryBtcPrice;
+      const q = (bet.marketQuestion || '').toLowerCase();
+      const isUpOrDown = q.includes('up or down') || q.includes('up/down');
+      const isBullQ = q.includes('above') || q.includes('higher') || q.includes('rise') || q.includes('reach');
+      const isLong = isUpOrDown ? bet.side === 'YES' : (isBullQ ? bet.side === 'YES' : bet.side === 'NO');
+      pnlPct = btcChangePct * (isLong ? 1 : -1);
+      currentPrice = Math.max(0.02, Math.min(0.98, bet.entryPrice + pnlPct * bet.entryPrice));
+    } else {
+      currentPrice = estimateContractPrice(bet, currentBtc, false);
+      pnlPct = (currentPrice - bet.entryPrice) / bet.entryPrice;
+    }
 
     // Trailing stop
     let trail = trailState.get(bet.marketConditionId);
@@ -81,7 +98,7 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
 
     // SharpShooter: force-close after 2 min regardless of price — guarantees slot cycling
     const heldMs = bet.placedAt ? Date.now() - new Date(bet.placedAt).getTime() : 0;
-    const timeExpired = ssMode && heldMs >= 2 * 60 * 1000;
+    const timeExpired = ssMode && heldMs >= 90 * 1000;
 
     if      (pnlPct >= TP_HIGH)                                { shouldExit = true; exitReason = "take_profit_max"; }
     else if (pnlPct >= TP_LOW)                                 { shouldExit = true; exitReason = "take_profit"; }
