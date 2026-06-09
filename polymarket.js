@@ -1,12 +1,9 @@
 /**
  * polymarket.js
  *
- * FIXES:
- * 1. Synthetic market conditionIds are now STABLE per session (no _${now} suffix)
- *    so hasActiveBet() correctly blocks duplicate entries on the same market.
- * 2. SharpShooter-aware market set: when SS mode is on, generates 30-60 min
- *    markets so TP has time to fire before expiry.
- * 3. Gamma API cache to prevent 429s.
+ * Multi-crypto support: BTC, ETH, SOL, BNB, XRP, DOGE
+ * Fetches live prices for each coin and generates synthetic markets.
+ * CLOB/Gamma search expanded to all crypto keywords.
  */
 
 import axios from "axios";
@@ -20,23 +17,28 @@ async function getDryRun() {
 }
 function isSharpShooter() { return _botSettings?.sharpShooter ?? false; }
 
-const BTC_KW = [
+// ── Crypto keywords for CLOB/Gamma filtering ───────────────────────────────
+const CRYPTO_KW = [
+  // BTC
   "bitcoin","btc","will btc","will bitcoin",
-  "btc above","btc below","bitcoin above","bitcoin below",
-  "btc price","bitcoin price","btc hit","bitcoin hit",
-  "btc end","bitcoin end","btc close","bitcoin close",
-  "btc reach","bitcoin reach",
+  // ETH
+  "ethereum","eth","will eth","will ethereum",
+  // SOL
+  "solana","sol","will sol","will solana",
+  // BNB
+  "bnb","binance coin","will bnb",
+  // XRP
+  "xrp","ripple","will xrp","will ripple",
+  // DOGE
+  "dogecoin","doge","will doge","will dogecoin",
 ];
 
 function isValidScalpMarket(m) {
   if (!m.endDateIso && !m.endDate) return false;
-  const msLeft = new Date(m.endDateIso || m.endDate) - Date.now();
-  const minLeft = msLeft / 60000;
+  const minLeft = (new Date(m.endDateIso || m.endDate) - Date.now()) / 60000;
   return minLeft >= 4 && minLeft <= 1440;
 }
 
-// Stable conditionId: based on question content, not timestamp
-// This is the KEY fix — same question = same ID every scan
 function stableId(prefix, question) {
   let hash = 0;
   for (let i = 0; i < question.length; i++) {
@@ -57,40 +59,45 @@ export async function fetchBTCMarkets() {
       headers: { "Accept": "application/json" },
     });
     const all = data?.data || data || [];
-    const btc = all
-      .filter(m => { const q = (m.question||m.title||"").toLowerCase(); return BTC_KW.some(kw => q.includes(kw)); })
+    const crypto = all
+      .filter(m => {
+        const q = (m.question || m.title || "").toLowerCase();
+        return CRYPTO_KW.some(kw => q.includes(kw));
+      })
       .filter(isValidScalpMarket)
       .map(normalizeMarket);
-    if (btc.length > 0) {
-      console.log(`📊 Polymarket CLOB: ${btc.length} live BTC scalp markets`);
-      return btc;
+    if (crypto.length > 0) {
+      console.log(`📊 Polymarket CLOB: ${crypto.length} live crypto scalp markets`);
+      return crypto;
     }
-    console.log(`📊 Polymarket CLOB: found BTC markets but none with valid expiry — using synthetic`);
+    console.log(`📊 Polymarket CLOB: found crypto markets but none with valid expiry — using synthetic`);
   } catch (err) {
     console.log("⚠️ Polymarket CLOB:", err.message);
   }
 
   // Try Gamma API (60s cache)
-  if (Date.now() - _gammaCacheTime < 60000 && _gammaCache) {
-    if (_gammaCache.length > 0) return _gammaCache;
-  } else {
-    try {
-      const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
-        params: { active: true, closed: false, limit: 100 }, timeout: 10000,
-      });
-      const all = Array.isArray(data) ? data : (data?.markets || []);
-      const btc = all
-        .filter(m => { const q = (m.question||m.groupItemTitle||"").toLowerCase(); return BTC_KW.some(kw => q.includes(kw)); })
-        .filter(isValidScalpMarket)
-        .map(normalizeMarket);
-      _gammaCache = btc; _gammaCacheTime = Date.now();
-      if (btc.length > 0) {
-        console.log(`📊 Gamma API: ${btc.length} live BTC scalp markets`);
-        return btc;
-      }
-    } catch (err) {
-      console.log("⚠️ Gamma API:", err.message);
+  if (Date.now() - _gammaCacheTime < 60000 && _gammaCache?.length > 0) {
+    return _gammaCache;
+  }
+  try {
+    const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
+      params: { active: true, closed: false, limit: 100 }, timeout: 10000,
+    });
+    const all = Array.isArray(data) ? data : (data?.markets || []);
+    const crypto = all
+      .filter(m => {
+        const q = (m.question || m.groupItemTitle || "").toLowerCase();
+        return CRYPTO_KW.some(kw => q.includes(kw));
+      })
+      .filter(isValidScalpMarket)
+      .map(normalizeMarket);
+    _gammaCache = crypto; _gammaCacheTime = Date.now();
+    if (crypto.length > 0) {
+      console.log(`📊 Gamma API: ${crypto.length} live crypto scalp markets`);
+      return crypto;
     }
+  } catch (err) {
+    console.log("⚠️ Gamma API:", err.message);
   }
 
   console.log("⚠️  No live markets found — using price-aware synthetic markets");
@@ -116,74 +123,145 @@ function normalizeMarket(m) {
   return m;
 }
 
-async function getSyntheticMarkets() {
-  let btcPrice = 105000;
-  try {
-    const { data } = await axios.get("https://api.kraken.com/0/public/Ticker", {
-      params: { pair: "XBTUSD" }, timeout: 5000,
-    });
-    btcPrice = parseFloat(data.result?.XXBTZUSD?.c?.[0] || btcPrice);
-  } catch {}
+// ── Live price fetcher for all coins ──────────────────────────────────────
+let _priceCache = {}, _priceCacheTime = 0;
 
-  const now  = Date.now();
-  const min  = n => new Date(now + n * 60000).toISOString();
-  const p    = btcPrice;
-  const r    = (pct) => Math.round((p * (1 + pct)) / 100) * 100;
-
-  const ssMode = isSharpShooter();
-
-  // STABLE IDs: use question string hash, not timestamp
-  // This means the same market is identifiable across scans —
-  // hasActiveBet() will correctly block re-entry until the bet resolves.
-  const mkts = [];
-
-  if (ssMode) {
-    // SharpShooter markets: 30-60 min so 3-5% TP has time to fire
-    // ATM markets near 50/50 — best for SS since either side can win
-    const q30atm  = `Will BTC be above $${r(0).toLocaleString()} in 30 minutes?`;
-    const q30bull = `Will BTC rise above $${r(0.003).toLocaleString()} in 30 minutes?`;
-    const q30bear = `Will BTC drop below $${r(-0.003).toLocaleString()} in 30 minutes?`;
-    const q45atm  = `Will BTC be above $${r(0).toLocaleString()} in 45 minutes?`;
-    const q45bull = `Will BTC reach $${r(0.005).toLocaleString()} in 45 minutes?`;
-    const q45bear = `Will BTC fall below $${r(-0.005).toLocaleString()} in 45 minutes?`;
-    const q60atm  = `Will BTC be above $${r(0).toLocaleString()} in 60 minutes?`;
-    const q60bull = `Will BTC hit $${r(0.008).toLocaleString()} within 60 minutes?`;
-    const q60bear = `Will BTC drop below $${r(-0.008).toLocaleString()} within 60 minutes?`;
-    const q90bull = `Will BTC reach $${r(0.012).toLocaleString()} in 90 minutes?`;
-
-    mkts.push(
-      { conditionId: stableId("ss30a", q30atm),  question: q30atm,  endDateIso: min(30), tokens: [{ tokenId: stableId("ss30ay", q30atm),  outcome:"Yes", price:0.50 }, { tokenId: stableId("ss30an", q30atm),  outcome:"No", price:0.50 }] },
-      { conditionId: stableId("ss30b", q30bull),  question: q30bull, endDateIso: min(30), tokens: [{ tokenId: stableId("ss30by", q30bull),  outcome:"Yes", price:0.40 }, { tokenId: stableId("ss30bn", q30bull),  outcome:"No", price:0.60 }] },
-      { conditionId: stableId("ss30c", q30bear),  question: q30bear, endDateIso: min(30), tokens: [{ tokenId: stableId("ss30cy", q30bear),  outcome:"Yes", price:0.40 }, { tokenId: stableId("ss30cn", q30bear),  outcome:"No", price:0.60 }] },
-      { conditionId: stableId("ss45a", q45atm),   question: q45atm,  endDateIso: min(45), tokens: [{ tokenId: stableId("ss45ay", q45atm),   outcome:"Yes", price:0.50 }, { tokenId: stableId("ss45an", q45atm),   outcome:"No", price:0.50 }] },
-      { conditionId: stableId("ss45b", q45bull),  question: q45bull, endDateIso: min(45), tokens: [{ tokenId: stableId("ss45by", q45bull),  outcome:"Yes", price:0.42 }, { tokenId: stableId("ss45bn", q45bull),  outcome:"No", price:0.58 }] },
-      { conditionId: stableId("ss45c", q45bear),  question: q45bear, endDateIso: min(45), tokens: [{ tokenId: stableId("ss45cy", q45bear),  outcome:"Yes", price:0.42 }, { tokenId: stableId("ss45cn", q45bear),  outcome:"No", price:0.58 }] },
-      { conditionId: stableId("ss60a", q60atm),   question: q60atm,  endDateIso: min(60), tokens: [{ tokenId: stableId("ss60ay", q60atm),   outcome:"Yes", price:0.50 }, { tokenId: stableId("ss60an", q60atm),   outcome:"No", price:0.50 }] },
-      { conditionId: stableId("ss60b", q60bull),  question: q60bull, endDateIso: min(60), tokens: [{ tokenId: stableId("ss60by", q60bull),  outcome:"Yes", price:0.38 }, { tokenId: stableId("ss60bn", q60bull),  outcome:"No", price:0.62 }] },
-      { conditionId: stableId("ss60c", q60bear),  question: q60bear, endDateIso: min(60), tokens: [{ tokenId: stableId("ss60cy", q60bear),  outcome:"Yes", price:0.38 }, { tokenId: stableId("ss60cn", q60bear),  outcome:"No", price:0.62 }] },
-      { conditionId: stableId("ss90b", q90bull),  question: q90bull, endDateIso: min(90), tokens: [{ tokenId: stableId("ss90by", q90bull),  outcome:"Yes", price:0.35 }, { tokenId: stableId("ss90bn", q90bull),  outcome:"No", price:0.65 }] },
-    );
-  } else {
-    // Normal mode: 15 min + 1h markets
-    const q15atm  = `Will BTC be above $${r(0).toLocaleString()} in 15 minutes?`;
-    const q15bull = `Will BTC rise above $${r(0.005).toLocaleString()} in the next 15 minutes?`;
-    const q15bear = `Will BTC drop below $${r(-0.005).toLocaleString()} in the next 15 minutes?`;
-    const q60bull = `Will BTC close above $${r(0.01).toLocaleString()} in 1 hour?`;
-    const q60atm  = `Will BTC be higher than current price in 1 hour?`;
-    const q60bear = `Will BTC drop below $${r(-0.01).toLocaleString()} in 1 hour?`;
-    const q90bull = `Will BTC reach $${r(0.015).toLocaleString()} in the next 90 minutes?`;
-
-    mkts.push(
-      { conditionId: stableId("n15a", q15atm),  question: q15atm,  endDateIso: min(15), tokens: [{ tokenId: stableId("n15ay", q15atm),  outcome:"Yes", price:0.49 }, { tokenId: stableId("n15an", q15atm),  outcome:"No", price:0.51 }] },
-      { conditionId: stableId("n15b", q15bull), question: q15bull, endDateIso: min(15), tokens: [{ tokenId: stableId("n15by", q15bull), outcome:"Yes", price:0.36 }, { tokenId: stableId("n15bn", q15bull), outcome:"No", price:0.64 }] },
-      { conditionId: stableId("n15c", q15bear), question: q15bear, endDateIso: min(15), tokens: [{ tokenId: stableId("n15cy", q15bear), outcome:"Yes", price:0.34 }, { tokenId: stableId("n15cn", q15bear), outcome:"No", price:0.66 }] },
-      { conditionId: stableId("n60a", q60bull), question: q60bull, endDateIso: min(60), tokens: [{ tokenId: stableId("n60ay", q60bull), outcome:"Yes", price:0.41 }, { tokenId: stableId("n60an", q60bull), outcome:"No", price:0.59 }] },
-      { conditionId: stableId("n60b", q60atm),  question: q60atm,  endDateIso: min(60), tokens: [{ tokenId: stableId("n60by", q60atm),  outcome:"Yes", price:0.52 }, { tokenId: stableId("n60bn", q60atm),  outcome:"No", price:0.48 }] },
-      { conditionId: stableId("n60c", q60bear), question: q60bear, endDateIso: min(60), tokens: [{ tokenId: stableId("n60cy", q60bear), outcome:"Yes", price:0.38 }, { tokenId: stableId("n60cn", q60bear), outcome:"No", price:0.62 }] },
-      { conditionId: stableId("n90a", q90bull), question: q90bull, endDateIso: min(90), tokens: [{ tokenId: stableId("n90ay", q90bull), outcome:"Yes", price:0.33 }, { tokenId: stableId("n90an", q90bull), outcome:"No", price:0.67 }] },
-    );
+async function getLivePrices() {
+  if (Date.now() - _priceCacheTime < 30000 && Object.keys(_priceCache).length > 0) {
+    return _priceCache;
   }
 
+  const prices = {
+    BTC: 105000, ETH: 3500, SOL: 180, BNB: 600, XRP: 0.60, DOGE: 0.18,
+  };
+
+  // Kraken for BTC + ETH
+  try {
+    const { data } = await axios.get("https://api.kraken.com/0/public/Ticker", {
+      params: { pair: "XBTUSD,ETHUSD" }, timeout: 5000,
+    });
+    const r = data.result || {};
+    if (r.XXBTZUSD?.c?.[0]) prices.BTC = parseFloat(r.XXBTZUSD.c[0]);
+    if (r.XETHZUSD?.c?.[0]) prices.ETH = parseFloat(r.XETHZUSD.c[0]);
+  } catch {}
+
+  // CoinGecko for SOL, BNB, XRP, DOGE
+  try {
+    const { data } = await axios.get(
+      "https://api.coingecko.com/api/v3/simple/price",
+      {
+        params: { ids: "solana,binancecoin,ripple,dogecoin", vs_currencies: "usd" },
+        timeout: 5000,
+      }
+    );
+    if (data.solana?.usd)      prices.SOL  = data.solana.usd;
+    if (data.binancecoin?.usd) prices.BNB  = data.binancecoin.usd;
+    if (data.ripple?.usd)      prices.XRP  = data.ripple.usd;
+    if (data.dogecoin?.usd)    prices.DOGE = data.dogecoin.usd;
+  } catch {}
+
+  _priceCache = prices;
+  _priceCacheTime = Date.now();
+  return prices;
+}
+
+// ── Synthetic market generator ─────────────────────────────────────────────
+async function getSyntheticMarkets() {
+  const prices = await getLivePrices();
+  const now    = Date.now();
+  const min    = n => new Date(now + n * 60000).toISOString();
+  const ssMode = isSharpShooter();
+
+  // Round price to nearest sensible increment per coin
+  const round = (price, coin) => {
+    const increments = { BTC: 100, ETH: 10, SOL: 1, BNB: 5, XRP: 0.01, DOGE: 0.001 };
+    const inc = increments[coin] || 1;
+    return Math.round(price / inc) * inc;
+  };
+
+  const fmt = (price, coin) => {
+    if (coin === "XRP" || coin === "DOGE") return `$${price.toFixed(coin === "DOGE" ? 4 : 3)}`;
+    return `$${round(price, coin).toLocaleString()}`;
+  };
+
+  // Percentage moves per coin (smaller coins move more)
+  const moves = {
+    BTC:  { sm: 0.003, md: 0.006, lg: 0.010 },
+    ETH:  { sm: 0.004, md: 0.008, lg: 0.015 },
+    SOL:  { sm: 0.005, md: 0.010, lg: 0.020 },
+    BNB:  { sm: 0.004, md: 0.008, lg: 0.015 },
+    XRP:  { sm: 0.005, md: 0.010, lg: 0.020 },
+    DOGE: { sm: 0.006, md: 0.012, lg: 0.025 },
+  };
+
+  const mkts = [];
+
+  for (const [coin, p] of Object.entries(prices)) {
+    const mv = moves[coin];
+    const up_sm = fmt(p * (1 + mv.sm), coin);
+    const up_md = fmt(p * (1 + mv.md), coin);
+    const up_lg = fmt(p * (1 + mv.lg), coin);
+    const dn_sm = fmt(p * (1 - mv.sm), coin);
+    const dn_md = fmt(p * (1 - mv.md), coin);
+    const atm   = fmt(p, coin);
+
+    if (ssMode) {
+      // SS: 30-90 min markets per coin
+      const questions = [
+        { q: `Will ${coin} be above ${atm} in 30 minutes?`,          exp: min(30),  yp: 0.50, pfx: `ss_${coin}_30a` },
+        { q: `Will ${coin} rise above ${up_sm} in 30 minutes?`,      exp: min(30),  yp: 0.40, pfx: `ss_${coin}_30b` },
+        { q: `Will ${coin} drop below ${dn_sm} in 30 minutes?`,      exp: min(30),  yp: 0.40, pfx: `ss_${coin}_30c` },
+        { q: `Will ${coin} be above ${atm} in 45 minutes?`,          exp: min(45),  yp: 0.50, pfx: `ss_${coin}_45a` },
+        { q: `Will ${coin} reach ${up_md} in 45 minutes?`,           exp: min(45),  yp: 0.42, pfx: `ss_${coin}_45b` },
+        { q: `Will ${coin} fall below ${dn_md} in 45 minutes?`,      exp: min(45),  yp: 0.42, pfx: `ss_${coin}_45c` },
+        { q: `Will ${coin} be above ${atm} in 60 minutes?`,          exp: min(60),  yp: 0.50, pfx: `ss_${coin}_60a` },
+        { q: `Will ${coin} hit ${up_lg} within 60 minutes?`,         exp: min(60),  yp: 0.38, pfx: `ss_${coin}_60b` },
+        { q: `Will ${coin} drop below ${dn_lg} within 60 minutes?`,  exp: min(60),  yp: 0.38, pfx: `ss_${coin}_60c` },
+        { q: `Will ${coin} reach ${up_lg} in 90 minutes?`,           exp: min(90),  yp: 0.35, pfx: `ss_${coin}_90b` },
+      ];
+      for (const { q, exp, yp, pfx } of questions) {
+        const np = parseFloat((1 - yp).toFixed(2));
+        mkts.push({
+          conditionId: stableId(pfx, q),
+          question: q,
+          endDateIso: exp,
+          coin,
+          tokens: [
+            { tokenId: stableId(pfx + "y", q), outcome: "Yes", price: yp },
+            { tokenId: stableId(pfx + "n", q), outcome: "No",  price: np },
+          ],
+        });
+      }
+    } else {
+      // Normal: 15-90 min markets per coin
+      const questions = [
+        { q: `Will ${coin} be above ${atm} in 15 minutes?`,        exp: min(15), yp: 0.49, pfx: `n_${coin}_15a` },
+        { q: `Will ${coin} rise above ${up_sm} in 15 minutes?`,    exp: min(15), yp: 0.36, pfx: `n_${coin}_15b` },
+        { q: `Will ${coin} drop below ${dn_sm} in 15 minutes?`,    exp: min(15), yp: 0.34, pfx: `n_${coin}_15c` },
+        { q: `Will ${coin} close above ${up_md} in 1 hour?`,       exp: min(60), yp: 0.41, pfx: `n_${coin}_60a` },
+        { q: `Will ${coin} be higher than now in 1 hour?`,         exp: min(60), yp: 0.52, pfx: `n_${coin}_60b` },
+        { q: `Will ${coin} drop below ${dn_md} in 1 hour?`,        exp: min(60), yp: 0.38, pfx: `n_${coin}_60c` },
+        { q: `Will ${coin} reach ${up_lg} in the next 90 minutes?`,exp: min(90), yp: 0.33, pfx: `n_${coin}_90a` },
+      ];
+      for (const { q, exp, yp, pfx } of questions) {
+        const np = parseFloat((1 - yp).toFixed(2));
+        mkts.push({
+          conditionId: stableId(pfx, q),
+          question: q,
+          endDateIso: exp,
+          coin,
+          tokens: [
+            { tokenId: stableId(pfx + "y", q), outcome: "Yes", price: yp },
+            { tokenId: stableId(pfx + "n", q), outcome: "No",  price: np },
+          ],
+        });
+      }
+    }
+  }
+
+  const coinCount = Object.keys(prices).length;
+  const mktCount  = mkts.length;
+  console.log(`⚡ Synthetic: ${mktCount} markets across ${coinCount} coins (BTC/ETH/SOL/BNB/XRP/DOGE)`);
   return mkts;
 }
 
