@@ -20,7 +20,7 @@ async function getLiveBtcPrice() {
   return cachedBtcPrice;
 }
 
-function estimateContractPrice(bet, currentBtc) {
+function estimateContractPrice(bet, currentBtc, ssMode = false) {
   if (!currentBtc || !bet.entryBtcPrice || !bet.entryPrice) return bet.entryPrice;
   const btcChangePct = (currentBtc - bet.entryBtcPrice) / bet.entryBtcPrice;
   const q = (bet.marketQuestion || "").toLowerCase();
@@ -34,8 +34,12 @@ function estimateContractPrice(bet, currentBtc) {
     isLong = isBullQ ? bet.side === "YES" : bet.side === "NO";
   }
 
+  // SS mode: use aggressive delta so small BTC moves actually register
+  // Normal: conservative delta
   const distFromMid = Math.abs(bet.entryPrice - 0.5);
-  const delta = Math.max(0.20, 0.45 - distFromMid * 0.4);
+  const delta = ssMode
+    ? Math.max(0.60, 1.2 - distFromMid * 0.5)   // SS: 0.6–1.2x amplifier
+    : Math.max(0.20, 0.45 - distFromMid * 0.4);  // Normal: 0.2–0.45x
   const priceMove = btcChangePct * delta * (isLong ? 1 : -1);
   return Math.max(0.02, Math.min(0.98, bet.entryPrice + priceMove));
 }
@@ -63,7 +67,7 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
   for (const bet of active) {
     if (!bet.entryPrice) continue;
 
-    const currentPrice = estimateContractPrice(bet, currentBtc);
+    const currentPrice = estimateContractPrice(bet, currentBtc, ssMode);
     const pnlPct = (currentPrice - bet.entryPrice) / bet.entryPrice;
 
     // Trailing stop
