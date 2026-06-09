@@ -29,7 +29,7 @@ export const botSettings = {
 
 const NORMAL_MAX          = 3;
 const SS_MAX              = 10;
-const SS_BET_SIZE         = 2.00;
+const SS_BET_SIZE         = 5.00;
 const SS_ENTRIES_PER_SCAN = 3;
 
 export async function runScanCycle() {
