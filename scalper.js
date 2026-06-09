@@ -56,14 +56,16 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
   // SharpShooter: ultra-tight TP so exits fire on small BTC moves in sideways markets
   // 0.5% TP = ~$0.01 profit per $2 bet, but 10 slots cycling fast adds up
   // SS mode: BTC move thresholds
-  // TP_LOW  = 0.2% BTC move → ~$0.004 profit on $2 bet  (fires often)
-  // TP_HIGH = 0.5% BTC move → ~$0.01 profit on $2 bet   (bigger win)
-  // STOP_LOSS = 0.4% against → cut losers fast
-  const TP_LOW   = ssMode ? 0.002 : parseFloat(process.env.TP_LOW    || "0.06");
-  const TP_HIGH  = ssMode ? 0.005 : parseFloat(process.env.TP_HIGH   || "0.14");
-  const STOP_LOSS= ssMode ? 0.004 : parseFloat(process.env.STOP_LOSS || "0.15");
-  const TRAIL_AT = ssMode ? 0.002 : parseFloat(process.env.TRAIL_AFTER|| "0.05");
-  const TRAIL_PCT= ssMode ? 0.001 : parseFloat(process.env.TRAIL_PCT  || "0.035");
+  // TP_LOW  = 0.4% BTC move → ~$0.02 profit on $5 bet
+  // TP_HIGH = 0.8% BTC move → ~$0.04 profit on $5 bet
+  // STOP_LOSS = 0.5% against → hard cut
+  // Timeout extended to 3 min to give BTC time to actually move
+  // SS: TP_LOW=1% BTC move → ~$0.10 on $10 bet, TP_HIGH=1.5% → ~$0.15
+  const TP_LOW   = ssMode ? 0.010 : parseFloat(process.env.TP_LOW    || "0.06");
+  const TP_HIGH  = ssMode ? 0.015 : parseFloat(process.env.TP_HIGH   || "0.14");
+  const STOP_LOSS= ssMode ? 0.008 : parseFloat(process.env.STOP_LOSS || "0.15");
+  const TRAIL_AT = ssMode ? 0.010 : parseFloat(process.env.TRAIL_AFTER|| "0.05");
+  const TRAIL_PCT= ssMode ? 0.003 : parseFloat(process.env.TRAIL_PCT  || "0.035");
 
   const exits = [];
   const trailState = checkScalpExits._trail || (checkScalpExits._trail = new Map());
@@ -98,7 +100,7 @@ export async function checkScalpExits(markets, signals, dryRun = true, ssMode = 
 
     // SharpShooter: force-close after 2 min regardless of price — guarantees slot cycling
     const heldMs = bet.placedAt ? Date.now() - new Date(bet.placedAt).getTime() : 0;
-    const timeExpired = ssMode && heldMs >= 90 * 1000;
+    const timeExpired = ssMode && heldMs >= 5 * 60 * 1000;
 
     if      (pnlPct >= TP_HIGH)                                { shouldExit = true; exitReason = "take_profit_max"; }
     else if (pnlPct >= TP_LOW)                                 { shouldExit = true; exitReason = "take_profit"; }
