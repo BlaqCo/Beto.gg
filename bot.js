@@ -28,9 +28,12 @@ export const botSettings = {
 };
 
 const NORMAL_MAX          = 3;
-const SS_MAX              = 20;
-const SS_BET_SIZE         = 10.00;
-const SS_ENTRIES_PER_SCAN = 5;
+const SS_MAX              = 10;
+const SS_MIN_CONFIDENCE   = 0.25;  // Only enter at 25%+ confidence (was 15%)
+const SS_MAX_DAILY_LOSS   = 50;    // Stop all bets if down 0 in a session
+const SS_BET_SIZE_LIVE    = 10.00; // Actual bet size
+const SS_BET_SIZE         = 5.00;
+const SS_ENTRIES_PER_SCAN = 3;
 
 export async function runScanCycle() {
   if (!botSettings.enabled) return { signals: null, exits: [], betsPlaced: 0 };
@@ -79,6 +82,14 @@ export async function runScanCycle() {
   }
 
   // ── New entries ──
+  // Daily drawdown protection: stop betting if session loss exceeds limit
+  const sessionStartPnl = runState.sessionStartPnl ?? (runState.sessionStartPnl = runState.totalPnl ?? 0);
+  const sessionPnl = (runState.totalPnl ?? 0) - sessionStartPnl;
+  if (sessionPnl < -SS_MAX_DAILY_LOSS) {
+    console.log(`  🛑 Daily loss limit hit ($${sessionPnl.toFixed(2)}) — pausing entries`);
+    return exits;
+  }
+
   const scalpMarkets = filterScalpMarkets(allMarkets);
   let betsPlaced = 0;
   const balance  = await getBalance();
@@ -107,23 +118,35 @@ export async function runScanCycle() {
     let finalBet, decision;
 
     if (SS_MODE) {
-      // SharpShooter: only enter when there is actual momentum (not flat/dead market)
-      // Require at least 0.05% BTC move in last candle OR bias confidence > 15%
-      const btcMomentum = Math.abs(signals.bias) > 0.08 || signals.confidence > 0.15;
-      if (!btcMomentum) continue;
+      // FADE THE EXTREME: Only bet when confidence is strong AND direction is clear
+      // Low confidence = coin flip = no edge = skip
+      if (signals.confidence < SS_MIN_CONFIDENCE) continue;
+      if (Math.abs(signals.bias) < 0.10) continue;
 
       finalBet = SS_BET_SIZE;
       if (balance < finalBet) continue;
 
-      const side = signals.bias >= 0 ? "YES" : "NO";
+      // Smart side selection: match bet side to question direction
+      // e.g. bearish signal → bet NO on bullish questions, YES on bearish questions
+      const q = (market.question || "").toLowerCase();
+      const isBullQ = q.includes("rise above") || q.includes("reach") ||
+                      q.includes("hit") || q.includes("above") || q.includes("be above");
+      const isBearQ = q.includes("drop below") || q.includes("fall below") || q.includes("below");
+      const isBear  = signals.bias < 0;
+
+      let side;
+      if (isBullQ)      side = isBear ? "NO" : "YES";   // bearish → NO on bull Q
+      else if (isBearQ) side = isBear ? "YES" : "NO";   // bearish → YES on bear Q
+      else              side = isBear ? "NO" : "YES";   // ATM: just take direction
+
       decision = {
         shouldBet:   true,
         side,
         betSize:     finalBet,
-        edge:        Math.abs(signals.bias) * 0.5,
-        trueProb:    0.5 + Math.abs(signals.bias) * 0.3,
+        edge:        signals.confidence * Math.abs(signals.bias),
+        trueProb:    0.5 + signals.confidence * 0.4,
         impliedProb: 0.50,
-        reasoning:   `⚡ SharpShooter $2 flat | bias:${signals.bias.toFixed(3)} → ${side}`,
+        reasoning:   `⚡SS | bias:${signals.bias.toFixed(3)} conf:${(signals.confidence*100).toFixed(0)}% | ${side} on ${isBullQ?"BULL":isBearQ?"BEAR":"ATM"} Q`,
       };
     } else {
       // Normal mode: full Kelly
