@@ -203,6 +203,7 @@ async function getSyntheticMarkets() {
     const up_lg = fmt(p * (1 + mv.lg), coin);
     const dn_sm = fmt(p * (1 - mv.sm), coin);
     const dn_md = fmt(p * (1 - mv.md), coin);
+    const dn_lg = fmt(p * (1 - mv.lg), coin);
     const atm   = fmt(p, coin);
 
     if (ssMode) {
