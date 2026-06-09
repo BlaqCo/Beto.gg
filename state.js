@@ -87,8 +87,9 @@ export function closeBet(conditionId, { exitPrice, reason, pnl }) {
   // Real exit: take_profit, stop_loss, trail_stop, near_expiry, timeout
   bet.pnl = pnl;
 
-  if (pnl > 0) { state.wins++;   bet.status = "won"; }
-  else         { state.losses++; bet.status = "lost"; }
+  if (pnl > 0)      { state.wins++;   bet.status = "won"; }
+  else if (pnl < 0) { state.losses++; bet.status = "lost"; }
+  else              { bet.status = "breakeven"; } // timeout at /bin/sh = neutral
 
   if (reason === "take_profit" || reason === "take_profit_max" || reason === "trail_stop" || reason === "timeout") {
     state.scalps++;
