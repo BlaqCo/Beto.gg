@@ -91,6 +91,15 @@ export async function runScanCycle() {
     const id = market.conditionId || market.condition_id;
     if (hasActiveBet(id)) continue;
 
+    // SS: also skip if we already have ANY active bet on this question (prevents YES+NO on same market)
+    if (SS_MODE) {
+      const q = (market.question || "").toLowerCase().trim();
+      const alreadyOnQuestion = getAllActiveBets().some(b =>
+        (b.marketQuestion || "").toLowerCase().trim() === q
+      );
+      if (alreadyOnQuestion) continue;
+    }
+
     // SS has a lower quality bar — any market with time left qualifies
     const qualityThreshold = SS_MODE ? 0.05 : 0.10;
     if (scalpQuality(market, signals) < qualityThreshold) continue;
