@@ -164,6 +164,7 @@ export async function runScanCycle() {
         strategy:         SS_MODE ? "SHARP_SHOOTER" : signals.activeStrategy,
         reasoning:        decision.reasoning,
         entryBtcPrice:    signals.currentPrice,
+        entryCoin:        market.coin || "BTC",
         sharpShooter:     SS_MODE,
       });
       betsPlaced++;
