@@ -1,296 +1,283 @@
 /**
- * bot.js — PolyBettor scan engine v3
+ * scalper.js — PolyBettor exit engine v2.1 (self-healing)
  *
- * ★ VALUE MODE (env VALUE_MODE=true) — the favorite-longshot strategy ★
- * ─────────────────────────────────────────────────────────────────────
- * The single most documented edge in prediction market research:
- * high-probability "favorite" contracts are systematically UNDERPRICED
- * and longshots are systematically OVERPRICED. (Thaler & Ziemba 1988;
- * Snowberg & Wolfers 2010; confirmed on Polymarket/Kalshi 2024-2026.)
+ * v2.1 FIX: stored bets were losing their coin identity (state.js doesn't
+ * persist entryCoin/valueBet/strike/direction), so exits priced every
+ * position against BTC's spot — instantly stop-lossing non-BTC bets and
+ * freezing others at 98¢. The engine now derives EVERYTHING it needs from
+ * the question text, which always persists:
+ *   • coin       → parsed from "Will XRP drop below..." 
+ *   • strike     → parsed from "$1.095"
+ *   • direction  → parsed from "drop below" / "rise above"
+ *   • value bet  → bet.valueBet OR strategy "VALUE" OR reasoning tag
+ * Plus a zombie guard: any VALUE bet held past 95 min force-resolves.
  *
- * Our own dry-run data confirms it:
- *   entries ≥50¢ → 75% wins, +$15.88
- *   entries <45¢ → 11% wins, −$19.48
- *
- * Rules:
- *   1. Price every market with Black-Scholes binary model
- *   2. ONLY buy sides whose model fair value is 65–93¢ (favorites)
- *   3. ONLY enter when fair value beats market price by ≥6¢
- *      (covers 2% fee + 0.5¢ slippage + model error)
- *   4. 10–75 min to expiry (the 15m–1h sweet spot)
- *   5. Quarter-Kelly sizing, $2–$8 per bet
- *   6. Max 2 positions per coin (diversify), 8 concurrent, 2/scan
- *   7. Hold to expiry — favorites converge to $1. Disaster stop at
- *      fair ≤40¢, profit-lock at fair ≥97¢. $50 daily loss limit.
- *
- * Mode priority: VALUE_MODE > SHARP_SHOOTER > normal
+ * Dry-run fidelity (unchanged from v2):
+ *   • Expiry resolves on the ACTUAL coin price vs the strike — no RNG
+ *   • TP/SL/timeout SELL at fair value minus spread, like a real sell
  */
+import axios from "axios";
+import { getAllActiveBets, closeBet } from "./state.js";
 
-import { computeSignals }                                     from "./signals.js";
-import { fetchBTCMarkets, placeOrder, getBalance }            from "./polymarket.js";
-import { recordBet, hasActiveBet, recordScan, getStats,
-         getAllActiveBets }                                    from "./state.js";
-import { checkScalpExits, filterScalpMarkets, scalpQuality,
-         priceMarket }                                         from "./scalper.js";
-import { sizeBet }                                            from "./kelly.js";
-import { scoreSentiment }                                     from "./sentiment.js";
+const POLYMARKET_FEE = 0.02;  // 2% fee on gross winnings
+const SLIPPAGE       = 0.005; // 0.5¢ spread on fills
 
-export const botSettings = {
-  strategies:   { TREND_SCALP: true, MOMENTUM: true, MEAN_REVERT: true },
-  autoMode:     true,
-  enabled:      true,
-  dryRun:       process.env.DRY_RUN !== "false",
-  sharpShooter: process.env.SHARP_SHOOTER === "true",
-  valueMode:    process.env.VALUE_MODE === "true",
-};
+let _priceCache = {}, _priceFetchTime = 0;
 
-// ── Normal / SharpShooter constants ──
-const NORMAL_MAX          = 3;
-const SS_MAX              = 10;
-const SS_MIN_CONFIDENCE   = 0.25;
-const SS_BET_SIZE         = 5.00;
-const SS_ENTRIES_PER_SCAN = 3;
-
-// ── VALUE strategy constants ──
-const V_MAX             = 8;     // concurrent positions
-const V_ENTRIES         = 2;     // entries per scan
-const V_MIN_EDGE        = 0.06;  // fair − price ≥ 6¢
-const V_FAV_MIN         = 0.65;  // favorite zone floor
-const V_FAV_MAX         = 0.93;  // ceiling — above this payoff < fee+slip
-const V_MIN_MINUTES     = 10;
-const V_MAX_MINUTES     = 75;
-const V_MAX_PER_COIN    = 2;
-const V_KELLY_FRACTION  = 0.25;  // quarter Kelly
-const V_MIN_BET         = 2.00;
-const V_MAX_BET         = 8.00;
-const MAX_DAILY_LOSS    = 50;    // all modes
-
-const SLIPPAGE = 0.005;
-
-function summary(exits, betsPlaced, maxConc) {
-  const s = getStats();
-  console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${maxConc} | P&L:$${s.pnl} | Scalps:${s.scalps} ──`);
+export async function getLivePrices() {
+  if (Date.now() - _priceFetchTime < 8000 && Object.keys(_priceCache).length > 0) return _priceCache;
+  const p = { BTC: null, ETH: null, SOL: null, BNB: null, XRP: null, DOGE: null };
+  try {
+    const { data } = await axios.get("https://api.kraken.com/0/public/Ticker",
+      { params: { pair: "XBTUSD,ETHUSD" }, timeout: 4000 });
+    const r = data.result || {};
+    if (r.XXBTZUSD?.c?.[0]) p.BTC = parseFloat(r.XXBTZUSD.c[0]);
+    if (r.XETHZUSD?.c?.[0]) p.ETH = parseFloat(r.XETHZUSD.c[0]);
+  } catch {}
+  try {
+    const { data } = await axios.get(
+      "https://api.coingecko.com/api/v3/simple/price",
+      { params: { ids: "solana,binancecoin,ripple,dogecoin", vs_currencies: "usd" }, timeout: 4000 }
+    );
+    if (data.solana?.usd)      p.SOL  = data.solana.usd;
+    if (data.binancecoin?.usd) p.BNB  = data.binancecoin.usd;
+    if (data.ripple?.usd)      p.XRP  = data.ripple.usd;
+    if (data.dogecoin?.usd)    p.DOGE = data.dogecoin.usd;
+  } catch {}
+  _priceCache = { ..._priceCache, ...Object.fromEntries(Object.entries(p).filter(([,v]) => v)) };
+  _priceFetchTime = Date.now();
+  return _priceCache;
 }
 
-export async function runScanCycle() {
-  if (!botSettings.enabled) return { signals: null, exits: [], betsPlaced: 0 };
+/** Parse the coin straight out of the question text — ground truth. */
+export function coinFromQuestion(question) {
+  const q = (question || "").toLowerCase();
+  if (/\b(btc|bitcoin)\b/.test(q))      return "BTC";
+  if (/\b(eth|ethereum)\b/.test(q))     return "ETH";
+  if (/\b(sol|solana)\b/.test(q))       return "SOL";
+  if (/\b(bnb|binance)\b/.test(q))      return "BNB";
+  if (/\b(xrp|ripple)\b/.test(q))       return "XRP";
+  if (/\b(doge|dogecoin)\b/.test(q))    return "DOGE";
+  return null;
+}
 
-  const DRY_RUN    = botSettings.dryRun;
-  const VALUE_MODE = botSettings.valueMode;
-  const SS_MODE    = !VALUE_MODE && botSettings.sharpShooter;
-  const MAX_CONC   = VALUE_MODE ? V_MAX : SS_MODE ? SS_MAX : NORMAL_MAX;
+/** The coin for a bet: question text first, stored field as fallback. */
+function resolveCoin(bet) {
+  return coinFromQuestion(bet.marketQuestion) || bet.entryCoin || "BTC";
+}
 
-  // ── Signals ──
-  let signals;
-  try {
-    signals = await computeSignals(botSettings.strategies, botSettings.autoMode);
-  } catch (err) {
-    console.error("Signal error:", err.message);
-    return { signals: null, exits: [], betsPlaced: 0 };
+/** Is this a VALUE-strategy bet? Multiple fallbacks since fields may not persist. */
+function isValueBet(bet) {
+  return bet.valueBet === true ||
+         bet.strategy === "VALUE" ||
+         /VALUE/.test(bet.reasoning || "");
+}
+
+function getCoinPrice(prices, coin) {
+  return prices[(coin || "BTC").toUpperCase()] || null;
+}
+
+// Normal CDF approximation (Abramowitz & Stegun)
+function normalCDF(x) {
+  const a = 0.2316419, b1 = 0.319381530, b2 = -0.356563782,
+        b3 = 1.781477937, b4 = -1.821255978, b5 = 1.330274429;
+  const t = 1 / (1 + a * Math.abs(x));
+  const poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))));
+  const n = 1 - (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-0.5 * x * x) * poly;
+  return x >= 0 ? n : 1 - n;
+}
+
+// Annualized vols by coin (~30-day realized)
+const ANNUAL_VOL = { BTC: 0.80, ETH: 1.00, SOL: 1.50, BNB: 1.00, XRP: 1.20, DOGE: 1.80 };
+
+function binaryCallProb(spot, target, timeRemainingMs, coin) {
+  if (!spot || !target || timeRemainingMs <= 0) return 0.5;
+  const T = Math.max(timeRemainingMs, 30000) / (365.25 * 24 * 3600 * 1000); // years
+  const sigma = ANNUAL_VOL[(coin || "BTC").toUpperCase()] || 0.80;
+  const lnSK = Math.log(spot / target);
+  const d2 = (lnSK - 0.5 * sigma * sigma * T) / (sigma * Math.sqrt(T));
+  return normalCDF(d2);
+}
+
+/** Parse { strike, direction } from a question. */
+export function parseQuestion(question) {
+  const q = (question || "").toLowerCase();
+  const priceMatch = q.match(/\$([0-9,]+(?:\.[0-9]+)?)/);
+  const strike = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, "")) : null;
+  const isBear = q.includes("drop below") || q.includes("fall below") ||
+                 (q.includes("below") && !q.includes("above"));
+  return { strike, direction: isBear ? "below" : "above" };
+}
+
+/**
+ * Price a market for entry decisions: { probYes, strike, direction, spot, coin }.
+ * Coin comes from the question text — never trusts a possibly-missing field.
+ */
+export async function priceMarket(market) {
+  const { strike, direction } = parseQuestion(market.question);
+  if (!strike) return null;
+  const coin = coinFromQuestion(market.question) || market.coin || "BTC";
+  const prices = await getLivePrices();
+  const spot   = getCoinPrice(prices, coin);
+  if (!spot) return null;
+  const msLeft = market.endDateIso ? new Date(market.endDateIso) - Date.now() : 30 * 60 * 1000;
+  if (msLeft <= 0) return null;
+  const probAbove = binaryCallProb(spot, strike, msLeft, coin);
+  const probYes   = direction === "above" ? probAbove : 1 - probAbove;
+  return { probYes: Math.max(0.02, Math.min(0.98, probYes)), strike, direction, spot, coin };
+}
+
+/** Fair value of THIS bet's side right now — coin derived from question. */
+function getContractFairValue(bet, currentCoinPrice) {
+  if (!currentCoinPrice || !bet.entryPrice) return bet.entryPrice;
+  const { strike, direction } = parseQuestion(bet.marketQuestion);
+  if (!strike) return bet.entryPrice;
+
+  const msLeft = bet.marketEndDateIso
+    ? new Date(bet.marketEndDateIso) - Date.now()
+    : 30 * 60 * 1000;
+
+  const probAbove = binaryCallProb(currentCoinPrice, strike, msLeft, resolveCoin(bet));
+  const probYes   = direction === "above" ? probAbove : 1 - probAbove;
+  const fair      = bet.side === "YES" ? probYes : 1 - probYes;
+  return Math.max(0.02, Math.min(0.98, fair));
+}
+
+/** Binary resolution P&L. */
+function calcPnl(bet, won) {
+  const fillPrice = Math.min(0.97, bet.entryPrice + SLIPPAGE);
+  const shares    = bet.betSize / fillPrice;
+  if (won) {
+    const gross = shares - bet.betSize;
+    return parseFloat((gross * (1 - POLYMARKET_FEE)).toFixed(4));
   }
+  return parseFloat((-bet.betSize).toFixed(4));
+}
 
-  const modeTag = VALUE_MODE ? "🎯VALUE" : SS_MODE ? "⚡SHARP" : (botSettings.autoMode ? "AUTO" : "MANUAL");
-  console.log(`\n── SCAN ${new Date().toISOString()} [${modeTag}] ──`);
-  console.log(`₿ $${signals.currentPrice?.toFixed(1)} | Strategy: ${VALUE_MODE ? "VALUE" : SS_MODE ? "SHARP_SHOOTER" : signals.activeStrategy} | Bias: ${signals.bias.toFixed(3)} ${signals.bias > 0.1 ? "↑BULL" : signals.bias < -0.1 ? "↓BEAR" : "→FLAT"} | Conf: ${(signals.confidence * 100).toFixed(0)}%`);
+/** Pre-expiry market sell at fair value minus spread. */
+function calcPreExitPnl(bet, fairValue) {
+  const fillPrice  = Math.min(0.97, bet.entryPrice + SLIPPAGE);
+  const sellPrice  = Math.max(0.02, fairValue - SLIPPAGE);
+  const shares     = bet.betSize / fillPrice;
+  const gross      = shares * sellPrice - bet.betSize;
+  const fee        = gross > 0 ? gross * POLYMARKET_FEE : 0;
+  return { pnl: parseFloat((gross - fee).toFixed(4)), exitPrice: sellPrice };
+}
 
-  recordScan();
+export async function checkScalpExits(markets, signals, dryRun = true, ssMode = false) {
+  const active = getAllActiveBets();
+  if (active.length === 0) return { exits: [], currentBtc: null };
 
-  // ── Fetch markets ──
-  let allMarkets = [];
-  try { allMarkets = await fetchBTCMarkets(); }
-  catch (err) {
-    console.error("Market fetch error:", err.message);
-    return { signals, exits: [], betsPlaced: 0 };
-  }
+  const prices     = await getLivePrices();
+  const currentBtc = prices.BTC || null;
 
-  // ── Exits first ──
-  let exits = [];
-  if (getAllActiveBets().length > 0) {
-    const result = await checkScalpExits(allMarkets, signals, DRY_RUN, SS_MODE);
-    exits = result.exits || [];
-  }
+  const TIMEOUT_MS    = 3 * 60 * 1000;   // SS bets
+  const V_MAX_HOLD_MS = 95 * 60 * 1000;  // zombie guard: force-resolve VALUE bets
+  const TP_THRESHOLD  = 0.80;
+  const SL_THRESHOLD  = 0.50;
 
-  // ── Caps ──
-  if (getAllActiveBets().length >= MAX_CONC) {
-    console.log(`  ⏸ At max concurrent bets (${getAllActiveBets().length}/${MAX_CONC})`);
-    summary(exits, 0, MAX_CONC);
-    return { signals, exits, betsPlaced: 0 };
-  }
+  const exits = [];
 
-  const currentPnl = parseFloat(getStats().pnl);
-  if (currentPnl < -MAX_DAILY_LOSS) {
-    console.log(`  🛑 Daily loss limit hit ($${currentPnl.toFixed(2)}) — pausing entries`);
-    summary(exits, 0, MAX_CONC);
-    return { signals, exits, betsPlaced: 0 };
-  }
+  for (const bet of active) {
+    if (!bet.entryPrice) continue;
 
-  // Shuffle so all 6 coins get a fair shot
-  const scalpMarkets = filterScalpMarkets(allMarkets).sort(() => Math.random() - 0.5);
-  let betsPlaced     = 0;
-  const balance      = await getBalance();
-  const maxPerScan   = VALUE_MODE ? V_ENTRIES : SS_MODE ? SS_ENTRIES_PER_SCAN : 1;
+    const coin      = resolveCoin(bet);
+    const coinPrice = getCoinPrice(prices, coin);
+    const valueBet  = isValueBet(bet);
+    const heldMs    = bet.placedAt ? Date.now() - new Date(bet.placedAt).getTime() : 0;
+    const fairValue = getContractFairValue(bet, coinPrice);
+    const valueChangePct = (fairValue - bet.entryPrice) / bet.entryPrice;
 
-  for (const market of scalpMarkets) {
-    if (betsPlaced >= maxPerScan) break;
-    if (getAllActiveBets().length >= MAX_CONC) break;
+    const endDate = bet.marketEndDateIso;
+    const msLeft  = endDate ? new Date(endDate) - Date.now() : Infinity;
 
-    const id = market.conditionId || market.condition_id;
-    if (hasActiveBet(id)) continue;
+    let shouldExit = false, exitReason = "";
 
-    // One position per question, any mode
-    const q = (market.question || "").toLowerCase().trim();
-    if (getAllActiveBets().some(b => (b.marketQuestion || "").toLowerCase().trim() === q)) continue;
-
-    let finalBet, decision, pricing = null;
-
-    if (VALUE_MODE) {
-      // ════════ VALUE STRATEGY ════════
-      const minLeft = market.endDateIso
-        ? (new Date(market.endDateIso) - Date.now()) / 60000 : null;
-      if (!minLeft || minLeft < V_MIN_MINUTES || minLeft > V_MAX_MINUTES) continue;
-
-      // Diversification: max 2 per coin
-      const coin = (market.coin || "BTC").toUpperCase();
-      const onCoin = getAllActiveBets().filter(b => (b.entryCoin || "BTC").toUpperCase() === coin).length;
-      if (onCoin >= V_MAX_PER_COIN) continue;
-
-      pricing = await priceMarket(market);
-      if (!pricing) continue;
-      const { probYes, strike, direction } = pricing;
-
-      // Evaluate both sides — pick the one with the most edge
-      let best = null;
-      for (const token of market.tokens || []) {
-        const sideName = (token.outcome || "").toUpperCase();
-        if (sideName !== "YES" && sideName !== "NO") continue;
-        let price = token.price > 1 ? token.price / 100 : token.price;
-        if (!price || price <= 0 || price >= 1) continue;
-        const sideFV = sideName === "YES" ? probYes : 1 - probYes;
-        const edge   = sideFV - (price + SLIPPAGE);
-        if (!best || edge > best.edge) best = { sideName, price, sideFV, edge, token };
-      }
-      if (!best) continue;
-
-      // FILTERS: real edge + favorite zone only. Never buy longshots.
-      if (best.edge < V_MIN_EDGE) continue;
-      if (best.sideFV < V_FAV_MIN || best.sideFV > V_FAV_MAX) continue;
-
-      // BTC signal veto: don't buy a favorite that momentum is attacking
-      if (coin === "BTC" && Math.abs(signals.bias) > 0.30) {
-        const isLong = (direction === "above") === (best.sideName === "YES");
-        if (( isLong && signals.bias < -0.30) ||
-            (!isLong && signals.bias >  0.30)) continue;
-      }
-
-      // Quarter-Kelly sizing
-      const fill = best.price + SLIPPAGE;
-      const b    = (1 / fill) - 1;             // net odds
-      const p    = best.sideFV;
-      const fStar = (b * p - (1 - p)) / b;     // full Kelly fraction
-      if (fStar <= 0) continue;
-      const maxEnv = parseFloat(process.env.MAX_BET_SIZE || "10");
-      finalBet = parseFloat(Math.min(
-        Math.max(balance * fStar * V_KELLY_FRACTION, V_MIN_BET),
-        V_MAX_BET, maxEnv, balance * 0.15
-      ).toFixed(2));
-      if (balance < finalBet || finalBet < V_MIN_BET) continue;
-
-      decision = {
-        shouldBet:   true,
-        side:        best.sideName,
-        betSize:     finalBet,
-        edge:        best.edge,
-        trueProb:    best.sideFV,
-        impliedProb: best.price,
-        reasoning:   `🎯VALUE | fair:${(best.sideFV*100).toFixed(0)}¢ vs price:${(best.price*100).toFixed(0)}¢ | edge:+${(best.edge*100).toFixed(1)}¢ | Kelly:$${finalBet}`,
-      };
-
-    } else if (SS_MODE) {
-      // ════════ SHARP SHOOTER (fade the extreme) ════════
-      if (scalpQuality(market, signals) < 0.05) continue;
-      if (signals.confidence < SS_MIN_CONFIDENCE) continue;
-      if (Math.abs(signals.bias) < 0.10) continue;
-
-      finalBet = SS_BET_SIZE;
-      if (balance < finalBet) continue;
-
-      const ql      = q;
-      const isBullQ = ql.includes("rise above") || ql.includes("reach") ||
-                      ql.includes("hit")        || ql.includes("above");
-      const isBearQ = ql.includes("drop below") || ql.includes("fall below") ||
-                      (ql.includes("below") && !ql.includes("above"));
-      const isBear  = signals.bias < 0;
-
-      let side;
-      if (isBullQ)      side = isBear ? "NO"  : "YES";
-      else if (isBearQ) side = isBear ? "YES" : "NO";
-      else              side = isBear ? "NO"  : "YES";
-
-      decision = {
-        shouldBet: true, side, betSize: finalBet,
-        edge:        signals.confidence * Math.abs(signals.bias),
-        trueProb:    0.5 + signals.confidence * 0.4,
-        impliedProb: 0.50,
-        reasoning:   `⚡SS | bias:${signals.bias.toFixed(3)} conf:${(signals.confidence*100).toFixed(0)}%`,
-      };
-
+    if (msLeft <= 0 || (valueBet && heldMs >= V_MAX_HOLD_MS)) {
+      shouldExit = true; exitReason = "expiry";
+    } else if (valueBet) {
+      // ── VALUE exits: ride favorites to resolution ──
+      if (fairValue >= 0.97)      { shouldExit = true; exitReason = "take_profit"; }
+      else if (fairValue <= 0.40) { shouldExit = true; exitReason = "stop_loss"; }
     } else {
-      // ════════ NORMAL (Kelly + sentiment) ════════
-      if (scalpQuality(market, signals) < 0.10) continue;
-      let sentiment = { sentimentBias: 0 };
-      try { sentiment = await scoreSentiment(signals, market); } catch {}
-      decision = sizeBet(signals, sentiment, market);
-      if (!decision.shouldBet) continue;
-
-      const maxBet = parseFloat(process.env.MAX_BET_SIZE || "5");
-      finalBet = parseFloat(Math.min(decision.betSize, maxBet, balance * 0.15).toFixed(2));
-      if (finalBet < 1 || balance < finalBet) continue;
+      // ── SS / normal exits ──
+      if (msLeft < 60 * 1000 && valueChangePct < 0)        { shouldExit = true; exitReason = "near_expiry"; }
+      else if (valueChangePct >= TP_THRESHOLD)             { shouldExit = true; exitReason = "take_profit"; }
+      else if (valueChangePct <= -SL_THRESHOLD)            { shouldExit = true; exitReason = "stop_loss"; }
+      else if (bet.sharpShooter && heldMs >= TIMEOUT_MS)   { shouldExit = true; exitReason = "timeout"; }
     }
 
-    const token = VALUE_MODE
-      ? (market.tokens || []).find(t => (t.outcome || "").toUpperCase() === decision.side)
-      : market.tokens?.find(t => t.outcome?.toLowerCase() === decision.side.toLowerCase());
-    if (!token) continue;
-
-    const entryPrice = token.price > 1 ? token.price / 100 : token.price;
-    const minsLeft   = market.endDateIso
-      ? ((new Date(market.endDateIso) - Date.now()) / 60000).toFixed(0)
-      : "?";
-
-    try {
-      const order = await placeOrder({
-        tokenId: token.tokenId || token.token_id,
-        side: "BUY", size: finalBet, price: entryPrice,
-        marketQuestion: market.question,
-      });
-
-      recordBet({
-        market,
-        side:               decision.side,
-        betSize:            finalBet,
-        edge:               decision.edge,
-        trueProbability:    decision.trueProb,
-        impliedProbability: decision.impliedProb,
-        orderId:            order.orderID || order.id,
-        entryPrice,
-        strategy:           VALUE_MODE ? "VALUE" : SS_MODE ? "SHARP_SHOOTER" : signals.activeStrategy,
-        reasoning:          decision.reasoning,
-        entryBtcPrice:      pricing?.spot ?? signals.currentPrice,
-        entryCoin:          market.coin || "BTC",
-        sharpShooter:       SS_MODE,
-        valueBet:           VALUE_MODE,
-        strike:             pricing?.strike    ?? null,
-        direction:          pricing?.direction ?? null,
-      });
-      betsPlaced++;
-
-      const tag = VALUE_MODE ? "🎯VALUE" : SS_MODE ? "⚡SHARP" : signals.activeStrategy;
-      console.log(`  ✅ ENTRY ${decision.side} $${finalBet} @ ${(entryPrice*100).toFixed(1)}¢ | ${minsLeft}min | ${tag} | ${decision.reasoning || ""} | ${market.question?.slice(0,45)}`);
-    } catch (err) {
-      console.error(`  ❌ Order failed: ${err.message}`);
+    if (!shouldExit) {
+      const coinMov = coinPrice && bet.entryBtcPrice
+        ? ((coinPrice - bet.entryBtcPrice) / bet.entryBtcPrice * 100).toFixed(3) + "%"
+        : "?%";
+      const tag = valueBet ? " 🎯" : bet.sharpShooter ? " ⚡" : "";
+      console.log(`  📊 HOLD${tag} ${coin.padEnd(4)} ${bet.side} $${bet.betSize} | entry:${(bet.entryPrice*100).toFixed(0)}¢ fair:${(fairValue*100).toFixed(0)}¢ | Δ${valueChangePct >= 0 ? "+" : ""}${(valueChangePct*100).toFixed(1)}% | coin:${coinMov}`);
+      continue;
     }
+
+    // ── Resolve ──────────────────────────────────────────────────────
+    let finalPnl, exitPrice, won;
+
+    if (exitReason === "expiry") {
+      // ★ REAL resolution: did THIS coin actually end above/below the strike?
+      const { strike, direction } = parseQuestion(bet.marketQuestion);
+      if (strike && coinPrice) {
+        const questionTrue = direction === "above" ? coinPrice > strike : coinPrice < strike;
+        won = bet.side === "YES" ? questionTrue : !questionTrue;
+      } else {
+        won = Math.random() < fairValue;
+        console.log(`  ⚠️ expiry fallback (no price/strike): ${bet.marketQuestion?.slice(0,50)}`);
+      }
+      finalPnl  = calcPnl(bet, won);
+      exitPrice = won ? 1.00 : 0.00;
+    } else {
+      const res = calcPreExitPnl(bet, fairValue);
+      finalPnl  = res.pnl;
+      exitPrice = res.exitPrice;
+      won       = finalPnl > 0;
+    }
+
+    const icon   = finalPnl > 0 ? "🟢" : finalPnl < 0 ? "🔴" : "⚪";
+    const result = won ? "WIN" : "LOSS";
+    const tag    = valueBet ? "🎯VAL " : bet.sharpShooter ? "⚡SS " : "";
+    const fillP  = Math.min(0.97, bet.entryPrice + SLIPPAGE);
+    const shares = (bet.betSize / fillP).toFixed(2);
+    console.log(`  🎯 ${tag}EXIT [${exitReason.toUpperCase()}] ${icon} ${result} | ${coin.padEnd(4)} ${bet.side} $${bet.betSize} (${shares}sh @ ${(fillP*100).toFixed(1)}¢) | ${finalPnl >= 0 ? "+" : ""}$${finalPnl.toFixed(2)} | fair:${(fairValue*100).toFixed(0)}¢`);
+
+    const closeReason = ["take_profit","stop_loss","expiry","timeout","near_expiry"].includes(exitReason)
+      ? exitReason : "timeout";
+
+    closeBet(bet.marketConditionId, { exitPrice, reason: closeReason, pnl: finalPnl });
+    exits.push({
+      market: bet.marketQuestion, side: bet.side,
+      pnl: finalPnl, won, reason: closeReason,
+      entryPrice: bet.entryPrice, coin,
+      valueBet, sharpShooter: bet.sharpShooter || false,
+    });
   }
 
-  summary(exits, betsPlaced, MAX_CONC);
-  return { signals, exits, betsPlaced };
+  return { exits, currentBtc };
+}
+
+export function filterScalpMarkets(markets) {
+  return markets.filter(m => {
+    if (!m.endDateIso && !m.endDate) return true;
+    const minLeft = (new Date(m.endDateIso || m.endDate) - Date.now()) / 60000;
+    return minLeft >= 3 && minLeft <= 180;
+  });
+}
+
+export function scalpQuality(market, signals) {
+  let score = 0;
+  if (market.endDateIso || market.endDate) {
+    const minLeft = (new Date(market.endDateIso || market.endDate) - Date.now()) / 60000;
+    if (minLeft < 3 || minLeft > 180) return 0;
+    if (minLeft >= 4 && minLeft <= 20) score += 0.40;
+    else if (minLeft <= 90)            score += 0.25;
+    else                               score += 0.10;
+  } else score += 0.20;
+  score += Math.min(0.40, signals.confidence * 0.45);
+  score += Math.min(0.20, Math.abs(signals.bias) * 0.25);
+  return Math.min(1, score);
 }
