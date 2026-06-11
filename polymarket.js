@@ -1,9 +1,23 @@
 /**
- * polymarket.js
+ * polymarket.js v3 — REAL markets first, honest synthetic fallback
  *
- * Multi-crypto support: BTC, ETH, SOL, BNB, XRP, DOGE
- * Fetches live prices for each coin and generates synthetic markets.
- * CLOB/Gamma search expanded to all crypto keywords.
+ * 1. REAL MARKETS: Gamma API queried for markets expiring in the next 3h,
+ *    sorted by end date (this is how Polymarket's hourly crypto markets
+ *    surface). JSON-string fields (outcomePrices, outcomes, clobTokenIds)
+ *    are properly parsed. When crypto markets get rejected, the 3 nearest
+ *    are logged with raw dates so we can see exactly why.
+ *
+ * 2. HONEST SYNTHETIC FALLBACK — a live market maker, not frozen quotes:
+ *    • Markets live in a registry with FIXED strikes; expired ones are
+ *      pruned and replaced with fresh strikes from current spot
+ *    • Every quote is repriced with Black-Scholes from live spot —
+ *      the MM's vol estimate differs from the bot's by a per-market
+ *      factor (0.85–1.25x), plus a 2¢ spread and ±1.5¢ noise
+ *    • Quotes refresh every 30s (MM reaction lag — the bot's only
+ *      systematic edge is being faster or having a better vol read,
+ *      exactly like live trading)
+ *    The bot can no longer farm stale prices. Any edge it finds now has
+ *    to come from model disagreement + speed, after spread and fees.
  */
 
 import axios from "axios";
@@ -15,29 +29,12 @@ async function getDryRun() {
   }
   return _botSettings?.dryRun ?? (process.env.DRY_RUN !== "false");
 }
-function isSharpShooter() { return _botSettings?.sharpShooter ?? false; }
 
-// ── Crypto keywords for CLOB/Gamma filtering ───────────────────────────────
+// ── Crypto keywords for live-market filtering ──────────────────
 const CRYPTO_KW = [
-  // BTC
-  "bitcoin","btc","will btc","will bitcoin",
-  // ETH
-  "ethereum","eth","will eth","will ethereum",
-  // SOL
-  "solana","sol","will sol","will solana",
-  // BNB
-  "bnb","binance coin","will bnb",
-  // XRP
-  "xrp","ripple","will xrp","will ripple",
-  // DOGE
-  "dogecoin","doge","will doge","will dogecoin",
+  "bitcoin","btc","ethereum","eth","solana","sol",
+  "bnb","binance coin","xrp","ripple","dogecoin","doge",
 ];
-
-function isValidScalpMarket(m) {
-  if (!m.endDateIso && !m.endDate) return false;
-  const minLeft = (new Date(m.endDateIso || m.endDate) - Date.now()) / 60000;
-  return minLeft >= 4 && minLeft <= 1440;
-}
 
 function stableId(prefix, question) {
   let hash = 0;
@@ -48,94 +45,107 @@ function stableId(prefix, question) {
   return `${prefix}_${Math.abs(hash)}`;
 }
 
+function minutesLeft(m) {
+  const d = m.endDateIso || m.endDate || m.end_date_iso;
+  if (!d) return null;
+  const ms = new Date(d) - Date.now();
+  return Number.isFinite(ms) ? ms / 60000 : null;
+}
+
+/** Parse Gamma's JSON-string fields safely. */
+function jparse(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } }
+  return null;
+}
+
+function normalizeGammaMarket(m) {
+  const outcomes = jparse(m.outcomes)      || ["Yes", "No"];
+  const prices   = jparse(m.outcomePrices) || [];
+  const tokenIds = jparse(m.clobTokenIds)  || [];
+  const tokens = outcomes.map((o, i) => {
+    let p = parseFloat(prices[i]);
+    if (!Number.isFinite(p)) p = 0.5;
+    if (p > 1) p = p / 100;
+    return {
+      tokenId: tokenIds[i] || `${m.conditionId || m.id}_${i}`,
+      outcome: o,
+      price: Math.min(0.97, Math.max(0.03, p)),
+    };
+  });
+  return {
+    conditionId: m.conditionId || m.id,
+    question:    m.question || m.title || "",
+    endDateIso:  m.endDateIso || m.endDate || m.end_date_iso,
+    coin:        null, // scalper/bot derive coin from question text
+    tokens,
+    live: true,
+  };
+}
+
 let _gammaCache = null, _gammaCacheTime = 0;
 
 export async function fetchBTCMarkets() {
-  // Try real CLOB
-  try {
-    const { data } = await axios.get("https://clob.polymarket.com/markets", {
-      params: { active: true, closed: false, limit: 200 },
-      timeout: 10000,
-      headers: { "Accept": "application/json" },
-    });
-    const all = data?.data || data || [];
-    const crypto = all
-      .filter(m => {
-        const q = (m.question || m.title || "").toLowerCase();
-        return CRYPTO_KW.some(kw => q.includes(kw));
-      })
-      .filter(isValidScalpMarket)
-      .map(normalizeMarket);
-    if (crypto.length > 0) {
-      console.log(`📊 Polymarket CLOB: ${crypto.length} live crypto scalp markets`);
-      return crypto;
-    }
-    console.log(`📊 Polymarket CLOB: found crypto markets but none with valid expiry — using synthetic`);
-  } catch (err) {
-    console.log("⚠️ Polymarket CLOB:", err.message);
-  }
-
-  // Try Gamma API (60s cache)
-  if (Date.now() - _gammaCacheTime < 60000 && _gammaCache?.length > 0) {
+  // ── REAL MARKETS: Gamma, sorted by soonest expiry, next 3 hours ──
+  if (Date.now() - _gammaCacheTime < 45000 && _gammaCache?.length > 0) {
     return _gammaCache;
   }
   try {
+    const nowIso = new Date(Date.now() + 4 * 60000).toISOString();   // ≥4 min out
+    const maxIso = new Date(Date.now() + 3 * 3600000).toISOString(); // ≤3 hours out
     const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
-      params: { active: true, closed: false, limit: 100 }, timeout: 10000,
+      params: {
+        active: true, closed: false, limit: 300,
+        order: "endDate", ascending: true,
+        end_date_min: nowIso, end_date_max: maxIso,
+      },
+      timeout: 10000,
     });
     const all = Array.isArray(data) ? data : (data?.markets || []);
-    const crypto = all
+    const crypto = all.filter(m => {
+      const q = (m.question || m.title || "").toLowerCase();
+      return CRYPTO_KW.some(kw => q.includes(kw));
+    });
+
+    const valid = crypto
+      .map(normalizeGammaMarket)
       .filter(m => {
-        const q = (m.question || m.groupItemTitle || "").toLowerCase();
-        return CRYPTO_KW.some(kw => q.includes(kw));
-      })
-      .filter(isValidScalpMarket)
-      .map(normalizeMarket);
-    _gammaCache = crypto; _gammaCacheTime = Date.now();
+        const mins = minutesLeft(m);
+        return mins !== null && mins >= 4 && mins <= 180;
+      });
+
+    if (valid.length > 0) {
+      console.log(`📊 Polymarket LIVE: ${valid.length} real crypto markets (next 3h) — paper trading REAL prices`);
+      _gammaCache = valid; _gammaCacheTime = Date.now();
+      return valid;
+    }
+
+    // Diagnostics: show why crypto markets were rejected
     if (crypto.length > 0) {
-      console.log(`📊 Gamma API: ${crypto.length} live crypto scalp markets`);
-      return crypto;
+      console.log(`📊 Gamma: ${crypto.length} crypto markets found, 0 in 4-180min window. Nearest:`);
+      crypto.slice(0, 3).forEach(m => {
+        const mins = minutesLeft(m);
+        console.log(`   · "${(m.question||"").slice(0,55)}" endDate=${m.endDate || m.endDateIso} (${mins === null ? "unparseable" : mins.toFixed(0) + " min"})`);
+      });
+    } else {
+      console.log(`📊 Gamma: 0 crypto markets in next-3h window`);
     }
   } catch (err) {
     console.log("⚠️ Gamma API:", err.message);
   }
 
-  console.log("⚠️  No live markets found — using price-aware synthetic markets");
+  console.log("⚠️  No live markets — using REPRICED synthetic markets (live MM sim)");
   return await getSyntheticMarkets();
 }
 
-function normalizeMarket(m) {
-  if (!m.tokens && m.outcomes) {
-    m.tokens = m.outcomes.map((o, i) => ({
-      tokenId: m.clobTokenIds?.[i] || `${m.conditionId}_${i}`,
-      outcome: o,
-      price: m.outcomePrices?.[i]
-        ? Math.min(0.97, Math.max(0.03, parseFloat(m.outcomePrices[i]) / (parseFloat(m.outcomePrices[i]) > 1 ? 100 : 1)))
-        : 0.5,
-    }));
-  }
-  if (m.tokens) {
-    m.tokens = m.tokens.map(t => ({
-      ...t,
-      price: t.price > 1 ? Math.min(0.97, t.price / 100) : Math.min(0.97, Math.max(0.03, t.price)),
-    }));
-  }
-  return m;
-}
-
-// ── Live price fetcher for all coins ──────────────────────────────────────
+// ── Live price fetcher ─────────────────────────────────────────
 let _priceCache = {}, _priceCacheTime = 0;
 
 async function getLivePrices() {
-  if (Date.now() - _priceCacheTime < 30000 && Object.keys(_priceCache).length > 0) {
+  if (Date.now() - _priceCacheTime < 15000 && Object.keys(_priceCache).length > 0) {
     return _priceCache;
   }
-
-  const prices = {
-    BTC: 105000, ETH: 3500, SOL: 180, BNB: 600, XRP: 0.60, DOGE: 0.18,
-  };
-
-  // Kraken for BTC + ETH
+  const prices = { ..._priceCache };
   try {
     const { data } = await axios.get("https://api.kraken.com/0/public/Ticker", {
       params: { pair: "XBTUSD,ETHUSD" }, timeout: 5000,
@@ -144,125 +154,161 @@ async function getLivePrices() {
     if (r.XXBTZUSD?.c?.[0]) prices.BTC = parseFloat(r.XXBTZUSD.c[0]);
     if (r.XETHZUSD?.c?.[0]) prices.ETH = parseFloat(r.XETHZUSD.c[0]);
   } catch {}
-
-  // CoinGecko for SOL, BNB, XRP, DOGE
   try {
-    const { data } = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price",
-      {
-        params: { ids: "solana,binancecoin,ripple,dogecoin", vs_currencies: "usd" },
-        timeout: 5000,
-      }
-    );
+    const { data } = await axios.get("https://api.coingecko.com/api/v3/simple/price", {
+      params: { ids: "solana,binancecoin,ripple,dogecoin", vs_currencies: "usd" },
+      timeout: 5000,
+    });
     if (data.solana?.usd)      prices.SOL  = data.solana.usd;
     if (data.binancecoin?.usd) prices.BNB  = data.binancecoin.usd;
     if (data.ripple?.usd)      prices.XRP  = data.ripple.usd;
     if (data.dogecoin?.usd)    prices.DOGE = data.dogecoin.usd;
   } catch {}
-
-  _priceCache = prices;
-  _priceCacheTime = Date.now();
-  return prices;
+  if (Object.keys(prices).length > 0) {
+    _priceCache = prices;
+    _priceCacheTime = Date.now();
+  }
+  return _priceCache;
 }
 
-// ── Synthetic market generator ─────────────────────────────────────────────
+// ── Black-Scholes pricing for the synthetic market maker ───────
+function normalCDF(x) {
+  const a = 0.2316419, b1 = 0.319381530, b2 = -0.356563782,
+        b3 = 1.781477937, b4 = -1.821255978, b5 = 1.330274429;
+  const t = 1 / (1 + a * Math.abs(x));
+  const poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))));
+  const n = 1 - (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-0.5 * x * x) * poly;
+  return x >= 0 ? n : 1 - n;
+}
+const BASE_VOL = { BTC: 0.80, ETH: 1.00, SOL: 1.50, BNB: 1.00, XRP: 1.20, DOGE: 1.80 };
+
+function probAbove(spot, strike, msLeft, coin, volFactor) {
+  if (!spot || !strike || msLeft <= 0) return 0.5;
+  const T = Math.max(msLeft, 30000) / (365.25 * 24 * 3600 * 1000);
+  const sigma = (BASE_VOL[coin] || 0.80) * volFactor;
+  const d2 = (Math.log(spot / strike) - 0.5 * sigma * sigma * T) / (sigma * Math.sqrt(T));
+  return normalCDF(d2);
+}
+
+// ── Synthetic market registry: fixed strikes, live repriced ────
+const HALF_SPREAD = 0.01;   // 1¢ each side (2¢ book spread)
+const QUOTE_NOISE = 0.015;  // ±1.5¢ retail noise
+const QUOTE_TTL   = 30000;  // MM requotes every 30s (reaction lag)
+
+const _book = new Map();    // conditionId → market def
+const _quotes = new Map();  // conditionId → { yes, no, at }
+
+const LADDER = [
+  { mins: 15, kind: "atm" }, { mins: 15, kind: "up_sm" }, { mins: 15, kind: "dn_sm" },
+  { mins: 30, kind: "atm" }, { mins: 30, kind: "up_sm" }, { mins: 30, kind: "dn_sm" },
+  { mins: 45, kind: "up_md" }, { mins: 45, kind: "dn_md" },
+  { mins: 60, kind: "atm" }, { mins: 60, kind: "up_md" }, { mins: 60, kind: "dn_md" },
+  { mins: 75, kind: "up_lg" }, { mins: 75, kind: "dn_lg" },
+  { mins: 90, kind: "up_lg" }, { mins: 90, kind: "dn_lg" },
+];
+
+const MOVES = {
+  BTC:  { sm: 0.003, md: 0.006, lg: 0.010 },
+  ETH:  { sm: 0.004, md: 0.008, lg: 0.015 },
+  SOL:  { sm: 0.005, md: 0.010, lg: 0.020 },
+  BNB:  { sm: 0.004, md: 0.008, lg: 0.015 },
+  XRP:  { sm: 0.005, md: 0.010, lg: 0.020 },
+  DOGE: { sm: 0.006, md: 0.012, lg: 0.025 },
+};
+
+function fmtStrike(price, coin) {
+  const inc = { BTC: 100, ETH: 10, SOL: 1, BNB: 5, XRP: 0.001, DOGE: 0.0001 }[coin] || 1;
+  const r = Math.round(price / inc) * inc;
+  if (coin === "XRP")  return { num: r, txt: `$${r.toFixed(3)}` };
+  if (coin === "DOGE") return { num: r, txt: `$${r.toFixed(4)}` };
+  return { num: r, txt: `$${r.toLocaleString()}` };
+}
+
+function spawnMarket(coin, spot, slot) {
+  const mv = MOVES[coin];
+  let pct = 0, dirWord = "be above";
+  if (slot.kind === "up_sm") { pct = +mv.sm; dirWord = "rise above"; }
+  if (slot.kind === "up_md") { pct = +mv.md; dirWord = "reach"; }
+  if (slot.kind === "up_lg") { pct = +mv.lg; dirWord = "hit"; }
+  if (slot.kind === "dn_sm") { pct = -mv.sm; dirWord = "drop below"; }
+  if (slot.kind === "dn_md") { pct = -mv.md; dirWord = "fall below"; }
+  if (slot.kind === "dn_lg") { pct = -mv.lg; dirWord = "drop below"; }
+
+  const strike = fmtStrike(spot * (1 + pct), coin);
+  const q = `Will ${coin} ${dirWord} ${strike.txt} in ${slot.mins} minutes?`;
+  const id = stableId(`syn_${coin}_${slot.mins}_${slot.kind}_${Date.now()}`, q);
+  const def = {
+    conditionId: id,
+    question:    q,
+    coin,
+    strike:      strike.num,
+    direction:   pct < 0 ? "below" : "above",
+    endDateIso:  new Date(Date.now() + slot.mins * 60000).toISOString(),
+    slotKey:     `${coin}_${slot.mins}_${slot.kind}`,
+    volFactor:   0.85 + Math.random() * 0.40,  // MM's vol disagrees with ours
+  };
+  _book.set(id, def);
+  return def;
+}
+
+function quoteMarket(def, spot) {
+  const cached = _quotes.get(def.conditionId);
+  if (cached && Date.now() - cached.at < QUOTE_TTL) return cached;
+
+  const msLeft = new Date(def.endDateIso) - Date.now();
+  const pAbove = probAbove(spot, def.strike, msLeft, def.coin, def.volFactor);
+  const pYes   = def.direction === "above" ? pAbove : 1 - pAbove;
+  const noise  = () => (Math.random() * 2 - 1) * QUOTE_NOISE;
+
+  const quote = {
+    yes: Math.min(0.97, Math.max(0.03, pYes       + HALF_SPREAD + noise())),
+    no:  Math.min(0.97, Math.max(0.03, (1 - pYes) + HALF_SPREAD + noise())),
+    at:  Date.now(),
+  };
+  _quotes.set(def.conditionId, quote);
+  return quote;
+}
+
 async function getSyntheticMarkets() {
   const prices = await getLivePrices();
-  const now    = Date.now();
-  const min    = n => new Date(now + n * 60000).toISOString();
-  const ssMode = isSharpShooter();
+  const coins  = Object.keys(prices).filter(c => prices[c]);
+  if (coins.length === 0) return [];
 
-  // Round price to nearest sensible increment per coin
-  const round = (price, coin) => {
-    const increments = { BTC: 100, ETH: 10, SOL: 1, BNB: 5, XRP: 0.01, DOGE: 0.001 };
-    const inc = increments[coin] || 1;
-    return Math.round(price / inc) * inc;
-  };
-
-  const fmt = (price, coin) => {
-    if (coin === "XRP" || coin === "DOGE") return `$${price.toFixed(coin === "DOGE" ? 4 : 3)}`;
-    return `$${round(price, coin).toLocaleString()}`;
-  };
-
-  // Percentage moves per coin (smaller coins move more)
-  const moves = {
-    BTC:  { sm: 0.003, md: 0.006, lg: 0.010 },
-    ETH:  { sm: 0.004, md: 0.008, lg: 0.015 },
-    SOL:  { sm: 0.005, md: 0.010, lg: 0.020 },
-    BNB:  { sm: 0.004, md: 0.008, lg: 0.015 },
-    XRP:  { sm: 0.005, md: 0.010, lg: 0.020 },
-    DOGE: { sm: 0.006, md: 0.012, lg: 0.025 },
-  };
-
-  const mkts = [];
-
-  for (const [coin, p] of Object.entries(prices)) {
-    const mv = moves[coin];
-    const up_sm = fmt(p * (1 + mv.sm), coin);
-    const up_md = fmt(p * (1 + mv.md), coin);
-    const up_lg = fmt(p * (1 + mv.lg), coin);
-    const dn_sm = fmt(p * (1 - mv.sm), coin);
-    const dn_md = fmt(p * (1 - mv.md), coin);
-    const dn_lg = fmt(p * (1 - mv.lg), coin);
-    const atm   = fmt(p, coin);
-
-    if (ssMode) {
-      // SS: 30-90 min markets per coin
-      const questions = [
-        { q: `Will ${coin} be above ${atm} in 30 minutes?`,          exp: min(30),  yp: 0.50, pfx: `ss_${coin}_30a` },
-        { q: `Will ${coin} rise above ${up_sm} in 30 minutes?`,      exp: min(30),  yp: 0.40, pfx: `ss_${coin}_30b` },
-        { q: `Will ${coin} drop below ${dn_sm} in 30 minutes?`,      exp: min(30),  yp: 0.40, pfx: `ss_${coin}_30c` },
-        { q: `Will ${coin} be above ${atm} in 45 minutes?`,          exp: min(45),  yp: 0.50, pfx: `ss_${coin}_45a` },
-        { q: `Will ${coin} reach ${up_md} in 45 minutes?`,           exp: min(45),  yp: 0.42, pfx: `ss_${coin}_45b` },
-        { q: `Will ${coin} fall below ${dn_md} in 45 minutes?`,      exp: min(45),  yp: 0.42, pfx: `ss_${coin}_45c` },
-        { q: `Will ${coin} be above ${atm} in 60 minutes?`,          exp: min(60),  yp: 0.50, pfx: `ss_${coin}_60a` },
-        { q: `Will ${coin} hit ${up_lg} within 60 minutes?`,         exp: min(60),  yp: 0.38, pfx: `ss_${coin}_60b` },
-        { q: `Will ${coin} drop below ${dn_lg} within 60 minutes?`,  exp: min(60),  yp: 0.38, pfx: `ss_${coin}_60c` },
-        { q: `Will ${coin} reach ${up_lg} in 90 minutes?`,           exp: min(90),  yp: 0.35, pfx: `ss_${coin}_90b` },
-      ];
-      for (const { q, exp, yp, pfx } of questions) {
-        const np = parseFloat((1 - yp).toFixed(2));
-        mkts.push({
-          conditionId: stableId(pfx, q),
-          question: q,
-          endDateIso: exp,
-          coin,
-          tokens: [
-            { tokenId: stableId(pfx + "y", q), outcome: "Yes", price: yp },
-            { tokenId: stableId(pfx + "n", q), outcome: "No",  price: np },
-          ],
-        });
-      }
-    } else {
-      // Normal: 15-90 min markets per coin
-      const questions = [
-        { q: `Will ${coin} be above ${atm} in 15 minutes?`,        exp: min(15), yp: 0.49, pfx: `n_${coin}_15a` },
-        { q: `Will ${coin} rise above ${up_sm} in 15 minutes?`,    exp: min(15), yp: 0.36, pfx: `n_${coin}_15b` },
-        { q: `Will ${coin} drop below ${dn_sm} in 15 minutes?`,    exp: min(15), yp: 0.34, pfx: `n_${coin}_15c` },
-        { q: `Will ${coin} close above ${up_md} in 1 hour?`,       exp: min(60), yp: 0.41, pfx: `n_${coin}_60a` },
-        { q: `Will ${coin} be higher than now in 1 hour?`,         exp: min(60), yp: 0.52, pfx: `n_${coin}_60b` },
-        { q: `Will ${coin} drop below ${dn_md} in 1 hour?`,        exp: min(60), yp: 0.38, pfx: `n_${coin}_60c` },
-        { q: `Will ${coin} reach ${up_lg} in the next 90 minutes?`,exp: min(90), yp: 0.33, pfx: `n_${coin}_90a` },
-      ];
-      for (const { q, exp, yp, pfx } of questions) {
-        const np = parseFloat((1 - yp).toFixed(2));
-        mkts.push({
-          conditionId: stableId(pfx, q),
-          question: q,
-          endDateIso: exp,
-          coin,
-          tokens: [
-            { tokenId: stableId(pfx + "y", q), outcome: "Yes", price: yp },
-            { tokenId: stableId(pfx + "n", q), outcome: "No",  price: np },
-          ],
-        });
-      }
+  // Prune expired markets
+  for (const [id, def] of _book) {
+    if (new Date(def.endDateIso) - Date.now() < 60000) {
+      _book.delete(id);
+      _quotes.delete(id);
     }
   }
 
-  const coinCount = Object.keys(prices).length;
-  const mktCount  = mkts.length;
-  console.log(`⚡ Synthetic: ${mktCount} markets across ${coinCount} coins (BTC/ETH/SOL/BNB/XRP/DOGE)`);
+  // Ensure every coin × ladder slot has a live market (fixed strike per life)
+  const filled = new Set([..._book.values()].map(d => d.slotKey));
+  for (const coin of coins) {
+    for (const slot of LADDER) {
+      const key = `${coin}_${slot.mins}_${slot.kind}`;
+      if (!filled.has(key)) spawnMarket(coin, prices[coin], slot);
+    }
+  }
+
+  // Quote the whole book at current spot
+  const mkts = [];
+  for (const def of _book.values()) {
+    const spot = prices[def.coin];
+    if (!spot) continue;
+    const qt = quoteMarket(def, spot);
+    mkts.push({
+      conditionId: def.conditionId,
+      question:    def.question,
+      endDateIso:  def.endDateIso,
+      coin:        def.coin,
+      tokens: [
+        { tokenId: def.conditionId + "_y", outcome: "Yes", price: parseFloat(qt.yes.toFixed(3)) },
+        { tokenId: def.conditionId + "_n", outcome: "No",  price: parseFloat(qt.no.toFixed(3)) },
+      ],
+    });
+  }
+  console.log(`⚡ Synthetic MM: ${mkts.length} repriced markets, ${coins.length} coins | spread 2¢ | requote ${QUOTE_TTL/1000}s`);
   return mkts;
 }
 
@@ -296,7 +342,6 @@ export async function placeOrder({ tokenId, side, size, price, marketQuestion })
   if (!pk || pk.startsWith("your_") || !apiKey || apiKey.startsWith("your_")) {
     throw new Error("Live mode requires POLYMARKET_PRIVATE_KEY + POLYMARKET_API_KEY");
   }
-
   try {
     const { ClobClient, Side } = await import("@polymarket/clob-client");
     const { ethers }           = await import("ethers");
