@@ -1,6 +1,19 @@
 /**
  * polymarket.js v4 — REAL Polymarket markets, properly parsed
  *
+ * v5 fixes (from live paper-trade forensics):
+ * A. STRIKE FREEZE: Up/Down strikes are no longer back-derived from
+ *    price history (±90s basis error during fast moves corrupted both
+ *    entry edge and resolution). Now: a market's strike is frozen from
+ *    the live feed within 20s of its interval OPEN, or the market is
+ *    skipped entirely. Markets seen before their open wait ("pending
+ *    open") and get frozen on the first scan after the bell.
+ * B. FRESH FEEDS: SOL/XRP/DOGE moved from CoinGecko (minutes stale →
+ *    fake dislocations) to Kraken (fresh). BNB has no fresh feed, so
+ *    BNB is EXCLUDED from real-market trading (synthetic only).
+ * C. Faster cadence: price cache 8s, Gamma quote refresh 20s, so
+ *    entry prices are never more than ~20s stale.
+ *
  * Fixes from v3 (found via Railway diagnostics):
  * 1. DATE BUG: Gamma returns endDateIso as date-only ("2026-06-11" →
  *    parses as midnight, always in the past) alongside endDate (full
@@ -96,28 +109,32 @@ function spotAt(coin, tMs, tolMs = 90000) {
   return best && bd <= tolMs ? best.p : null;
 }
 
+const PRICE_TTL = 8000; // fresh enough to freeze strikes at interval opens
+
 async function getLivePrices() {
-  if (Date.now() - _priceCacheTime < 15000 && Object.keys(_priceCache).length > 0) {
+  if (Date.now() - _priceCacheTime < PRICE_TTL && Object.keys(_priceCache).length > 0) {
     return _priceCache;
   }
   const prices = { ..._priceCache };
   try {
+    // Kraken: fresh quotes for everything it lists
     const { data } = await axios.get("https://api.kraken.com/0/public/Ticker", {
-      params: { pair: "XBTUSD,ETHUSD" }, timeout: 5000,
+      params: { pair: "XBTUSD,ETHUSD,SOLUSD,XRPUSD,XDGUSD" }, timeout: 5000,
     });
     const r = data.result || {};
-    if (r.XXBTZUSD?.c?.[0]) prices.BTC = parseFloat(r.XXBTZUSD.c[0]);
-    if (r.XETHZUSD?.c?.[0]) prices.ETH = parseFloat(r.XETHZUSD.c[0]);
+    if (r.XXBTZUSD?.c?.[0]) prices.BTC  = parseFloat(r.XXBTZUSD.c[0]);
+    if (r.XETHZUSD?.c?.[0]) prices.ETH  = parseFloat(r.XETHZUSD.c[0]);
+    if (r.SOLUSD?.c?.[0])   prices.SOL  = parseFloat(r.SOLUSD.c[0]);
+    if (r.XXRPZUSD?.c?.[0]) prices.XRP  = parseFloat(r.XXRPZUSD.c[0]);
+    if (r.XDGUSD?.c?.[0])   prices.DOGE = parseFloat(r.XDGUSD.c[0]);
   } catch {}
   try {
+    // CoinGecko (slow/stale): BNB only — used for synthetic, never real trades
     const { data } = await axios.get("https://api.coingecko.com/api/v3/simple/price", {
-      params: { ids: "solana,binancecoin,ripple,dogecoin", vs_currencies: "usd" },
+      params: { ids: "binancecoin", vs_currencies: "usd" },
       timeout: 5000,
     });
-    if (data.solana?.usd)      prices.SOL  = data.solana.usd;
-    if (data.binancecoin?.usd) prices.BNB  = data.binancecoin.usd;
-    if (data.ripple?.usd)      prices.XRP  = data.ripple.usd;
-    if (data.dogecoin?.usd)    prices.DOGE = data.dogecoin.usd;
+    if (data.binancecoin?.usd) prices.BNB = data.binancecoin.usd;
   } catch {}
   if (Object.keys(prices).length > 0) {
     _priceCache = prices;
@@ -169,29 +186,48 @@ function intervalMinutes(q) {
   return null;
 }
 
+const REAL_TRADE_COINS = new Set(["BTC", "ETH", "SOL", "XRP", "DOGE"]); // fresh Kraken feeds only
+const FREEZE_WINDOW_MS = 20000; // strike must be captured within 20s of the open
+const _strikes = new Map();     // conditionId → { strike, endMs }
+
 /**
  * Make a real market priceable by the bot.
- * Returns market, "warm" (skip: no open-price history yet), or null (skip).
+ * Returns a NEW market object, "pending" (interval hasn't opened /
+ * just opened — strike will freeze on a coming scan), or null (skip:
+ * we missed the open, or coin has no fresh feed).
  */
-function enrich(m) {
+function enrich(m, prices) {
   if (!m.endMs || !m.coin) return null;
 
   const isUpDown = /up or down/i.test(m.question);
 
   if (isUpDown) {
+    if (!REAL_TRADE_COINS.has(m.coin)) return null; // no fresh feed → never trade it
     const dur = intervalMinutes(m.question);
     if (!dur) return null;
     const startMs = m.endMs - dur * 60000;
-    const strike = spotAt(m.coin, startMs);
-    if (!strike) return "warm"; // interval opened before our history began
+    const now = Date.now();
+
+    let frozen = _strikes.get(m.conditionId);
+    if (!frozen) {
+      if (startMs > now) return "pending"; // listed early — freeze at the bell
+      if (now - startMs > FREEZE_WINDOW_MS) return null; // missed the open — untradeable
+      const spot = prices[m.coin];
+      if (!spot) return "pending";
+      frozen = { strike: spot, endMs: m.endMs };
+      _strikes.set(m.conditionId, frozen);
+    }
+
     const dec = STRIKE_DECIMALS[m.coin] ?? 2;
     const endLabel = new Date(m.endMs).toISOString().slice(11, 16);
-    m.question = `Will ${m.coin} be above $${strike.toFixed(dec)} at ${endLabel} UTC? (UpDown${dur})`;
-    m.tokens = m.tokens.map(t => ({
-      ...t,
-      outcome: /^up$/i.test(t.outcome) ? "Yes" : /^down$/i.test(t.outcome) ? "No" : t.outcome,
-    }));
-    return m;
+    return {
+      ...m,
+      question: `Will ${m.coin} be above $${frozen.strike.toFixed(dec)} at ${endLabel} UTC? (UpDown${dur})`,
+      tokens: m.tokens.map(t => ({
+        ...t,
+        outcome: /^up$/i.test(t.outcome) ? "Yes" : /^down$/i.test(t.outcome) ? "No" : t.outcome,
+      })),
+    };
   }
 
   // Non-UpDown: keep only markets the bot can actually price
@@ -203,32 +239,37 @@ function enrich(m) {
   return hasYesNo ? m : null;
 }
 
-let _gammaCache = null, _gammaCacheTime = 0;
+let _gammaRaw = null, _gammaRawTime = 0;
+const GAMMA_TTL = 20000; // refetch real quotes every 20s so entry prices stay fresh
 
 export async function fetchBTCMarkets() {
-  await getLivePrices(); // keeps price history warm for Up/Down strikes
+  const prices = await getLivePrices(); // fresh spot — feeds strike freezing
 
-  if (Date.now() - _gammaCacheTime < 45000 && _gammaCache?.length > 0) {
-    return _gammaCache;
-  }
   try {
-    const nowIso = new Date(Date.now() + 4 * 60000).toISOString();
-    const maxIso = new Date(Date.now() + 3 * 3600000).toISOString();
-    const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
-      params: {
-        active: true, closed: false, limit: 300,
-        order: "endDate", ascending: true,
-        end_date_min: nowIso, end_date_max: maxIso,
-      },
-      timeout: 10000,
-    });
-    const all = Array.isArray(data) ? data : (data?.markets || []);
-    const crypto = all.filter(m => {
-      const q = (m.question || m.title || "").toLowerCase();
-      return CRYPTO_KW.some(kw => q.includes(kw));
-    });
+    if (!_gammaRaw || Date.now() - _gammaRawTime > GAMMA_TTL) {
+      const nowIso = new Date(Date.now() + 4 * 60000).toISOString();
+      const maxIso = new Date(Date.now() + 3 * 3600000).toISOString();
+      const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
+        params: {
+          active: true, closed: false, limit: 300,
+          order: "endDate", ascending: true,
+          end_date_min: nowIso, end_date_max: maxIso,
+        },
+        timeout: 10000,
+      });
+      const all = Array.isArray(data) ? data : (data?.markets || []);
+      _gammaRaw = all.filter(m => {
+        const q = (m.question || m.title || "").toLowerCase();
+        return CRYPTO_KW.some(kw => q.includes(kw));
+      });
+      _gammaRawTime = Date.now();
+      // prune frozen strikes for expired markets
+      for (const [id, f] of _strikes) {
+        if (f.endMs < Date.now() - 60000) _strikes.delete(id);
+      }
+    }
 
-    const inWindow = crypto
+    const inWindow = _gammaRaw
       .map(normalizeGammaMarket)
       .filter(m => {
         if (!m.endMs) return false;
@@ -236,31 +277,33 @@ export async function fetchBTCMarkets() {
         return mins >= 4 && mins <= 180;
       });
 
-    let warm = 0;
+    // Enrich EVERY call (cheap, no network) so strikes freeze within
+    // one 8s scan of each interval's open.
+    let pending = 0;
     const ready = [];
     for (const m of inWindow) {
-      const r = enrich(m);
-      if (r === "warm") warm++;
+      const r = enrich(m, prices);
+      if (r === "pending") pending++;
       else if (r) ready.push(r);
     }
 
     if (ready.length > 0) {
       console.log(
-        `📊 Polymarket LIVE: ${ready.length} real crypto markets (next 3h)` +
-        (warm ? ` | ${warm} skipped (open-price history warming up)` : "") +
+        `📊 Polymarket LIVE: ${ready.length} real mkts, strikes frozen at open` +
+        (pending ? ` | ${pending} pending open` : "") +
         ` — paper trading REAL prices`
       );
-      _gammaCache = ready; _gammaCacheTime = Date.now();
       return ready;
     }
 
     if (inWindow.length > 0) {
-      console.log(`📊 Gamma: ${inWindow.length} crypto markets in window, 0 priceable (${warm} warming up). Nearest:`);
+      console.log(`📊 Gamma: ${inWindow.length} crypto markets in window, 0 tradeable (${pending} pending open). Nearest:`);
       inWindow.slice(0, 3).forEach(m => {
         const mins = ((m.endMs - Date.now()) / 60000).toFixed(0);
         console.log(`   · "${m.question.slice(0, 55)}" (${mins} min)`);
       });
-    } else if (crypto.length > 0) {
+    } else if (_gammaRaw.length > 0) {
+      const crypto = _gammaRaw;
       console.log(`📊 Gamma: ${crypto.length} crypto markets found, 0 in 4-180min window. Nearest:`);
       crypto.slice(0, 3).forEach(m => {
         const ms = parseEndMs(m);
