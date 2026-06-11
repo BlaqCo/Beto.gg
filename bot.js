@@ -67,8 +67,39 @@ const MAX_DAILY_LOSS    = 50;    // all modes
 
 const SLIPPAGE = 0.005;
 
+// ── VALUE scoreboard: tracks record vs breakeven, real vs synthetic ──
+const _srcByQ = new Map();   // question → true if real Polymarket market
+const _rec = { w: 0, l: 0, sumFill: 0, pnl: 0, liveW: 0, liveL: 0, synW: 0, synL: 0 };
+
+function trackValueExits(exits) {
+  for (const e of exits) {
+    if (!e.valueBet) continue;
+    const fill = Math.min(0.97, (e.entryPrice || 0.5) + SLIPPAGE);
+    _rec.sumFill += fill;
+    _rec.pnl     += e.pnl;
+    const isLive = _srcByQ.get((e.market || "").toLowerCase().trim()) === true;
+    if (e.won) { _rec.w++; isLive ? _rec.liveW++ : _rec.synW++; }
+    else       { _rec.l++; isLive ? _rec.liveL++ : _rec.synL++; }
+  }
+}
+
+function printRecord() {
+  const n = _rec.w + _rec.l;
+  if (n === 0) return;
+  const avgFill   = _rec.sumFill / n;
+  const winRate   = (_rec.w / n) * 100;
+  const breakeven = (1 / (1 + 0.98 * (1 / avgFill - 1))) * 100; // incl 2% fee
+  const verdict   = winRate >= breakeven + 4 ? "✅ ABOVE" : winRate >= breakeven ? "⚠️ AT" : "🔻 BELOW";
+  console.log(
+    `  📈 VALUE record: ${_rec.w}W-${_rec.l}L (${winRate.toFixed(1)}%) | ` +
+    `breakeven ${breakeven.toFixed(1)}% @ avg ${(avgFill*100).toFixed(0)}¢ ${verdict} | ` +
+    `net $${_rec.pnl.toFixed(2)} | REAL-mkt: ${_rec.liveW}W-${_rec.liveL}L | synth: ${_rec.synW}W-${_rec.synL}L`
+  );
+}
+
 function summary(exits, betsPlaced, maxConc) {
   const s = getStats();
+  printRecord();
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${maxConc} | P&L:$${s.pnl} | Scalps:${s.scalps} ──`);
 }
 
@@ -108,6 +139,7 @@ export async function runScanCycle() {
   if (getAllActiveBets().length > 0) {
     const result = await checkScalpExits(allMarkets, signals, DRY_RUN, SS_MODE);
     exits = result.exits || [];
+    trackValueExits(exits);
   }
 
   // ── Caps ──
@@ -159,6 +191,28 @@ export async function runScanCycle() {
       pricing = await priceMarket(market);
       if (!pricing) continue;
       const { probYes, strike, direction } = pricing;
+
+      // ── REALISM LAYER ──────────────────────────────────────────────
+      // Synthetic markets have static prices, which hands the bot fantasy
+      // fills (buying 90¢-fair contracts at 62¢). Real Polymarket MMs run
+      // the same Black-Scholes and quote at fair + spread. So: reprice
+      // every synthetic token the way a real MM would — fair value plus a
+      // 1.5¢ half-spread plus small quote noise. The bot now only enters
+      // when it catches a genuinely stale/mispriced quote, which is the
+      // only edge that exists live. Real CLOB markets (0x... ids) are
+      // never touched.
+      const isSynthetic = !/^0x[0-9a-f]{40,}/i.test(String(id || ""));
+      if (isSynthetic) {
+        for (const token of market.tokens || []) {
+          const sn = (token.outcome || "").toUpperCase();
+          if (sn !== "YES" && sn !== "NO") continue;
+          const fairSide  = sn === "YES" ? probYes : 1 - probYes;
+          const halfSpread = 0.015;
+          // Irwin-Hall noise: mean 0, σ ≈ 2¢, rare ±8-10¢ tails = stale quotes
+          const noise = ((Math.random() + Math.random() + Math.random() + Math.random()) - 2) / 2 * 0.10;
+          token.price = Math.min(0.97, Math.max(0.03, fairSide + halfSpread + noise));
+        }
+      }
 
       // Evaluate both sides — pick the one with the most edge
       let best = null;
@@ -285,6 +339,7 @@ export async function runScanCycle() {
         direction:          pricing?.direction ?? null,
       });
       betsPlaced++;
+      if (VALUE_MODE) _srcByQ.set(q, market.live === true);
 
       const tag = VALUE_MODE ? "🎯VALUE" : SS_MODE ? "⚡SHARP" : signals.activeStrategy;
       console.log(`  ✅ ENTRY ${decision.side} $${finalBet} @ ${(entryPrice*100).toFixed(1)}¢ | ${minsLeft}min | ${tag} | ${decision.reasoning || ""} | ${market.question?.slice(0,45)}`);
