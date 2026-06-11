@@ -55,6 +55,7 @@ const SS_ENTRIES_PER_SCAN = 3;
 const V_MAX             = 8;     // concurrent positions
 const V_ENTRIES         = 2;     // entries per scan
 const V_MIN_EDGE        = 0.06;  // fair − price ≥ 6¢
+const V_MAX_REAL_EDGE   = 0.15;  // >15¢ "edge" vs a REAL market = our feed/strike is wrong, not the market
 const V_FAV_MIN         = 0.65;  // favorite zone floor
 const V_FAV_MAX         = 0.93;  // ceiling — above this payoff < fee+slip
 const V_MIN_MINUTES     = 10;
@@ -229,6 +230,10 @@ export async function runScanCycle() {
 
       // FILTERS: real edge + favorite zone only. Never buy longshots.
       if (best.edge < V_MIN_EDGE) continue;
+      if (market.live === true && best.edge > V_MAX_REAL_EDGE) {
+        console.log(`    ⚠️ +${(best.edge*100).toFixed(0)}¢ edge vs REAL market — too good to be true, skipping | ${market.question.slice(0, 45)}`);
+        continue;
+      }
       if (best.sideFV < V_FAV_MIN || best.sideFV > V_FAV_MAX) continue;
 
       // BTC signal veto: don't buy a favorite that momentum is attacking
