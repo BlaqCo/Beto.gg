@@ -1,23 +1,22 @@
 /**
- * polymarket.js v3 — REAL markets first, honest synthetic fallback
+ * polymarket.js v4 — REAL Polymarket markets, properly parsed
  *
- * 1. REAL MARKETS: Gamma API queried for markets expiring in the next 3h,
- *    sorted by end date (this is how Polymarket's hourly crypto markets
- *    surface). JSON-string fields (outcomePrices, outcomes, clobTokenIds)
- *    are properly parsed. When crypto markets get rejected, the 3 nearest
- *    are logged with raw dates so we can see exactly why.
+ * Fixes from v3 (found via Railway diagnostics):
+ * 1. DATE BUG: Gamma returns endDateIso as date-only ("2026-06-11" →
+ *    parses as midnight, always in the past) alongside endDate (full
+ *    timestamp, correct). v3 preferred the broken field → every real
+ *    market rejected as expired. v4 parses ALL date fields and uses
+ *    the latest valid timestamp.
+ * 2. UP/DOWN ENRICHMENT: Polymarket's short-term crypto markets are
+ *    "Up or Down" style — no strike in the question, outcomes are
+ *    Up/Down. v4 keeps a rolling spot-price history, derives each
+ *    interval's open price as the strike, rewrites the question into
+ *    the "Will X be above $Y" format the bot/scalper already parse,
+ *    and maps Up→Yes / Down→No. Markets whose interval opened before
+ *    price history exists are skipped (warmup ~1 interval after boot).
  *
- * 2. HONEST SYNTHETIC FALLBACK — a live market maker, not frozen quotes:
- *    • Markets live in a registry with FIXED strikes; expired ones are
- *      pruned and replaced with fresh strikes from current spot
- *    • Every quote is repriced with Black-Scholes from live spot —
- *      the MM's vol estimate differs from the bot's by a per-market
- *      factor (0.85–1.25x), plus a 2¢ spread and ±1.5¢ noise
- *    • Quotes refresh every 30s (MM reaction lag — the bot's only
- *      systematic edge is being faster or having a better vol read,
- *      exactly like live trading)
- *    The bot can no longer farm stale prices. Any edge it finds now has
- *    to come from model disagreement + speed, after spread and fees.
+ * Synthetic repriced-MM fallback unchanged (only used if zero real
+ * markets qualify).
  */
 
 import axios from "axios";
@@ -30,11 +29,22 @@ async function getDryRun() {
   return _botSettings?.dryRun ?? (process.env.DRY_RUN !== "false");
 }
 
-// ── Crypto keywords for live-market filtering ──────────────────
+// ── Crypto detection ───────────────────────────────────────────
 const CRYPTO_KW = [
   "bitcoin","btc","ethereum","eth","solana","sol",
   "bnb","binance coin","xrp","ripple","dogecoin","doge",
 ];
+
+function coinFrom(qRaw) {
+  const q = (qRaw || "").toLowerCase();
+  if (/\bbtc\b|bitcoin/.test(q)) return "BTC";
+  if (/\beth\b|ethereum/.test(q)) return "ETH";
+  if (/\bsol\b|solana/.test(q))   return "SOL";
+  if (/\bbnb\b|binance/.test(q))  return "BNB";
+  if (/\bxrp\b|ripple/.test(q))   return "XRP";
+  if (/doge/.test(q))             return "DOGE";
+  return null;
+}
 
 function stableId(prefix, question) {
   let hash = 0;
@@ -45,101 +55,46 @@ function stableId(prefix, question) {
   return `${prefix}_${Math.abs(hash)}`;
 }
 
-function minutesLeft(m) {
-  const d = m.endDateIso || m.endDate || m.end_date_iso;
-  if (!d) return null;
-  const ms = new Date(d) - Date.now();
-  return Number.isFinite(ms) ? ms / 60000 : null;
+/** Latest valid timestamp among Gamma's inconsistent date fields. */
+function parseEndMs(m) {
+  let best = null;
+  for (const c of [m.endDate, m.endDateIso, m.end_date_iso]) {
+    if (!c) continue;
+    const t = new Date(c).getTime();
+    if (Number.isFinite(t) && (best === null || t > best)) best = t;
+  }
+  return best;
 }
 
-/** Parse Gamma's JSON-string fields safely. */
 function jparse(v) {
   if (Array.isArray(v)) return v;
   if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } }
   return null;
 }
 
-function normalizeGammaMarket(m) {
-  const outcomes = jparse(m.outcomes)      || ["Yes", "No"];
-  const prices   = jparse(m.outcomePrices) || [];
-  const tokenIds = jparse(m.clobTokenIds)  || [];
-  const tokens = outcomes.map((o, i) => {
-    let p = parseFloat(prices[i]);
-    if (!Number.isFinite(p)) p = 0.5;
-    if (p > 1) p = p / 100;
-    return {
-      tokenId: tokenIds[i] || `${m.conditionId || m.id}_${i}`,
-      outcome: o,
-      price: Math.min(0.97, Math.max(0.03, p)),
-    };
-  });
-  return {
-    conditionId: m.conditionId || m.id,
-    question:    m.question || m.title || "",
-    endDateIso:  m.endDateIso || m.endDate || m.end_date_iso,
-    coin:        null, // scalper/bot derive coin from question text
-    tokens,
-    live: true,
-  };
-}
-
-let _gammaCache = null, _gammaCacheTime = 0;
-
-export async function fetchBTCMarkets() {
-  // ── REAL MARKETS: Gamma, sorted by soonest expiry, next 3 hours ──
-  if (Date.now() - _gammaCacheTime < 45000 && _gammaCache?.length > 0) {
-    return _gammaCache;
-  }
-  try {
-    const nowIso = new Date(Date.now() + 4 * 60000).toISOString();   // ≥4 min out
-    const maxIso = new Date(Date.now() + 3 * 3600000).toISOString(); // ≤3 hours out
-    const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
-      params: {
-        active: true, closed: false, limit: 300,
-        order: "endDate", ascending: true,
-        end_date_min: nowIso, end_date_max: maxIso,
-      },
-      timeout: 10000,
-    });
-    const all = Array.isArray(data) ? data : (data?.markets || []);
-    const crypto = all.filter(m => {
-      const q = (m.question || m.title || "").toLowerCase();
-      return CRYPTO_KW.some(kw => q.includes(kw));
-    });
-
-    const valid = crypto
-      .map(normalizeGammaMarket)
-      .filter(m => {
-        const mins = minutesLeft(m);
-        return mins !== null && mins >= 4 && mins <= 180;
-      });
-
-    if (valid.length > 0) {
-      console.log(`📊 Polymarket LIVE: ${valid.length} real crypto markets (next 3h) — paper trading REAL prices`);
-      _gammaCache = valid; _gammaCacheTime = Date.now();
-      return valid;
-    }
-
-    // Diagnostics: show why crypto markets were rejected
-    if (crypto.length > 0) {
-      console.log(`📊 Gamma: ${crypto.length} crypto markets found, 0 in 4-180min window. Nearest:`);
-      crypto.slice(0, 3).forEach(m => {
-        const mins = minutesLeft(m);
-        console.log(`   · "${(m.question||"").slice(0,55)}" endDate=${m.endDate || m.endDateIso} (${mins === null ? "unparseable" : mins.toFixed(0) + " min"})`);
-      });
-    } else {
-      console.log(`📊 Gamma: 0 crypto markets in next-3h window`);
-    }
-  } catch (err) {
-    console.log("⚠️ Gamma API:", err.message);
-  }
-
-  console.log("⚠️  No live markets — using REPRICED synthetic markets (live MM sim)");
-  return await getSyntheticMarkets();
-}
-
-// ── Live price fetcher ─────────────────────────────────────────
+// ── Live prices + rolling history (feeds Up/Down strikes) ─────
 let _priceCache = {}, _priceCacheTime = 0;
+const _hist = {};  // coin → [{t, p}]
+
+function recordHistory(prices) {
+  const now = Date.now();
+  for (const [c, p] of Object.entries(prices)) {
+    if (!p) continue;
+    (_hist[c] ||= []).push({ t: now, p });
+  }
+  for (const c of Object.keys(_hist)) {
+    _hist[c] = _hist[c].filter(s => now - s.t < 3.5 * 3600000);
+  }
+}
+
+function spotAt(coin, tMs, tolMs = 90000) {
+  let best = null, bd = Infinity;
+  for (const s of (_hist[coin] || [])) {
+    const d = Math.abs(s.t - tMs);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best && bd <= tolMs ? best.p : null;
+}
 
 async function getLivePrices() {
   if (Date.now() - _priceCacheTime < 15000 && Object.keys(_priceCache).length > 0) {
@@ -167,11 +122,163 @@ async function getLivePrices() {
   if (Object.keys(prices).length > 0) {
     _priceCache = prices;
     _priceCacheTime = Date.now();
+    recordHistory(prices);
   }
   return _priceCache;
 }
 
-// ── Black-Scholes pricing for the synthetic market maker ───────
+// ── Normalize + enrich real Gamma markets ──────────────────────
+const STRIKE_DECIMALS = { BTC: 2, ETH: 2, BNB: 2, SOL: 3, XRP: 4, DOGE: 5 };
+
+function normalizeGammaMarket(m) {
+  const outcomes = jparse(m.outcomes)      || ["Yes", "No"];
+  const prices   = jparse(m.outcomePrices) || [];
+  const tokenIds = jparse(m.clobTokenIds)  || [];
+  const endMs    = parseEndMs(m);
+  const tokens = outcomes.map((o, i) => {
+    let p = parseFloat(prices[i]);
+    if (!Number.isFinite(p)) p = 0.5;
+    if (p > 1) p = p / 100;
+    return {
+      tokenId: tokenIds[i] || `${m.conditionId || m.id}_${i}`,
+      outcome: o,
+      price: Math.min(0.97, Math.max(0.03, p)),
+    };
+  });
+  return {
+    conditionId: m.conditionId || m.id,
+    question:    m.question || m.title || "",
+    endDateIso:  endMs ? new Date(endMs).toISOString() : null,
+    endMs,
+    coin:        coinFrom(m.question || m.title),
+    tokens,
+    live: true,
+  };
+}
+
+/** Parse interval length in minutes from "9:00AM-9:15AM ET" style text. */
+function intervalMinutes(q) {
+  const r = q.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+  if (r) {
+    const t = (h, mm, ap) => ((parseInt(h) % 12) * 60 + parseInt(mm || "0") + (/pm/i.test(ap) ? 720 : 0));
+    let diff = t(r[4], r[5], r[6]) - t(r[1], r[2], r[3]);
+    if (diff <= 0) diff += 720;
+    return diff;
+  }
+  if (/\d{1,2}(:\d{2})?\s*(AM|PM)/i.test(q)) return 60; // hourly "10AM ET" style
+  return null;
+}
+
+/**
+ * Make a real market priceable by the bot.
+ * Returns market, "warm" (skip: no open-price history yet), or null (skip).
+ */
+function enrich(m) {
+  if (!m.endMs || !m.coin) return null;
+
+  const isUpDown = /up or down/i.test(m.question);
+
+  if (isUpDown) {
+    const dur = intervalMinutes(m.question);
+    if (!dur) return null;
+    const startMs = m.endMs - dur * 60000;
+    const strike = spotAt(m.coin, startMs);
+    if (!strike) return "warm"; // interval opened before our history began
+    const dec = STRIKE_DECIMALS[m.coin] ?? 2;
+    const endLabel = new Date(m.endMs).toISOString().slice(11, 16);
+    m.question = `Will ${m.coin} be above $${strike.toFixed(dec)} at ${endLabel} UTC? (UpDown${dur})`;
+    m.tokens = m.tokens.map(t => ({
+      ...t,
+      outcome: /^up$/i.test(t.outcome) ? "Yes" : /^down$/i.test(t.outcome) ? "No" : t.outcome,
+    }));
+    return m;
+  }
+
+  // Non-UpDown: keep only markets the bot can actually price
+  // (needs a $ strike and a direction word in the question)
+  const hasStrike = /\$[\d,]+(\.\d+)?/.test(m.question);
+  const hasDir    = /above|below|reach|hit|higher|lower|rise|drop|fall/i.test(m.question);
+  if (!hasStrike || !hasDir) return null;
+  const hasYesNo = m.tokens.some(t => /^(yes|no)$/i.test(t.outcome));
+  return hasYesNo ? m : null;
+}
+
+let _gammaCache = null, _gammaCacheTime = 0;
+
+export async function fetchBTCMarkets() {
+  await getLivePrices(); // keeps price history warm for Up/Down strikes
+
+  if (Date.now() - _gammaCacheTime < 45000 && _gammaCache?.length > 0) {
+    return _gammaCache;
+  }
+  try {
+    const nowIso = new Date(Date.now() + 4 * 60000).toISOString();
+    const maxIso = new Date(Date.now() + 3 * 3600000).toISOString();
+    const { data } = await axios.get("https://gamma-api.polymarket.com/markets", {
+      params: {
+        active: true, closed: false, limit: 300,
+        order: "endDate", ascending: true,
+        end_date_min: nowIso, end_date_max: maxIso,
+      },
+      timeout: 10000,
+    });
+    const all = Array.isArray(data) ? data : (data?.markets || []);
+    const crypto = all.filter(m => {
+      const q = (m.question || m.title || "").toLowerCase();
+      return CRYPTO_KW.some(kw => q.includes(kw));
+    });
+
+    const inWindow = crypto
+      .map(normalizeGammaMarket)
+      .filter(m => {
+        if (!m.endMs) return false;
+        const mins = (m.endMs - Date.now()) / 60000;
+        return mins >= 4 && mins <= 180;
+      });
+
+    let warm = 0;
+    const ready = [];
+    for (const m of inWindow) {
+      const r = enrich(m);
+      if (r === "warm") warm++;
+      else if (r) ready.push(r);
+    }
+
+    if (ready.length > 0) {
+      console.log(
+        `📊 Polymarket LIVE: ${ready.length} real crypto markets (next 3h)` +
+        (warm ? ` | ${warm} skipped (open-price history warming up)` : "") +
+        ` — paper trading REAL prices`
+      );
+      _gammaCache = ready; _gammaCacheTime = Date.now();
+      return ready;
+    }
+
+    if (inWindow.length > 0) {
+      console.log(`📊 Gamma: ${inWindow.length} crypto markets in window, 0 priceable (${warm} warming up). Nearest:`);
+      inWindow.slice(0, 3).forEach(m => {
+        const mins = ((m.endMs - Date.now()) / 60000).toFixed(0);
+        console.log(`   · "${m.question.slice(0, 55)}" (${mins} min)`);
+      });
+    } else if (crypto.length > 0) {
+      console.log(`📊 Gamma: ${crypto.length} crypto markets found, 0 in 4-180min window. Nearest:`);
+      crypto.slice(0, 3).forEach(m => {
+        const ms = parseEndMs(m);
+        const mins = ms === null ? "unparseable" : ((ms - Date.now()) / 60000).toFixed(0) + " min";
+        console.log(`   · "${(m.question || "").slice(0, 55)}" end=${ms ? new Date(ms).toISOString() : "?"} (${mins})`);
+      });
+    } else {
+      console.log(`📊 Gamma: 0 crypto markets in next-3h window`);
+    }
+  } catch (err) {
+    console.log("⚠️ Gamma API:", err.message);
+  }
+
+  console.log("⚠️  No live markets — using REPRICED synthetic markets (live MM sim)");
+  return await getSyntheticMarkets();
+}
+
+// ── Black-Scholes for synthetic MM ─────────────────────────────
 function normalCDF(x) {
   const a = 0.2316419, b1 = 0.319381530, b2 = -0.356563782,
         b3 = 1.781477937, b4 = -1.821255978, b5 = 1.330274429;
@@ -190,13 +297,13 @@ function probAbove(spot, strike, msLeft, coin, volFactor) {
   return normalCDF(d2);
 }
 
-// ── Synthetic market registry: fixed strikes, live repriced ────
-const HALF_SPREAD = 0.01;   // 1¢ each side (2¢ book spread)
-const QUOTE_NOISE = 0.015;  // ±1.5¢ retail noise
-const QUOTE_TTL   = 30000;  // MM requotes every 30s (reaction lag)
+// ── Synthetic market registry (fallback only) ──────────────────
+const HALF_SPREAD = 0.01;
+const QUOTE_NOISE = 0.015;
+const QUOTE_TTL   = 30000;
 
-const _book = new Map();    // conditionId → market def
-const _quotes = new Map();  // conditionId → { yes, no, at }
+const _book = new Map();
+const _quotes = new Map();
 
 const LADDER = [
   { mins: 15, kind: "atm" }, { mins: 15, kind: "up_sm" }, { mins: 15, kind: "dn_sm" },
@@ -245,7 +352,7 @@ function spawnMarket(coin, spot, slot) {
     direction:   pct < 0 ? "below" : "above",
     endDateIso:  new Date(Date.now() + slot.mins * 60000).toISOString(),
     slotKey:     `${coin}_${slot.mins}_${slot.kind}`,
-    volFactor:   0.85 + Math.random() * 0.40,  // MM's vol disagrees with ours
+    volFactor:   0.85 + Math.random() * 0.40,
   };
   _book.set(id, def);
   return def;
@@ -274,7 +381,6 @@ async function getSyntheticMarkets() {
   const coins  = Object.keys(prices).filter(c => prices[c]);
   if (coins.length === 0) return [];
 
-  // Prune expired markets
   for (const [id, def] of _book) {
     if (new Date(def.endDateIso) - Date.now() < 60000) {
       _book.delete(id);
@@ -282,7 +388,6 @@ async function getSyntheticMarkets() {
     }
   }
 
-  // Ensure every coin × ladder slot has a live market (fixed strike per life)
   const filled = new Set([..._book.values()].map(d => d.slotKey));
   for (const coin of coins) {
     for (const slot of LADDER) {
@@ -291,7 +396,6 @@ async function getSyntheticMarkets() {
     }
   }
 
-  // Quote the whole book at current spot
   const mkts = [];
   for (const def of _book.values()) {
     const spot = prices[def.coin];
@@ -336,7 +440,6 @@ export async function placeOrder({ tokenId, side, size, price, marketQuestion })
     return order;
   }
 
-  // LIVE
   const pk     = process.env.POLYMARKET_PRIVATE_KEY;
   const apiKey = process.env.POLYMARKET_API_KEY;
   if (!pk || pk.startsWith("your_") || !apiKey || apiKey.startsWith("your_")) {
