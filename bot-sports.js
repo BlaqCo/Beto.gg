@@ -26,7 +26,7 @@ const SL_PCT        = 0.15;    // -15% on bid vs entry → stop loss
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 8;
 const ENTRIES_SCAN  = 2;
-const MIN_LIQ       = 50;      // skip empty books
+// book quality: require two-sided quotes, spread ≤ 6¢ (checked at entry)
 
 // ── Helpers ─────────────────────────────────────────────────────
 const shares = b => b.betSize / b.entryPrice;
@@ -135,7 +135,7 @@ export async function runScanCycle() {
   // ── Entry candidates: favorites by ask, strongest first ──
   const candidates = markets
     .filter(m => m.ask && m.ask >= FAV_MIN && m.ask <= FAV_MAX)
-    .filter(m => m.liquidity >= MIN_LIQ || m.volume >= MIN_LIQ)
+    .filter(m => m.bid && m.ask && (m.ask - m.bid) <= 0.06) // real two-sided book, sane spread
     .sort((a, b) => b.ask - a.ask);
 
   if (candidates.length) {
@@ -145,8 +145,10 @@ export async function runScanCycle() {
   }
 
   let betsPlaced = 0;
+  let attempts = 0;
+  const MAX_ATTEMPTS = 3; // hard cap on order attempts per scan (incl. failures)
   for (const m of candidates) {
-    if (betsPlaced >= ENTRIES_SCAN) break;
+    if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (getAllActiveBets().length >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
     if (hasActiveBet(m.slug)) continue;
@@ -156,7 +158,8 @@ export async function runScanCycle() {
     let orderId = `dry_${Date.now()}`;
 
     if (!DRY_RUN) {
-      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask });
+      attempts++;
+      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
       if (!r.filled) {
         console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
         continue;
