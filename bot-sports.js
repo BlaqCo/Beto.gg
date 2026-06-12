@@ -35,14 +35,17 @@ const exitPnl = (b, px) => shares(b) * px - b.betSize;
 const pct = x => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 const cents = x => `${(x * 100).toFixed(0)}¢`;
 
-// ── Live preflight (once) ───────────────────────────────────────
+// ── Live preflight (once; 60s backoff on failure) ───────────────
 let _preflightDone = false;
+let _preflightNextTry = 0;
 async function ensureLiveReady() {
   if (DRY_RUN || _preflightDone) return true;
+  if (Date.now() < _preflightNextTry) return false; // quiet backoff, no spam
   const check = await preflightUS();
   check.messages.forEach(m => console.log(m));
   if (!check.ok) {
-    console.error("❌ LIVE preflight failed — sports entries disabled this scan");
+    _preflightNextTry = Date.now() + 60_000;
+    console.error("❌ LIVE preflight failed — retrying in 60s");
     return false;
   }
   _preflightDone = true;
