@@ -14,7 +14,8 @@ const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 app.use(express.json());
-app.use(express.static("public"));
+// NOTE: static is registered at the END of routes — otherwise public/index.html
+// hijacks GET / and the dashboard's JSON polling breaks.
 
 // ── UI log ring buffer (mirrors console) ────────────────────────
 const uiLog = [];
@@ -51,7 +52,12 @@ console.log(`💰 State initialized | Balance: $${state.getDryBalance()} | Mode:
 // ── Helpers ─────────────────────────────────────────────────────
 function fullStats() {
   const s = state.getStats() || {};
-  return { ...s, dryBalance: state.getDryBalance() };
+  const out = { ...s, dryBalance: state.getDryBalance() };
+  if (out.winRate == null) {
+    const total = (out.wins || 0) + (out.losses || 0);
+    out.winRate = total > 0 ? ((out.wins / total) * 100).toFixed(1) + "%" : "N/A";
+  }
+  return out;
 }
 function allBets() {
   // state.js export name for history varies — try known options, fall back to active
@@ -138,6 +144,8 @@ app.post("/api/mode", async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ status: "ok", mode: currentMode }));
+
+app.use(express.static("public")); // after routes so JSON endpoints win
 
 app.listen(PORT, () => {
   console.log(`[OK] PolyBettor on port ${PORT} | ${currentMode} | dashboard at /dashboard`);
