@@ -52,6 +52,10 @@ async function ensureLiveReady() {
   return true;
 }
 
+// ── Live mark-to-market cache (read by index.js /bets) ──────────
+const liveMarks = new Map(); // slug → { price, pnl, movePct, ts }
+export function getSportsMarks() { return liveMarks; }
+
 // ── Exits ───────────────────────────────────────────────────────
 async function processExits() {
   const exits = [];
@@ -67,6 +71,7 @@ async function processExits() {
       const pnl = expiryPnl(bet, won);
       console.log(`  🏁 SETTLE ${won ? "🟢 WIN" : "🔴 LOSS"} | ${bet.entryCoin} $${bet.betSize} @ ${cents(bet.entryPrice)} | ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)} | ${bet.marketQuestion?.slice(0, 48)}`);
       closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
+      liveMarks.delete(slug);
       exits.push({ pnl, won, reason: "expiry" });
       continue;
     }
@@ -77,6 +82,7 @@ async function processExits() {
     if (!bid) continue; // no quote this scan — try next
 
     const move = (bid - bet.entryPrice) / bet.entryPrice;
+    liveMarks.set(slug, { price: bid, pnl: +exitPnl(bet, bid).toFixed(2), movePct: move, ts: Date.now() });
     const wantTP = move >= TP_PCT;
     const wantSL = move <= -SL_PCT;
 
@@ -100,6 +106,7 @@ async function processExits() {
     const pnl = exitPnl(bet, bid);
     console.log(`  🎯 EXIT [${reason.toUpperCase()}] ${icon} | ${bet.entryCoin} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}${DRY_RUN ? "" : " | LIVE position closed"}`);
     closeBet(slug, { exitPrice: bid, reason, pnl });
+    liveMarks.delete(slug);
     exits.push({ pnl, won: pnl > 0, reason });
   }
   return exits;
@@ -182,8 +189,10 @@ export async function runScanCycle() {
       balance -= betSize;
     }
 
+    const league = m.league || "SPORT";
+    const game = [m.question, m.subtitle].filter(Boolean).join(" — ");
     recordBet({
-      market: { conditionId: m.slug, question: m.question, endDateIso: m.endIso },
+      market: { conditionId: m.slug, question: `[${league}] ${game}`, endDateIso: m.endIso },
       side: "YES",
       betSize,
       edge: 0,
@@ -192,9 +201,9 @@ export async function runScanCycle() {
       orderId,
       entryPrice,
       strategy: "SPORTS_ML",
-      reasoning: `⚽ Favorite ML @ ${cents(entryPrice)} | flat $${betSize}${DRY_RUN ? "" : " | LIVE FOK fill"}`,
+      reasoning: `⚽ ${league} moneyline favorite @ ${cents(entryPrice)} | ${game} | flat $${betSize}${DRY_RUN ? "" : " | LIVE FOK fill"}`,
       entryBtcPrice: null,
-      entryCoin: "SPORT",
+      entryCoin: league,
       sharpShooter: false,
       valueBet: false,
       strike: null,
@@ -203,7 +212,7 @@ export async function runScanCycle() {
 
     betsPlaced++;
     const payout = (betSize / entryPrice).toFixed(2);
-    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${m.question.slice(0, 50)}`);
+    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
   }
 
   const s = getStats();
