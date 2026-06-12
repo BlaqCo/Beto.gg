@@ -121,8 +121,19 @@ export async function fetchSportsMoneylines() {
     }
     if (est == null) est = num(m.lastTradePrice);
 
+    // League/sport label from tags (e.g. MLB, NBA) for display
+    let league = null;
+    const tags = Array.isArray(m.tags) ? m.tags : [];
+    for (const t of tags) {
+      league = t?.league?.abbreviation || t?.league?.name || league;
+      if (!league && t?.sport?.name) league = t.sport.name;
+    }
+    if (!league) league = m.category || null;
+
     out.push({
       slug: m.slug, question: q,
+      subtitle: m.subtitle || null,
+      league: league ? String(league).toUpperCase().slice(0, 12) : "SPORT",
       ask: num(m.bestAsk), bid: num(m.bestBid),
       est,
       tick: num(m.orderPriceMinTickSize) || 0.01,
