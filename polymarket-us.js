@@ -95,14 +95,36 @@ export async function fetchSportsMoneylines() {
   const { data } = await axios.get(`${GATEWAY}/v1/markets?${qs}`, { timeout: 10_000 });
   const raw = data?.markets || [];
 
+  const parseArr = v => { try { const a = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(a) ? a : []; } catch { return []; } };
+
   const out = [];
   for (const m of raw) {
     if (!m.slug || m.active === false || m.closed === true) continue;
     const q = m.question || m.title || "";
     if (SUB_PERIOD.test(q)) continue;
+
+    // Price estimate when list bid/ask are absent:
+    // 1) marketSides: the long (YES) side carries a price string
+    // 2) outcomePrices JSON aligned with outcomes JSON
+    let est = null;
+    const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
+    const longSide = sides.find(s => s.long === true);
+    if (longSide) est = num(longSide.price);
+    if (est == null) {
+      const outcomes = parseArr(m.outcomes);
+      const prices = parseArr(m.outcomePrices).map(Number);
+      if (prices.length) {
+        let yi = outcomes.findIndex(o => /yes/i.test(String(o)));
+        if (yi < 0) yi = 0;
+        est = num(prices[yi]);
+      }
+    }
+    if (est == null) est = num(m.lastTradePrice);
+
     out.push({
       slug: m.slug, question: q,
       ask: num(m.bestAsk), bid: num(m.bestBid),
+      est,
       tick: num(m.orderPriceMinTickSize) || 0.01,
       minQty: num(m.minimumTradeQty) || 1,
       gameStartIso: m.gameStartTime || null,
@@ -110,8 +132,31 @@ export async function fetchSportsMoneylines() {
       category: m.category || "",
     });
   }
+
+  // One-time diagnosis if the list carries no usable prices at all
+  if (!_sampleLogged && out.length && !out.some(x => x.ask || x.est)) {
+    _sampleLogged = true;
+    console.log("🔍 market sample (no prices found):", JSON.stringify(raw[0]).slice(0, 400));
+  }
+
   _cache = out; _cacheTime = Date.now();
   return out;
+}
+let _sampleLogged = false;
+
+/**
+ * Verify candidate markets with real top-of-book quotes.
+ * Input: array of {slug,...}; returns same objects with live bid/ask attached,
+ * keeping only two-sided books with spread <= maxSpread.
+ */
+export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
+  const checks = await Promise.all(cands.map(async c => {
+    const bbo = await getBBO(c.slug);
+    if (!bbo?.bid || !bbo?.ask) return null;
+    if (bbo.ask - bbo.bid > maxSpread) return null;
+    return { ...c, ask: bbo.ask, bid: bbo.bid };
+  }));
+  return checks.filter(Boolean);
 }
 
 export async function getBBO(slug) {
