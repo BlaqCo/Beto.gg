@@ -50,20 +50,54 @@ const settings = {
 console.log(`💰 State initialized | Balance: $${state.getDryBalance()} | Mode: ${currentMode} | ${DRY_RUN ? "DRY RUN" : "🔴 LIVE"}`);
 
 // ── Helpers ─────────────────────────────────────────────────────
+function allBets() {
+  // state.js export name for history varies — try known options, fall back to active
+  const fn = state.getAllBets || state.getBets || state.getBetHistory ||
+             state.getRecentBets || state.getClosedAndActiveBets;
+  try { if (fn) { const r = fn(); if (Array.isArray(r) && r.length) return r; } } catch {}
+  try { return state.getAllActiveBets() || []; } catch { return []; }
+}
+const isSportsBet = b => b?.strategy === "SPORTS_ML";
+function modeBets() {
+  const all = allBets();
+  return currentMode === "SPORTS" ? all.filter(isSportsBet) : all.filter(b => !isSportsBet(b));
+}
+
+// Open sports bets get live P&L from bot-sports' mark cache
+function withLiveMarks(bets) {
+  if (currentMode !== "SPORTS" || !botModule?.getSportsMarks) return bets;
+  const marks = botModule.getSportsMarks();
+  return bets.map(b => {
+    if (b.status && b.status !== "open") return b;
+    const mk = marks.get(b.marketConditionId);
+    if (!mk) return b;
+    const pct = (mk.movePct * 100).toFixed(1);
+    return {
+      ...b,
+      pnl: mk.pnl, // dashboard row shows live $ instead of 'open'
+      reasoning: `${b.reasoning || ""}  ⟂ LIVE ${(mk.price * 100).toFixed(0)}¢ (${mk.movePct >= 0 ? "+" : ""}${pct}%)`,
+    };
+  });
+}
+
 function fullStats() {
   const s = state.getStats() || {};
   const out = { ...s, dryBalance: state.getDryBalance() };
-  if (out.winRate == null) {
-    const total = (out.wins || 0) + (out.losses || 0);
-    out.winRate = total > 0 ? ((out.wins / total) * 100).toFixed(1) + "%" : "N/A";
+
+  // Scope W/L + P&L to the active mode when bet history is available
+  const mine = modeBets();
+  const closed = mine.filter(b => b.status && b.status !== "open");
+  if (closed.length || ((s.wins || 0) + (s.losses || 0) === 0)) {
+    out.wins = closed.filter(b => b.status === "won").length;
+    out.losses = closed.filter(b => b.status === "lost").length;
+    out.pnl = closed.reduce((a, b) => a + (Number(b.pnl) || 0), 0).toFixed(2);
+    out.totalWagered = mine.reduce((a, b) => a + (Number(b.betSize) || 0), 0).toFixed(2);
+    out.activeBets = mine.filter(b => !b.status || b.status === "open").length;
+    out.totalBets = mine.length;
   }
+  const total = (out.wins || 0) + (out.losses || 0);
+  out.winRate = total > 0 ? ((out.wins / total) * 100).toFixed(1) + "%" : "N/A";
   return out;
-}
-function allBets() {
-  // state.js export name for history varies — try known options, fall back to active
-  const fn = state.getAllBets || state.getBets || state.getBetHistory || state.getClosedAndActiveBets;
-  try { if (fn) return fn() || []; } catch {}
-  try { return state.getAllActiveBets() || []; } catch { return []; }
 }
 
 // ── Dashboard data API (paths the dashboard polls) ──────────────
@@ -77,7 +111,7 @@ app.get("/", (req, res) => {
   });
 });
 
-app.get("/bets", (req, res) => res.json(allBets()));
+app.get("/bets", (req, res) => res.json(withLiveMarks(modeBets())));
 
 app.get("/signals", (req, res) => {
   if (currentMode === "SPORTS" || !lastSignals) {
