@@ -20,6 +20,9 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .logo-text h1 span{color:var(--green);}
 .logo-text .sub{font-size:9px;letter-spacing:3px;color:var(--muted);margin-top:2px;}
 .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.mode-switch{display:flex;gap:4px;background:rgba(0,0,0,0.3);border:1px solid var(--border2);border-radius:3px;padding:2px;}
+.mode-btn{padding:4px 10px;font-size:9px;letter-spacing:2px;background:transparent;border:none;color:var(--muted);cursor:pointer;transition:all 0.2s;text-transform:uppercase;}
+.mode-btn.active{background:rgba(0,255,157,0.15);color:var(--green);border-radius:2px;}
 .badge{padding:3px 10px;border-radius:2px;font-size:9px;letter-spacing:2px;font-weight:bold;text-transform:uppercase;}
 .badge-dry{background:rgba(255,210,0,0.08);color:var(--yellow);border:1px solid rgba(255,210,0,0.2);}
 .badge-live{background:rgba(0,255,157,0.08);color:var(--green);border:1px solid rgba(0,255,157,0.25);}
@@ -180,6 +183,10 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
     </div>
   </div>
   <div class="hdr-right">
+    <div class="mode-switch">
+      <button class="mode-btn active" data-mode="SPORTS" onclick="switchMode('SPORTS')">⚽ Sports</button>
+      <button class="mode-btn" data-mode="CRYPTO" onclick="switchMode('CRYPTO')">₿ Crypto</button>
+    </div>
     <div class="status-bar">
       <div class="dot dot-g" id="dot"></div>
       <span id="status-txt">ONLINE</span>
@@ -906,6 +913,26 @@ function toggleBet(i) {
 
 setInterval(refresh, 3000);
 refresh();
+
+// Mode switching
+async function switchMode(mode) {
+  try {
+    const res = await fetch('/api/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode })
+    });
+    const data = await res.json();
+    console.log('Mode switched to:', data.mode);
+    
+    // Update button states
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+  } catch(e) {
+    console.error('Mode switch error:', e);
+  }
+}
 </script>
 </body>
 </html>
