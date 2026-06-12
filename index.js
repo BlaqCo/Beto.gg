@@ -96,9 +96,9 @@ app.get("/markets", async (req, res) => {
       return res.json(mkts.map(m => ({
         question: m.question,
         endDateIso: m.endIso || m.gameStartIso,
-        _quality: m.ask || 0, // renders as the % column → favorite price
+        _quality: m.ask ?? m.est ?? 0, // % column → favorite price (live or estimated)
         _decision: {
-          shouldBet: !!(m.ask && m.ask >= 0.52 && m.ask <= 0.95 && m.bid),
+          shouldBet: (() => { const p = m.ask ?? m.est; return !!(p && p >= 0.52 && p <= 0.95); })(),
           side: "YES",
           edge: m.ask && m.bid ? Math.max(0, m.ask - m.bid) : 0, // spread shown in edge col
         },
