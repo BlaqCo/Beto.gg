@@ -138,12 +138,29 @@ export async function getSettlement(slug) {
 }
 
 // ── Authenticated ───────────────────────────────────────────────
+// Money values may arrive as 70, "70.00", or {value:"70.00",currency:"USD"}
+const money = x => {
+  if (x == null) return null;
+  if (typeof x === "object") return money(x.value ?? x.amount ?? x.units);
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+};
+
+let _balShapeLogged = false;
 export async function getBuyingPower() {
   const b = await signedRequest("GET", "/v1/account/balances");
-  return {
-    buyingPower: Number(b?.buyingPower) || 0,
-    currentBalance: Number(b?.currentBalance) || 0,
-  };
+  const root = b?.balances || b || {};
+  const buyingPower =
+    money(root.buyingPower) ?? money(root.buying_power) ?? null;
+  const currentBalance =
+    money(root.currentBalance) ?? money(root.current_balance) ??
+    money(root.cashBalance) ?? null;
+
+  if ((buyingPower == null || buyingPower === 0) && !_balShapeLogged) {
+    _balShapeLogged = true;
+    console.log("🔍 balances raw shape:", JSON.stringify(b).slice(0, 300));
+  }
+  return { buyingPower: buyingPower ?? 0, currentBalance: currentBalance ?? buyingPower ?? 0 };
 }
 
 /** Live BUY: fill-or-kill limit at ask + 1 tick. Whole contracts. */
