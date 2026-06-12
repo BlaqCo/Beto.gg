@@ -4,19 +4,27 @@
  */
 
 import express from "express";
-import { getDryBalance, getStats } from "./state.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import state from "./state.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static("public"));
 
+// ── Serve dashboard ──
+app.get("/dashboard", (req, res) => {
+  res.sendFile(path.join(__dirname, "dashboard.html"));
+});
+
 // ── Global mode state ──
 let currentMode = process.env.BOT_MODE || "SPORTS"; // SPORTS or CRYPTO
 let botModule = null;
 
-console.log(`💰 State initialized | Starting balance: ${getDryBalance()} | Mode: ${currentMode}`);
+console.log(`💰 State initialized | Starting balance: $${state.getDryBalance()} | Mode: ${currentMode}`);
 console.log(`[INFO] Scanner started — every 8s`);
 
 const dryRun = process.env.DRY_RUN !== "false";
@@ -26,8 +34,8 @@ if (!dryRun) {
 
 // ── Dashboard API ──
 app.get("/api/status", (req, res) => {
-  const stats = getStats();
-  const balance = getDryBalance();
+  const stats = state.getStats();
+  const balance = state.getDryBalance();
 
   res.json({
     mode: currentMode,
