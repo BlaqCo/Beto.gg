@@ -856,20 +856,22 @@ async function refresh() {
       if(!bets.length){bl.innerHTML='<div class="empty">NO BETS YET</div>';}
       else{
         bl.innerHTML=bets.slice().reverse().slice(0,50).map((b,i)=>{
+          const key=String(b.orderId||b.marketConditionId||((b.marketQuestion||'')+'|'+(b.placedAt||''))).replace(/"/g,'&quot;');
+          const isOpen=openBets.has(key);
           const pnl=b.pnl!=null?(b.pnl>=0?'+$'+b.pnl.toFixed(2):'-$'+Math.abs(b.pnl).toFixed(2)):'open';
           const pnlC=b.pnl==null?'neutral':b.pnl>0?'pos':'neg';
           const sc=b.side==='YES'?'s-yes':'s-no';
           const stC=b.status==='won'?'s-won':b.status==='lost'?'s-lost':b.status==='expired'?'neutral':'s-open';
           const ssTag=b.sharpShooter?'⚡ ':'';
-          return `<div class="bet-row" onclick="toggleBet(${i})">
+          return `<div class="bet-row" data-betkey="${key}" onclick="toggleBet(this,${i})">
             <div class="bet-summary">
               <div class="bet-q">${ssTag}${(b.marketQuestion||'').slice(0,42)}</div>
               <div class="bet-c"><span class="mkt-side ${sc}">${b.side}</span></div>
               <div class="bet-c neutral">$${b.betSize?.toFixed(2)||'—'}</div>
               <div class="bet-c ${pnlC}">${pnl}</div>
-              <div class="bet-chevron" id="chev-${i}">›</div>
+              <div class="bet-chevron${isOpen?' open':''}" id="chev-${i}">›</div>
             </div>
-            <div class="bet-detail" id="det-${i}">
+            <div class="bet-detail${isOpen?' open':''}" id="det-${i}">
               <div class="bd-grid">
                 <div class="bd-item"><div class="bd-label">Strategy</div><div class="bd-val">${ssTag}${b.strategy||'—'}</div></div>
                 <div class="bd-item"><div class="bd-label">Status</div><div class="bd-val ${stC}">${b.status||'open'}</div></div>
@@ -903,12 +905,15 @@ async function refresh() {
   }
 }
 
-function toggleBet(i) {
+const openBets=new Set();
+function toggleBet(el,i) {
   const det=document.getElementById('det-'+i);
   const chev=document.getElementById('chev-'+i);
   if(!det)return;
   const open=det.classList.toggle('open');
   if(chev)chev.classList.toggle('open',open);
+  const key=el&&el.dataset?el.dataset.betkey:null;
+  if(key){ if(open) openBets.add(key); else openBets.delete(key); }
 }
 
 setInterval(refresh, 3000);
