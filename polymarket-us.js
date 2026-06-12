@@ -1,20 +1,20 @@
 /**
- * polymarket-us.js — Official polymarket.us SDK wrapper
+ * polymarket-us.js — polymarket.us integration
  *
- * Auth:   POLYMARKET_API_KEY (Key ID) + POLYMARKET_PRIVATE_KEY (Secret Key)
- * Public: markets/sports data needs no auth.
- * Docs:   https://docs.polymarket.us
+ * PUBLIC data:  direct calls to https://gateway.polymarket.us (no auth)
+ * TRADING:      official polymarket-us SDK (handles Ed25519 signing)
+ *
+ * Env: POLYMARKET_API_KEY (Key ID) + POLYMARKET_PRIVATE_KEY (Secret Key)
+ * Docs: https://docs.polymarket.us
  */
 
+import axios from "axios";
 import { PolymarketUS } from "polymarket-us";
 
-let _public = null, _auth = null;
+const GATEWAY = "https://gateway.polymarket.us";
 
-function publicClient() {
-  if (!_public) _public = new PolymarketUS();
-  return _public;
-}
-
+// ── Authenticated SDK client (trading only) ─────────────────────
+let _auth = null;
 export function authClient() {
   if (_auth) return _auth;
   const keyId     = process.env.POLYMARKET_API_KEY;
@@ -29,39 +29,40 @@ export function authClient() {
 // ── Public: sports moneyline markets ────────────────────────────
 let _cache = null, _cacheTime = 0;
 const TTL = 20_000;
-
-// Sub-period winners can slip through MONEYLINE filters; exclude them.
 const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
+
+const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
 
-  const res = await publicClient().markets.list({
-    active: true,
-    sportsMarketTypes: ["MONEYLINE"],
-    limit: 250,
-  });
-  const raw = res?.markets || res || [];
+  // gRPC-gateway repeated params: key=v (not key[]=v) — build manually
+  const qs = [
+    "active=true",
+    "closed=false",
+    "limit=100",
+    "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE",
+  ].join("&");
+
+  const { data } = await axios.get(`${GATEWAY}/v1/markets?${qs}`, { timeout: 10_000 });
+  const raw = data?.markets || [];
 
   const out = [];
   for (const m of raw) {
-    if (!m.slug || !m.question) continue;
-    if (m.active === false) continue;
-    if (SUB_PERIOD.test(m.question)) continue;
+    if (!m.slug || m.active === false || m.closed === true) continue;
+    const q = m.question || m.title || "";
+    if (SUB_PERIOD.test(q)) continue;
 
-    const ask = Number(m.bestAsk);
-    const bid = Number(m.bestBid);
-    const last = Number(m.lastTradePrice);
     out.push({
       slug: m.slug,
-      question: m.question,
-      ask: Number.isFinite(ask) && ask > 0 ? ask : null,
-      bid: Number.isFinite(bid) && bid > 0 ? bid : null,
-      last: Number.isFinite(last) && last > 0 ? last : null,
-      volume: Number(m.volume) || 0,
-      liquidity: Number(m.liquidity) || 0,
-      gameStartIso: m.gameStartTime || m.eventStartTime || null,
-      endIso: m.endDate || m.endDateIso || null,
+      question: q,
+      ask: num(m.bestAsk),
+      bid: num(m.bestBid),
+      tick: num(m.orderPriceMinTickSize) || 0.01,
+      minQty: num(m.minimumTradeQty) || 1,
+      gameStartIso: m.gameStartTime || null,
+      endIso: m.endDate || null,
+      category: m.category || "",
     });
   }
   _cache = out; _cacheTime = Date.now();
@@ -71,28 +72,32 @@ export async function fetchSportsMoneylines() {
 // Lightweight live quote for one market (exit pricing)
 export async function getBBO(slug) {
   try {
-    const r = await publicClient().markets.bbo(slug);
-    const d = r?.marketData || r || {};
+    const { data } = await axios.get(
+      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/bbo`, { timeout: 8_000 });
+    const d = data?.marketData || data || {};
+    const val = x => (x && x.value != null) ? Number(x.value) : num(x);
     return {
-      bid: d.bestBid?.value != null ? Number(d.bestBid.value) : null,
-      ask: d.bestAsk?.value != null ? Number(d.bestAsk.value) : null,
-      last: d.lastTradePx?.value != null ? Number(d.lastTradePx.value) : null,
+      bid:  val(d.bestBid),
+      ask:  val(d.bestAsk),
+      last: val(d.lastTradePx) ?? val(d.lastTradePrice),
     };
   } catch { return null; }
 }
 
-// Settlement check: returns 1, 0, or null (not settled / unknown)
+// Settlement: 1, 0, or null (not settled / unknown)
 export async function getSettlement(slug) {
   try {
-    const r = await publicClient().markets.settlement(slug);
-    const v = Number(r?.settlement);
+    const { data } = await axios.get(
+      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/settlement`, { timeout: 8_000 });
+    const v = Number(data?.settlement);
+    if (!Number.isFinite(v)) return null;
     if (v >= 0.99) return 1;
     if (v <= 0.01) return 0;
     return null;
   } catch { return null; }
 }
 
-// ── Authenticated ───────────────────────────────────────────────
+// ── Authenticated (SDK) ─────────────────────────────────────────
 export async function getBuyingPower() {
   const b = await authClient().account.balances();
   return {
@@ -102,15 +107,14 @@ export async function getBuyingPower() {
 }
 
 /**
- * Live BUY: fill-or-kill limit at ask + 1¢ buffer.
- * Whole contracts only (always valid regardless of minimumTradeQty).
- * Returns { filled, qty, fillPrice, cost, orderId } or { filled:false, error }.
+ * Live BUY: fill-or-kill limit at ask + 1 tick.
+ * Whole contracts (always ≥ minimumTradeQty).
  */
-export async function buyYesFOK({ slug, sizeUsd, ask }) {
+export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
   const client = authClient();
-  const limit = Math.min(0.99, Math.round((ask + 0.01) * 100) / 100);
+  const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
   const qty = Math.floor(sizeUsd / limit);
-  if (qty < 1) return { filled: false, error: `size $${sizeUsd} < 1 contract @ ${limit}` };
+  if (qty < 1) return { filled: false, error: `size $${sizeUsd} < 1 contract @ ${limit.toFixed(2)}` };
 
   try {
     const order = await client.orders.create({
@@ -123,14 +127,13 @@ export async function buyYesFOK({ slug, sizeUsd, ask }) {
     });
 
     let state = order.state;
-    // FOK resolves fast; confirm if still pending
     if (state === "ORDER_STATE_PENDING_NEW") {
       await new Promise(r => setTimeout(r, 1200));
       try { state = (await client.orders.retrieve(order.id)).state; } catch {}
     }
 
     if (state === "ORDER_STATE_FILLED") {
-      return { filled: true, qty, fillPrice: limit, cost: qty * limit, orderId: order.id };
+      return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: order.id };
     }
     return { filled: false, error: `order ${state}`, orderId: order.id };
   } catch (err) {
@@ -138,9 +141,7 @@ export async function buyYesFOK({ slug, sizeUsd, ask }) {
   }
 }
 
-/**
- * Live full exit at market (used for TP/SL and manual closes).
- */
+/** Live full exit at market (TP/SL/manual). */
 export async function closePositionLive(slug) {
   try {
     await authClient().orders.closePosition({ marketSlug: slug });
@@ -153,13 +154,8 @@ export async function closePositionLive(slug) {
 // ── Preflight ───────────────────────────────────────────────────
 export async function preflightUS() {
   const msgs = [];
-  try {
-    authClient();
-    msgs.push("✅ API credentials present");
-  } catch (e) {
-    msgs.push("❌ " + e.message);
-    return { ok: false, messages: msgs };
-  }
+  try { authClient(); msgs.push("✅ API credentials present"); }
+  catch (e) { msgs.push("❌ " + e.message); return { ok: false, messages: msgs }; }
   try {
     const { buyingPower, currentBalance } = await getBuyingPower();
     msgs.push(`✅ Auth works | balance $${currentBalance.toFixed(2)} | buying power $${buyingPower.toFixed(2)}`);
