@@ -6,7 +6,7 @@
  * TP: 6-14%, SL: 15% drawdown, trail 5%.
  */
 
-import state from "./state.js";
+import { getStats, getDryBalance, getAllActiveBets, hasActiveBet, closeBet, recordBet } from "./state.js";
 
 const botSettings = {
   enabled: true,
@@ -57,7 +57,7 @@ function extractSport(question) {
 }
 
 function printRecord() {
-  const s = state.getStats();
+  const s = getStats();
   const winRate = s.totalBets > 0 ? ((s.wins / s.totalBets) * 100).toFixed(1) : "0";
   console.log(
     `📊 Record: ${s.wins}W-${s.losses}L (${winRate}%) | P&L: $${s.pnl.toFixed(2)} | Active: ${s.activeBets}`
@@ -93,8 +93,8 @@ export async function runScanCycle() {
 
   if (!botSettings.dryRun) await ensureLiveReady();
 
-  const balance = state.getDryBalance();
-  const activeBets = state.getAllActiveBets();
+  const balance = getDryBalance();
+  const activeBets = getAllActiveBets();
   const maxConcurrent = 8; // max concurrent bets
 
   console.log(`
@@ -148,7 +148,7 @@ export async function runScanCycle() {
       console.log(
         `    ✅ TP HIT | ${bet.sport} | +${pnlPct}% | $${pnl} | exit @ ${(yesPrice * 100).toFixed(1)}¢`
       );
-      await state.closeBet(bet.id, "TP", yesPrice, parseFloat(pnl));
+      await closeBet(bet.id, "TP", yesPrice, parseFloat(pnl));
       exits.push({ id: bet.id, reason: "TP", pnl: parseFloat(pnl) });
       continue;
     }
@@ -158,7 +158,7 @@ export async function runScanCycle() {
       console.log(
         `    🔴 SL HIT | ${bet.sport} | ${pnlPct}% | $${pnl} | exit @ ${(yesPrice * 100).toFixed(1)}¢`
       );
-      await state.closeBet(bet.id, "SL", yesPrice, parseFloat(pnl));
+      await closeBet(bet.id, "SL", yesPrice, parseFloat(pnl));
       exits.push({ id: bet.id, reason: "SL", pnl: parseFloat(pnl) });
     }
   }
@@ -180,7 +180,7 @@ export async function runScanCycle() {
     const sport = extractSport(market.question);
 
     // Check if already bet on this market
-    if (state.hasActiveBet(market.id)) {
+    if (hasActiveBet(market.id)) {
       continue;
     }
 
@@ -208,7 +208,7 @@ export async function runScanCycle() {
           ` | win → $${payout} (+$${profit})`
         );
 
-        await state.recordBet({
+        await recordBet({
           marketId: market.id,
           side: "YES",
           size: betSize,

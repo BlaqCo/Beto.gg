@@ -4,7 +4,7 @@
  */
 
 import express from "express";
-import state from "./state.js";
+import { getDryBalance, getStats } from "./state.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,7 +16,7 @@ app.use(express.static("public"));
 let currentMode = process.env.BOT_MODE || "SPORTS"; // SPORTS or CRYPTO
 let botModule = null;
 
-console.log(`💰 State initialized | Starting balance: $${state.getDryBalance()} | Mode: ${currentMode}`);
+console.log(`💰 State initialized | Starting balance: ${getDryBalance()} | Mode: ${currentMode}`);
 console.log(`[INFO] Scanner started — every 8s`);
 
 const dryRun = process.env.DRY_RUN !== "false";
@@ -26,8 +26,8 @@ if (!dryRun) {
 
 // ── Dashboard API ──
 app.get("/api/status", (req, res) => {
-  const stats = state.getStats();
-  const balance = state.getDryBalance();
+  const stats = getStats();
+  const balance = getDryBalance();
 
   res.json({
     mode: currentMode,
