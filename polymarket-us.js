@@ -189,7 +189,8 @@ export async function closePositionLive(slug) {
 // ── Preflight ───────────────────────────────────────────────────
 export async function preflightUS() {
   const msgs = [];
-  try { getCreds(); msgs.push("✅ API credentials parsed (Ed25519 key loaded)"); }
+  let keyId;
+  try { keyId = getCreds().keyId; msgs.push("✅ API credentials parsed (Ed25519 key loaded)"); }
   catch (e) { msgs.push("❌ " + e.message); return { ok: false, messages: msgs }; }
   try {
     const { buyingPower, currentBalance } = await getBuyingPower();
@@ -200,6 +201,10 @@ export async function preflightUS() {
     }
   } catch (e) {
     msgs.push("❌ Auth/balance check failed: " + e.message);
+    msgs.push(`🔎 Sending Key ID: ${keyId.slice(0, 13)}… (${keyId.length} chars, ${looksUuid(keyId) ? "uuid ✓" : "⚠️ NOT uuid"}) — compare to polymarket.us/developer`);
+    if (/not found/i.test(e.message)) {
+      msgs.push("👉 Key doesn't exist server-side: revoked, truncated copy, or different account. Create a fresh key (sign in with Apple, same as the app), use the COPY buttons for both values, update both Railway vars.");
+    }
     return { ok: false, messages: msgs };
   }
   return { ok: true, messages: msgs };
