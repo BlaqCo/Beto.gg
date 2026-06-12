@@ -10,7 +10,7 @@
 
 import { recordBet, hasActiveBet, getStats, getAllActiveBets,
          closeBet, getDryBalance } from "./state.js";
-import { fetchSportsMoneylines, getBBO, getSettlement,
+import { fetchSportsMoneylines, verifyCandidates, getBBO, getSettlement,
          buyYesFOK, closePositionLive, getBuyingPower,
          preflightUS } from "./polymarket-us.js";
 
@@ -135,14 +135,21 @@ export async function runScanCycle() {
   }
   console.log(`💰 ${DRY_RUN ? "Paper" : "Buying power"}: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
 
-  // ── Entry candidates: favorites by ask, strongest first ──
-  const candidates = markets
-    .filter(m => m.ask && m.ask >= FAV_MIN && m.ask <= FAV_MAX)
-    .filter(m => m.bid && m.ask && (m.ask - m.bid) <= 0.06) // real two-sided book, sane spread
-    .sort((a, b) => b.ask - a.ask);
+  // ── Entry candidates: favorites by estimated price, then verify books ──
+  const pool = markets
+    .map(m => ({ ...m, px: m.ask ?? m.est }))
+    .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
+    .sort((a, b) => b.px - a.px);
 
-  if (candidates.length) {
-    console.log(`🏆 ${candidates.length} favorites ${cents(FAV_MIN)}-${cents(FAV_MAX)}. Top: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 28)}`).join(" · ")}`);
+  let candidates = [];
+  if (pool.length) {
+    console.log(`🏆 ${pool.length} favorites ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
+    candidates = await verifyCandidates(pool.slice(0, 8));
+    if (candidates.length) {
+      console.log(`📗 ${candidates.length} with live two-sided books: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 28)}`).join(" · ")}`);
+    } else {
+      console.log("[INFO] Books too thin/wide on top favorites this scan");
+    }
   } else {
     console.log(`[INFO] No favorites in range right now`);
   }
