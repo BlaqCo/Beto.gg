@@ -128,3 +128,15 @@ export function getStats() {
     dryBalance:      getDryBalance().toFixed(2),
   };
 }
+
+export default {
+  recordBet,
+  closeBet,
+  hasActiveBet,
+  getActiveBet,
+  getAllActiveBets,
+  recordScan,
+  getDryBalance,
+  getAllBets,
+  getStats,
+};
