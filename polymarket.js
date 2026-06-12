@@ -483,28 +483,57 @@ export async function placeOrder({ tokenId, side, size, price, marketQuestion })
     return order;
   }
 
+  // LIVE MODE — polymarket.us Ed25519 signing + fill tracking
   const pk     = process.env.POLYMARKET_PRIVATE_KEY;
   const apiKey = process.env.POLYMARKET_API_KEY;
   if (!pk || pk.startsWith("your_") || !apiKey || apiKey.startsWith("your_")) {
-    throw new Error("Live mode requires POLYMARKET_PRIVATE_KEY + POLYMARKET_API_KEY");
+    throw new Error("Live mode requires POLYMARKET_PRIVATE_KEY + POLYMARKET_API_KEY env vars");
   }
+
   try {
-    const { ClobClient, Side } = await import("@polymarket/clob-client");
-    const { ethers }           = await import("ethers");
-    const wallet = new ethers.Wallet(pk.startsWith("0x") ? pk : `0x${pk}`);
-    const client = new ClobClient("https://clob.polymarket.com", 137, wallet, {
-      key: apiKey, secret: process.env.POLYMARKET_API_SECRET,
-      passphrase: process.env.POLYMARKET_API_PASSPHRASE,
-    });
-    const order = await client.createAndPostOrder({
-      tokenID: tokenId,
-      side:    side === "BUY" ? Side.BUY : Side.SELL,
-      size:    size.toString(), price: price.toString(),
-    });
-    console.log(` ✅ LIVE ORDER: ${order.orderID} | ${side} $${size} @ ${price}`);
-    return order;
+    const { postAndPollOrder, roundToTick } = await import("./live-clob.js");
+    const result = await postAndPollOrder(
+      tokenId,
+      side,
+      size,
+      price,
+      apiKey,
+      pk,
+      marketQuestion
+    );
+
+    if (result.error) {
+      console.log(`    ⚠️  Order failed: ${result.error} | ${side} $${size} @ ${(price*100).toFixed(1)}¢`);
+      throw new Error(result.error);
+    }
+
+    if (result.filled) {
+      const payout = parseFloat((size / result.fillPrice).toFixed(2));
+      const profit = parseFloat((payout - size).toFixed(2));
+      const slippage = result.fillPrice - price;
+      console.log(
+        `    ✅ FILLED ${side} $${size} @ ${(result.fillPrice*100).toFixed(1)}¢` +
+        (Math.abs(slippage) > 0.001 ? ` (vs ${(price*100).toFixed(1)}¢, slip: ${(slippage*100).toFixed(1)}¢)` : "") +
+        ` | win → $${payout} (+$${profit})`
+      );
+      return {
+        orderID: result.orderId,
+        tokenId,
+        side,
+        size: result.size,
+        price: result.fillPrice,
+        potentialPayout: payout,
+        potentialProfit: profit,
+        marketQuestion,
+        status: "live_filled",
+        timestamp: new Date().toISOString(),
+      };
+    } else {
+      console.log(`    ⚠️  Order ${result.orderId} did not fill in 10s, cancelled`);
+      throw new Error("Order timeout");
+    }
   } catch (err) {
-    throw new Error("CLOB order failed: " + err.message);
+    throw new Error("Live order failed: " + err.message);
   }
 }
 
