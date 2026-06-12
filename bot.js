@@ -104,8 +104,31 @@ function summary(exits, betsPlaced, maxConc) {
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${maxConc} | P&L:$${s.pnl} | Scalps:${s.scalps} ──`);
 }
 
+// Preflight checks on first live run
+let _preflightDone = false;
+async function ensureLiveReady() {
+  if (botSettings.dryRun || _preflightDone) return;
+  try {
+    const { preflightCheck } = await import("./live-clob.js");
+    const check = await preflightCheck(
+      process.env.POLYMARKET_API_KEY,
+      process.env.POLYMARKET_PRIVATE_KEY
+    );
+    check.messages.forEach(m => console.log(m));
+    if (!check.ok) {
+      console.error("❌ Live mode preflight FAILED — trading disabled");
+      process.exit(1);
+    }
+    _preflightDone = true;
+  } catch (err) {
+    console.error("Preflight error:", err.message);
+  }
+}
+
 export async function runScanCycle() {
   if (!botSettings.enabled) return { signals: null, exits: [], betsPlaced: 0 };
+
+  if (!botSettings.dryRun) await ensureLiveReady();
 
   const DRY_RUN    = botSettings.dryRun;
   const VALUE_MODE = botSettings.valueMode;
@@ -249,12 +272,35 @@ export async function runScanCycle() {
       const p    = best.sideFV;
       const fStar = (b * p - (1 - p)) / b;     // full Kelly fraction
       if (fStar <= 0) continue;
+      
+      // Live balance check (update every entry)
+      let currentBalance = balance;
+      if (!botSettings.dryRun) {
+        try {
+          const { getWalletBalance } = await import("./live-clob.js");
+          const liveBal = await getWalletBalance(
+            process.env.POLYMARKET_API_KEY,
+            process.env.POLYMARKET_PRIVATE_KEY
+          );
+          if (liveBal !== null && liveBal > 0) {
+            currentBalance = liveBal;
+            const maxEnv = parseFloat(process.env.MAX_BET_SIZE || "10");
+            if (liveBal < maxEnv) {
+              console.log(`    ⚠️  Wallet balance $${liveBal.toFixed(2)} < MAX_BET_SIZE $${maxEnv}, skipping`);
+              continue;
+            }
+          }
+        } catch (err) {
+          // Balance check failed, use env fallback
+        }
+      }
+      
       const maxEnv = parseFloat(process.env.MAX_BET_SIZE || "10");
       finalBet = parseFloat(Math.min(
-        Math.max(balance * fStar * V_KELLY_FRACTION, V_MIN_BET),
-        V_MAX_BET, maxEnv, balance * 0.15
+        Math.max(currentBalance * fStar * V_KELLY_FRACTION, V_MIN_BET),
+        V_MAX_BET, maxEnv, currentBalance * 0.15
       ).toFixed(2));
-      if (balance < finalBet || finalBet < V_MIN_BET) continue;
+      if (currentBalance < finalBet || finalBet < V_MIN_BET) continue;
 
       decision = {
         shouldBet:   true,
