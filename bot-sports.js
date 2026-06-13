@@ -10,9 +10,9 @@
  */
 
 import { recordBet, hasActiveBet, getStats, getAllActiveBets,
-         closeBet, getDryBalance } from "./state.js";
+         closeBet, getDryBalance, countBetsForMarket } from "./state.js";
 import { fetchSportsMoneylines, verifyCandidates, getBBO, getSettlement,
-         buyYesFOK, getBuyingPower,
+         buyYesFOK, getBuyingPower, getOpenPositions,
          preflightUS } from "./polymarket-us.js";
 
 const DRY_RUN = process.env.DRY_RUN !== "false";
@@ -25,6 +25,7 @@ const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 6;
 const ENTRIES_SCAN  = 2;
+const MAX_ENTRIES_PER_MARKET = 2; // hard cap — never enter the same market more than this, ever
 // book quality: require two-sided quotes, spread ≤ 6¢ (checked at entry)
 // HOLD-TO-CLOSE: no TP/SL. Positions are only closed by market settlement.
 
@@ -149,6 +150,23 @@ export async function runScanCycle() {
     console.log(`[INFO] No favorites in range (live or next-24h) right now`);
   }
 
+  // ── Ground-truth dedup: real Polymarket positions (LIVE only) ──
+  // Catches duplicates regardless of local state, restarts, or redeploys —
+  // if the account ever bought into a market at all, skip it.
+  let ownedSlugs = null;
+  if (!DRY_RUN) {
+    const positions = await getOpenPositions();
+    if (positions) {
+      ownedSlugs = new Set(
+        Object.entries(positions)
+          .filter(([, p]) => p.qtyBought > 0)
+          .map(([slug]) => slug)
+      );
+    } else {
+      console.log("  ⚠️ Could not verify live positions this scan — skipping new entries to be safe");
+    }
+  }
+
   let betsPlaced = 0;
   let attempts = 0;
   const MAX_ATTEMPTS = 3; // hard cap on order attempts per scan (incl. failures)
@@ -157,6 +175,17 @@ export async function runScanCycle() {
     if (getAllActiveBets().length >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
     if (hasActiveBet(m.slug)) continue;
+    if (countBetsForMarket(m.slug) >= MAX_ENTRIES_PER_MARKET) {
+      console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already entered ${MAX_ENTRIES_PER_MARKET}x (local)`);
+      continue;
+    }
+    if (!DRY_RUN) {
+      if (ownedSlugs === null) continue; // couldn't verify positions this scan — don't risk a dupe
+      if (ownedSlugs.has(m.slug)) {
+        console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already hold this position on Polymarket`);
+        continue;
+      }
+    }
 
     let entryPrice = m.ask;
     let betSize = BET_SIZE;
