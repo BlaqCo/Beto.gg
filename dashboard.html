@@ -673,9 +673,17 @@ async function refresh() {
       document.getElementById('mode-badge').className = 'badge '+(isDry?'badge-dry':'badge-live');
 
       // Balance
+      // In LIVE mode, prefer the real Polymarket account balance (s.liveBalance)
+      // pushed from index.js via getBuyingPower(). Fall back to the computed
+      // bankroll+pnl figure if the live balance isn't available yet.
       const balEl=document.getElementById('s-balance');
       if(balEl){
-        const disp=isDry?(s.dryBalance||currentBal.toFixed(2)):currentBal.toFixed(2);
+        let disp;
+        if(isDry){
+          disp = s.dryBalance!=null ? s.dryBalance : currentBal.toFixed(2);
+        } else {
+          disp = s.liveBalance!=null ? s.liveBalance : currentBal.toFixed(2);
+        }
         balEl.textContent='$'+parseFloat(disp).toFixed(2);
         balEl.className='stat-v '+(pnl>=0?'pos':'neg');
       }
