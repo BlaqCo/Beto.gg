@@ -23,7 +23,7 @@ const BET_MIN       = 10;
 const FAV_MIN       = 0.60;    // wait for the favorite to climb to 60¢ before entering
 const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 8;
+const MAX_CONC      = 6;
 const ENTRIES_SCAN  = 2;
 // book quality: require two-sided quotes, spread ≤ 6¢ (checked at entry)
 // HOLD-TO-CLOSE: no TP/SL. Positions are only closed by market settlement.
