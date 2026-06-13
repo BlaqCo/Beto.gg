@@ -193,6 +193,9 @@ export function closeBet(conditionId, { exitPrice, reason, pnl }) {
 export function hasActiveBet(conditionId)  { return state.activeBets.has(conditionId); }
 export function getActiveBet(conditionId)  { return state.activeBets.get(conditionId); }
 export function getAllActiveBets()          { return Array.from(state.activeBets.values()); }
+export function countBetsForMarket(conditionId) {
+  return state.bets.filter(b => b.marketConditionId === conditionId).length;
+}
 export function recordScan()               { state.scansCompleted++; state.lastScan = new Date().toISOString(); }
 export function getDryBalance()            { return Math.max(0, state.dryBalance); }
 export function getAllBets()               { return state.bets; }
@@ -224,6 +227,7 @@ export default {
   hasActiveBet,
   getActiveBet,
   getAllActiveBets,
+  countBetsForMarket,
   recordScan,
   getDryBalance,
   getAllBets,
