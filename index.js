@@ -49,6 +49,24 @@ const settings = {
 
 console.log(`💰 State initialized | Balance: $${state.getDryBalance()} | Mode: ${currentMode} | ${DRY_RUN ? "DRY RUN" : "🔴 LIVE"}`);
 
+// ── Live balance (real Polymarket account, SPORTS + LIVE only) ──
+// Cached briefly so the dashboard's 3s poll doesn't hammer the signed API.
+let _liveBalCache = { value: null, ts: 0 };
+const LIVE_BAL_TTL = 10_000;
+async function getLiveSportsBalance() {
+  if (_liveBalCache.value != null && Date.now() - _liveBalCache.ts < LIVE_BAL_TTL) {
+    return _liveBalCache.value;
+  }
+  try {
+    const { getBuyingPower } = await import("./polymarket-us.js");
+    const { currentBalance } = await getBuyingPower();
+    _liveBalCache = { value: currentBalance, ts: Date.now() };
+    return currentBalance;
+  } catch {
+    return _liveBalCache.value; // stale value (or null) on error
+  }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────
 function allBets() {
   // state.js export name for history varies — try known options, fall back to active
@@ -101,11 +119,19 @@ function fullStats() {
 }
 
 // ── Dashboard data API (paths the dashboard polls) ──────────────
-app.get("/", (req, res) => {
+app.get("/", async (req, res) => {
+  const stats = fullStats();
+
+  // In LIVE sports mode, pull the real Polymarket account balance.
+  if (currentMode === "SPORTS" && !settings.dryRun) {
+    const liveBal = await getLiveSportsBalance();
+    if (liveBal != null) stats.liveBalance = liveBal;
+  }
+
   res.json({
     name: "PolyBettor",
     mode: currentMode,
-    stats: fullStats(),
+    stats,
     settings,
     config: { bankroll: parseFloat(process.env.BANKROLL || "50") },
   });
