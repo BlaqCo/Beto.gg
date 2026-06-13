@@ -205,7 +205,13 @@ const money = x => {
 let _balShapeLogged = false;
 export async function getBuyingPower() {
   const b = await signedRequest("GET", "/v1/account/balances");
-  const root = b?.balances || b || {};
+
+  // balances may come back as an ARRAY of accounts:
+  //   { "balances": [ { "currentBalance": 70, "buyingPower": 70, ... } ] }
+  // — unwrap to the first entry before reading fields.
+  let root = b?.balances ?? b ?? {};
+  if (Array.isArray(root)) root = root[0] || {};
+
   const buyingPower =
     money(root.buyingPower) ?? money(root.buying_power) ?? null;
   const currentBalance =
