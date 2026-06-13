@@ -20,7 +20,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 10;      // flat $10 per bet
 const BET_MIN       = 10;
-const FAV_MIN       = 0.52;    // favorite = YES ask above coin-flip
+const FAV_MIN       = 0.60;    // wait for the favorite to climb to 60¢ before entering
 const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 8;
@@ -120,20 +120,25 @@ export async function runScanCycle() {
   }
   console.log(`💰 ${DRY_RUN ? "Paper" : "Buying power"}: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
 
-  // ── Entry candidates: LIVE (in-progress) games only, favorite by price ──
+  // ── Entry candidates: LIVE games OR games starting within the next 24h ──
   const now = Date.now();
+  const NEXT_DAY_MS = 24 * 60 * 60 * 1000;
   const pool = markets
     .map(m => ({ ...m, px: m.ask ?? m.est }))
     .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
-    // game must have already started (live/in-progress)
-    .filter(m => m.gameStartIso && new Date(m.gameStartIso).getTime() <= now)
+    // game must have either already started (live) or start within the next 24h
+    .filter(m => {
+      if (!m.gameStartIso) return false;
+      const start = new Date(m.gameStartIso).getTime();
+      return start <= now || (start - now) <= NEXT_DAY_MS;
+    })
     // and not yet resolved/closed
     .filter(m => !m.endIso || new Date(m.endIso).getTime() > now)
     .sort((a, b) => b.px - a.px);
 
   let candidates = [];
   if (pool.length) {
-    console.log(`🏆 ${pool.length} LIVE favorites ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
+    console.log(`🏆 ${pool.length} favorites (live or next-24h) ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
     candidates = await verifyCandidates(pool.slice(0, 8));
     if (candidates.length) {
       console.log(`📗 ${candidates.length} with live two-sided books: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 28)}`).join(" · ")}`);
@@ -141,7 +146,7 @@ export async function runScanCycle() {
       console.log("[INFO] Books too thin/wide on top live favorites this scan");
     }
   } else {
-    console.log(`[INFO] No LIVE favorites in range right now`);
+    console.log(`[INFO] No favorites in range (live or next-24h) right now`);
   }
 
   let betsPlaced = 0;
