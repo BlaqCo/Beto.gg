@@ -1,9 +1,25 @@
 /**
  * state.js
- * Dry run always starts with a fresh $40 balance on boot.
+ * Dry run starts with a fresh balance on boot ONLY if RESET_ON_BOOT=true.
  * Live mode tracks real P&L against actual deposited balance.
  *
- * FIXES:
+ * PERSISTENCE FIX:
+ * Previously activeBets lived only in memory. Every process restart
+ * (settings toggle, redeploy, crash) wiped that map, so hasActiveBet()
+ * returned false for positions that were ALREADY HELD on Polymarket —
+ * causing the bot to re-enter the same live favorite again on every
+ * restart and stack real $10 bets into the same market (e.g. 3x → $29).
+ *
+ * Now state is written to a JSON file after every recordBet/closeBet and
+ * reloaded on boot, UNLESS RESET_ON_BOOT=true (useful for dry-run testing
+ * where you WANT a clean slate each restart). For LIVE trading, set
+ * RESET_ON_BOOT=false (or unset) so positions survive restarts.
+ *
+ * NOTE: this persists across simple process restarts within the same
+ * Railway container/volume, but a full image redeploy may still reset the
+ * filesystem depending on your Railway setup — keep an eye on it.
+ *
+ * FIXES (existing):
  * 1. entryBtcPrice stored on bet for cumulative BTC delta tracking
  * 2. marketEndDateIso stored for expiry-based exits
  * 3. Expiry bets excluded from W/L and P&L — stake returned, neutral
@@ -12,8 +28,14 @@
  * 6. timeout exits count as scalps when profitable (SharpShooter)
  */
 
+import fs from "fs";
+import path from "path";
+
 const STARTING_BALANCE = parseFloat(process.env.BANKROLL || "40");
 const IS_DRY = process.env.DRY_RUN !== "false";
+const RESET_ON_BOOT = process.env.RESET_ON_BOOT === "true";
+
+const STATE_FILE = path.join(process.cwd(), "polybettor-state.json");
 
 const state = {
   bets: [],
@@ -30,8 +52,72 @@ const state = {
   dryBalance: STARTING_BALANCE,
 };
 
-console.log(`💰 State initialized | Starting balance: $${STARTING_BALANCE} | Mode: ${IS_DRY ? "DRY RUN" : "LIVE"}`);
+// ── Persistence ───────────────────────────────────────────────
+function saveState() {
+  try {
+    const serializable = {
+      bets:           state.bets,
+      pnl:            state.pnl,
+      totalWagered:   state.totalWagered,
+      wins:           state.wins,
+      losses:         state.losses,
+      expiryCount:    state.expiryCount,
+      scalps:         state.scalps,
+      scansCompleted: state.scansCompleted,
+      dryBalance:     state.dryBalance,
+    };
+    fs.writeFileSync(STATE_FILE, JSON.stringify(serializable));
+  } catch (err) {
+    console.error("⚠️ Failed to persist state:", err.message);
+  }
+}
 
+function loadState() {
+  try {
+    if (!fs.existsSync(STATE_FILE)) return false;
+    const raw = fs.readFileSync(STATE_FILE, "utf8");
+    const data = JSON.parse(raw);
+
+    state.bets           = Array.isArray(data.bets) ? data.bets : [];
+    state.pnl            = data.pnl || 0;
+    state.totalWagered   = data.totalWagered || 0;
+    state.wins           = data.wins || 0;
+    state.losses         = data.losses || 0;
+    state.expiryCount    = data.expiryCount || 0;
+    state.scalps         = data.scalps || 0;
+    state.scansCompleted = data.scansCompleted || 0;
+    state.dryBalance     = data.dryBalance != null ? data.dryBalance : STARTING_BALANCE;
+
+    // Rebuild activeBets map from any bets still marked "open"
+    state.activeBets = new Map();
+    for (const bet of state.bets) {
+      if (bet.status === "open") {
+        state.activeBets.set(bet.marketConditionId, bet);
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error("⚠️ Failed to load persisted state:", err.message);
+    return false;
+  }
+}
+
+let _restored = false;
+if (!RESET_ON_BOOT) {
+  _restored = loadState();
+}
+
+if (_restored) {
+  console.log(`💰 State restored from disk | Balance: $${getDryBalanceUnsafe()} | Active: ${state.activeBets.size} | Mode: ${IS_DRY ? "DRY RUN" : "LIVE"}`);
+} else {
+  console.log(`💰 State initialized | Starting balance: $${STARTING_BALANCE} | Mode: ${IS_DRY ? "DRY RUN" : "LIVE"}${RESET_ON_BOOT ? " | RESET_ON_BOOT" : ""}`);
+  // Write a fresh file immediately so a crash-loop doesn't keep wiping itself
+  saveState();
+}
+
+function getDryBalanceUnsafe() { return Math.max(0, state.dryBalance); }
+
+// ── Public API ───────────────────────────────────────────────────
 export function recordBet({
   market, side, betSize, edge, trueProbability, impliedProbability,
   orderId, entryPrice, entryBtcPrice, strategy, reasoning, sharpShooter
@@ -63,6 +149,7 @@ export function recordBet({
   state.totalWagered += betSize;
   state.dryBalance   -= betSize;
   state.activeBets.set(bet.marketConditionId, bet);
+  saveState();
   return bet;
 }
 
@@ -81,6 +168,7 @@ export function closeBet(conditionId, { exitPrice, reason, pnl }) {
     state.expiryCount++;
     state.dryBalance += bet.betSize; // return stake only
     state.activeBets.delete(conditionId);
+    saveState();
     return bet;
   }
 
@@ -98,6 +186,7 @@ export function closeBet(conditionId, { exitPrice, reason, pnl }) {
   state.pnl        += pnl;
   state.dryBalance += bet.betSize + pnl;
   state.activeBets.delete(conditionId);
+  saveState();
   return bet;
 }
 
