@@ -265,6 +265,34 @@ export async function closePositionLive(slug) {
   }
 }
 
+/**
+ * Ground-truth check against the REAL Polymarket account: returns a map of
+ * { [marketSlug]: { qtyBought, netPosition } } for every market ever traded
+ * on this account. Used to prevent duplicate entries into a market that the
+ * account already holds, regardless of local state/persistence — survives
+ * restarts, redeploys, anything, because it's read directly from Polymarket.
+ *
+ * Returns null on error so callers can fail safe (don't block trading on a
+ * transient API hiccup, but log it).
+ */
+export async function getOpenPositions() {
+  try {
+    const data = await signedRequest("GET", "/v1/portfolio/positions");
+    const positions = data?.positions || {};
+    const out = {};
+    for (const [slug, p] of Object.entries(positions)) {
+      out[slug] = {
+        qtyBought: Number(p?.qtyBought ?? 0),
+        netPosition: Number(p?.netPosition ?? 0),
+      };
+    }
+    return out;
+  } catch (err) {
+    console.error("⚠️ getOpenPositions failed:", err.message);
+    return null;
+  }
+}
+
 // ── Preflight ───────────────────────────────────────────────────
 export async function preflightUS() {
   const msgs = [];
