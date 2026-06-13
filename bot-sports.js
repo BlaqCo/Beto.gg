@@ -21,7 +21,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 const BET_SIZE      = 10;      // flat $10 per bet
 const BET_MIN       = 10;
 const FAV_MIN       = 0.52;    // favorite = YES ask above coin-flip
-const FAV_MAX       = 0.95;    // skip near-decided games
+const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 8;
 const ENTRIES_SCAN  = 2;
