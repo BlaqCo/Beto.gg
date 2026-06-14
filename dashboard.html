@@ -6,45 +6,164 @@
 <title>POLYBETTOR</title>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#020408;--surface:#050d14;--panel:#060f18;--border:#0a2040;--border2:#0d3060;--green:#00ff9d;--red:#ff2d55;--yellow:#ffd200;--blue:#00b4ff;--cyan:#00e5ff;--dim:#1a4060;--muted:#2a6090;--text:#a0c8e0;--bright:#d0eeff;--glow:rgba(0,255,157,0.12);}
+:root{
+  --bg:#020408;--surface:#050d14;--panel:#060f18;
+  --border:#0a2040;--border2:#0d3060;
+  --green:#00ff9d;--red:#ff2d55;--yellow:#ffd200;
+  --blue:#00b4ff;--cyan:#00e5ff;
+  --dim:#1a4060;--muted:#2a6090;--text:#a0c8e0;--bright:#d0eeff;
+  --glow:rgba(0,255,157,0.12);
+}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;min-height:100vh;overflow-x:hidden;}
 body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.025) 2px,rgba(0,0,0,0.025) 4px);pointer-events:none;z-index:9998;}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,100,180,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,100,180,0.03) 1px,transparent 1px);background-size:32px 32px;pointer-events:none;z-index:0;}
-.wrap{position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:16px;}
-header{display:flex;align-items:center;justify-content:space-between;padding:12px 0 16px;border-bottom:1px solid var(--border2);margin-bottom:16px;}
-.logo{display:flex;align-items:center;gap:14px;}
-.logo-hex::before{content:'⬡';font-size:42px;line-height:1;color:var(--green);text-shadow:0 0 20px var(--green),0 0 40px rgba(0,255,157,0.3);animation:hex 3s ease-in-out infinite;}
+.wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:14px;}
+
+/* ── Header ── */
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 0 14px;border-bottom:1px solid var(--border2);margin-bottom:14px;flex-wrap:wrap;gap:8px;}
+.logo{display:flex;align-items:center;gap:12px;}
+.logo-hex::before{content:'⬡';font-size:38px;line-height:1;color:var(--green);text-shadow:0 0 20px var(--green),0 0 40px rgba(0,255,157,0.3);animation:hex 3s ease-in-out infinite;}
 @keyframes hex{0%,100%{text-shadow:0 0 20px var(--green),0 0 40px rgba(0,255,157,0.3);}50%{text-shadow:0 0 35px var(--green),0 0 70px rgba(0,255,157,0.5);}}
-.logo-text h1{font-family:'Orbitron';font-size:20px;font-weight:900;color:var(--bright);letter-spacing:4px;}
+.logo-text h1{font-family:'Orbitron';font-size:18px;font-weight:900;color:var(--bright);letter-spacing:4px;}
 .logo-text h1 span{color:var(--green);}
-.logo-text .sub{font-size:9px;letter-spacing:3px;color:var(--muted);margin-top:2px;}
-.hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.logo-text .sub{font-size:8px;letter-spacing:3px;color:var(--muted);margin-top:2px;}
+.hdr-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mode-switch{display:flex;gap:4px;background:rgba(0,0,0,0.3);border:1px solid var(--border2);border-radius:3px;padding:2px;}
-.mode-btn{padding:4px 10px;font-size:9px;letter-spacing:2px;background:transparent;border:none;color:var(--muted);cursor:pointer;transition:all 0.2s;text-transform:uppercase;}
-.mode-btn.active{background:rgba(0,255,157,0.15);color:var(--green);border-radius:2px;}
+.mode-btn{padding:5px 12px;font-size:9px;letter-spacing:2px;background:transparent;border:none;color:var(--muted);cursor:pointer;transition:all 0.2s;text-transform:uppercase;border-radius:2px;}
+.mode-btn.active{background:rgba(0,255,157,0.15);color:var(--green);}
 .badge{padding:3px 10px;border-radius:2px;font-size:9px;letter-spacing:2px;font-weight:bold;text-transform:uppercase;}
 .badge-dry{background:rgba(255,210,0,0.08);color:var(--yellow);border:1px solid rgba(255,210,0,0.2);}
 .badge-live{background:rgba(0,255,157,0.08);color:var(--green);border:1px solid rgba(0,255,157,0.25);}
-.badge-ss{background:rgba(255,210,0,0.15);color:var(--yellow);border:1px solid rgba(255,210,0,0.4);animation:ssblink 1s ease-in-out infinite;}
-@keyframes ssblink{0%,100%{opacity:1}50%{opacity:0.6}}
 .status-bar{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);}
 .dot{width:6px;height:6px;border-radius:50%;animation:blink 1.2s ease-in-out infinite;}
 .dot-g{background:var(--green);box-shadow:0 0 6px var(--green);}
 .dot-r{background:var(--red);box-shadow:0 0 6px var(--red);animation:none;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
-.gear-btn{background:transparent;border:1px solid var(--border2);color:var(--muted);width:32px;height:32px;border-radius:4px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
-.gear-btn:hover{border-color:var(--green);color:var(--green);box-shadow:0 0 8px var(--glow);}
-.gear-btn.active{border-color:var(--green);color:var(--green);box-shadow:0 0 12px var(--glow);}
+.gear-btn{background:transparent;border:1px solid var(--border2);color:var(--muted);width:30px;height:30px;border-radius:4px;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
+.gear-btn:hover,.gear-btn.active{border-color:var(--green);color:var(--green);box-shadow:0 0 8px var(--glow);}
+
+/* ── Dual P/L always-on bar ── */
+.dual-bar{display:grid;grid-template-columns:1fr 1px 1fr;gap:0;background:var(--surface);border:1px solid var(--border2);border-radius:4px;margin-bottom:12px;overflow:hidden;}
+.dual-seg{padding:10px 16px;display:flex;align-items:center;gap:14px;}
+.dual-divider{background:var(--border2);}
+.dual-label{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
+.dual-val{font-family:'Orbitron';font-size:18px;font-weight:700;}
+.dual-meta{font-size:9px;color:var(--muted);}
+
+/* ── Stat cards ── */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px 14px;position:relative;overflow:hidden;transition:border-color 0.3s;}
+.stat::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;}
+.g::after{background:linear-gradient(90deg,transparent,var(--green),transparent);}
+.b::after{background:linear-gradient(90deg,transparent,var(--blue),transparent);}
+.y::after{background:linear-gradient(90deg,transparent,var(--yellow),transparent);}
+.r::after{background:linear-gradient(90deg,transparent,var(--red),transparent);}
+.stat-l{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px;}
+.stat-v{font-family:'Orbitron';font-size:22px;font-weight:700;line-height:1;transition:color 0.4s;}
+.stat-s{font-size:9px;color:var(--muted);margin-top:4px;}
+
+/* ── Chart ── */
+.chart-panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;overflow:hidden;}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:rgba(0,0,0,0.3);border-bottom:1px solid var(--border);}
+.ph-t{font-family:'Orbitron';font-size:9px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;}
+.ph-r{font-size:9px;color:var(--muted);}
+#chart-wrap{padding:8px 12px 12px;position:relative;}
+#chart{width:100%;height:180px;display:block;}
+
+/* ── Bet history ── */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:12px;}
+.bet-hdr{display:grid;grid-template-columns:2fr 60px 50px 70px 22px;gap:6px;padding:6px 14px;font-size:8px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;border-bottom:1px solid var(--border);}
+.bet-row{border-bottom:1px solid rgba(10,32,64,0.6);cursor:pointer;transition:background 0.15s;}
+.bet-row:hover{background:rgba(0,100,200,0.06);}
+.bet-row:last-child{border-bottom:none;}
+.bet-summary{display:grid;grid-template-columns:2fr 60px 50px 70px 22px;gap:6px;align-items:center;padding:9px 14px;}
+.bet-sport{font-size:8px;font-weight:bold;letter-spacing:1px;padding:2px 6px;border-radius:2px;display:inline-block;margin-bottom:3px;}
+.sp-MLB{background:rgba(0,180,255,0.12);color:#00b4ff;border:1px solid rgba(0,180,255,0.3);}
+.sp-NBA{background:rgba(255,102,0,0.12);color:#ff6600;border:1px solid rgba(255,102,0,0.3);}
+.sp-NFL{background:rgba(0,255,157,0.12);color:#00ff9d;border:1px solid rgba(0,255,157,0.3);}
+.sp-TENNIS,.sp-ATP,.sp-WTA{background:rgba(255,210,0,0.12);color:#ffd200;border:1px solid rgba(255,210,0,0.3);}
+.sp-MMA,.sp-UFC{background:rgba(255,45,85,0.12);color:#ff2d55;border:1px solid rgba(255,45,85,0.3);}
+.sp-NHL{background:rgba(0,229,255,0.12);color:#00e5ff;border:1px solid rgba(0,229,255,0.3);}
+.sp-SOCCER,.sp-MLS{background:rgba(0,255,157,0.1);color:#00cc7a;border:1px solid rgba(0,255,157,0.25);}
+.sp-ESPORTS,.sp-ESPORT{background:rgba(160,80,255,0.12);color:#a050ff;border:1px solid rgba(160,80,255,0.3);}
+.sp-SPORT,.sp-OTHER{background:rgba(42,96,144,0.3);color:var(--muted);border:1px solid var(--border2);}
+.bet-q{font-size:9px;color:var(--text);line-height:1.4;}
+.bet-c{text-align:right;font-size:10px;}
+.bet-side{font-size:8px;font-weight:bold;letter-spacing:1px;padding:2px 5px;border-radius:2px;text-align:center;}
+.s-yes{background:rgba(0,255,157,0.1);color:var(--green);border:1px solid rgba(0,255,157,0.2);}
+.s-no{background:rgba(255,45,85,0.1);color:var(--red);border:1px solid rgba(255,45,85,0.2);}
+.bet-chev{text-align:center;color:var(--dim);font-size:10px;transition:transform 0.2s;}
+.bet-chev.open{transform:rotate(90deg);}
+.bet-detail{display:none;padding:10px 14px 14px;border-top:1px solid var(--border);background:rgba(0,0,0,0.25);}
+.bet-detail.open{display:block;}
+.bd-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;}
+.bd-item{padding:7px 10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--border2);}
+.bd-lbl{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:3px;}
+.bd-val{font-size:11px;color:var(--bright);font-weight:bold;}
+.bd-reasoning{padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--cyan);font-size:9px;color:var(--text);line-height:1.6;}
+.bd-reasoning .bd-lbl{color:var(--cyan);margin-bottom:4px;}
+.s-open{color:var(--yellow);}
+.s-won{color:var(--green);}
+.s-lost{color:var(--red);}
+.pos{color:var(--green);}
+.neg{color:var(--red);}
+.neutral{color:var(--bright);}
+
+/* ── Markets panel ── */
+.mkt-row{display:grid;grid-template-columns:1fr 48px 40px 44px 36px;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);transition:background 0.2s;font-size:10px;}
+.mkt-row:last-child{border-bottom:none;}
+.mkt-row:hover{background:rgba(0,100,200,0.05);}
+.mkt-pct{font-size:12px;font-weight:bold;text-align:center;font-family:'Orbitron';}
+.mkt-edge{font-size:9px;text-align:right;color:var(--muted);}
+.mkt-edge.e{color:var(--yellow);}
+.mkt-min{font-size:9px;color:var(--dim);text-align:right;}
+
+/* ── Crypto panels (hidden on SPORTS view) ── */
+.sig-row{display:flex;align-items:center;gap:8px;padding:0 14px 10px;}
+.sig-n{width:78px;font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;flex-shrink:0;}
+.sig-bg{flex:1;height:4px;background:var(--dim);border-radius:2px;position:relative;}
+.sig-mid{position:absolute;left:50%;top:-2px;width:1px;height:8px;background:var(--border2);}
+.sig-fill{position:absolute;height:100%;border-radius:2px;transition:all 0.8s ease;}
+.sig-val{width:40px;text-align:right;font-size:10px;font-weight:bold;}
+.strat-tab{padding:4px 12px;border-radius:2px;font-size:9px;letter-spacing:1.5px;font-weight:bold;border:1px solid var(--border2);color:var(--muted);cursor:default;}
+.strat-tab.active-a{border-color:var(--green);color:var(--green);background:rgba(0,255,157,0.07);}
+.strat-tab.active-b{border-color:var(--yellow);color:var(--yellow);background:rgba(255,210,0,0.07);}
+.strat-tab.active-c{border-color:var(--blue);color:var(--blue);background:rgba(0,180,255,0.07);}
+.price-big{text-align:center;padding:16px 14px 12px;border-bottom:1px solid var(--border);}
+.price-num{font-family:'Orbitron';font-size:32px;font-weight:900;color:var(--bright);letter-spacing:-1px;line-height:1;}
+.price-chg{font-size:13px;font-weight:bold;margin-top:4px;}
+.price-meta{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);}
+.pm{background:var(--panel);padding:8px 12px;text-align:center;}
+.pm-l{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;}
+.pm-v{font-size:12px;font-weight:bold;margin-top:3px;color:var(--text);}
+.wall-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px;}
+.wall-item{text-align:center;}
+.wall-lbl{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
+.wall-p{font-family:'Orbitron';font-size:13px;font-weight:700;margin-top:4px;}
+.wall-s{font-size:9px;color:var(--muted);margin-top:2px;}
+.main{display:grid;grid-template-columns:1fr 320px;gap:12px;margin-bottom:12px;}
+
+/* ── Console ── */
+.console{background:#020608;border:1px solid var(--border);border-radius:4px;margin-bottom:12px;}
+.con-body{padding:10px 12px;height:140px;overflow-y:auto;font-size:10px;line-height:1.7;}
+.con-body::-webkit-scrollbar{width:3px;}
+.con-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+.ll{display:flex;gap:8px;}
+.lt{color:var(--dim);flex-shrink:0;font-size:9px;}
+.lok{color:var(--green);}.lerr{color:var(--red);}.lwarn{color:var(--yellow);}.linfo{color:var(--muted);}
+.empty{text-align:center;padding:24px;color:var(--dim);font-size:10px;letter-spacing:1px;}
+
+/* ── Settings overlay ── */
 .settings-overlay{display:none;position:fixed;inset:0;background:rgba(2,4,8,0.92);z-index:1000;overflow-y:auto;-webkit-overflow-scrolling:touch;backdrop-filter:blur(4px);padding:16px 0 40px;}
 .settings-overlay.open{display:block;}
-.settings-panel{background:var(--panel);border:1px solid var(--border2);border-radius:6px;width:calc(100% - 32px);max-width:480px;margin:0 auto;box-shadow:0 0 60px rgba(0,180,255,0.15);overflow:hidden;}
+.settings-panel{background:var(--panel);border:1px solid var(--border2);border-radius:6px;width:calc(100% - 32px);max-width:460px;margin:0 auto;box-shadow:0 0 60px rgba(0,180,255,0.15);overflow:hidden;}
 .sp-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border2);background:rgba(0,0,0,0.5);position:sticky;top:0;z-index:10;border-radius:6px 6px 0 0;}
 .sp-title{font-family:'Orbitron';font-size:11px;letter-spacing:3px;color:var(--cyan);}
 .sp-close{background:rgba(255,45,85,0.15);border:1px solid rgba(255,45,85,0.5);color:#ff2d55;font-size:14px;cursor:pointer;width:32px;height:32px;border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .sp-close:hover{background:rgba(255,45,85,0.3);}
 .sp-body{padding:0 18px 24px;}
-.sp-section{margin-bottom:20px;}
+.sp-section{margin-top:16px;}
 .sp-section-label{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(10,32,64,0.5);}
 .toggle-row:last-child{border-bottom:none;}
@@ -57,117 +176,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .toggle-track::after{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;background:var(--muted);border-radius:50%;transition:all 0.3s;}
 .toggle-wrap input:checked~.toggle-track{background:rgba(0,255,157,0.25);border:1px solid var(--green);}
 .toggle-wrap input:checked~.toggle-track::after{transform:translateX(20px);background:var(--green);box-shadow:0 0 8px var(--green);}
-/* SharpShooter special toggle color */
-.toggle-wrap.ss-toggle input:checked~.toggle-track{background:rgba(255,210,0,0.2);border:1px solid var(--yellow);}
-.toggle-wrap.ss-toggle input:checked~.toggle-track::after{background:var(--yellow);box-shadow:0 0 10px var(--yellow);}
-.auto-badge{display:inline-block;padding:2px 8px;border-radius:2px;font-size:8px;letter-spacing:2px;font-weight:bold;background:rgba(0,229,255,0.1);color:var(--cyan);border:1px solid rgba(0,229,255,0.2);margin-left:8px;}
-.strat-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}
-.strat-a{background:#00ff9d;}.strat-b{background:#ffd200;}.strat-c{background:#00b4ff;}
-.sp-note{font-size:9px;color:var(--muted);padding:10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--border2);line-height:1.6;}
-/* SharpShooter banner in settings */
-.ss-banner{background:rgba(255,210,0,0.06);border:1px solid rgba(255,210,0,0.25);border-radius:4px;padding:10px 12px;margin-top:10px;display:none;}
-.ss-banner.visible{display:block;}
-.ss-banner-title{font-size:10px;font-weight:bold;color:var(--yellow);letter-spacing:2px;margin-bottom:6px;}
-.ss-banner-row{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);padding:3px 0;border-bottom:1px solid rgba(255,210,0,0.08);}
-.ss-banner-row:last-child{border-bottom:none;}
-.ss-banner-val{color:var(--yellow);}
-.ticker{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:8px 16px;margin-bottom:16px;overflow-x:auto;}
-.ti{display:flex;align-items:baseline;gap:8px;flex-shrink:0;}
-.ti-l{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
-.ti-v{font-family:'Orbitron';font-size:17px;font-weight:700;}
-.ti-d{width:1px;height:28px;background:var(--border2);flex-shrink:0;}
-.oracle-tag{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:9px;color:var(--cyan);border:1px solid rgba(0,229,255,0.2);padding:3px 8px;border-radius:2px;background:rgba(0,229,255,0.04);flex-shrink:0;}
-/* SharpShooter ticker indicator */
-.ss-ticker{display:none;align-items:center;gap:6px;font-size:9px;color:var(--yellow);border:1px solid rgba(255,210,0,0.3);padding:3px 10px;border-radius:2px;background:rgba(255,210,0,0.06);flex-shrink:0;}
-.ss-ticker.on{display:flex;}
-.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px;}
-.stat{background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:12px 14px;position:relative;overflow:hidden;}
-.stat::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;}
-.g::after{background:linear-gradient(90deg,transparent,var(--green),transparent);}
-.b::after{background:linear-gradient(90deg,transparent,var(--blue),transparent);}
-.y::after{background:linear-gradient(90deg,transparent,var(--yellow),transparent);}
-.c::after{background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
-.stat-l{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px;}
-.stat-v{font-family:'Orbitron';font-size:20px;font-weight:700;line-height:1;}
-.stat-s{font-size:9px;color:var(--muted);margin-top:4px;}
-/* SharpShooter stat card */
-.stat.ss-stat{border-color:rgba(255,210,0,0.2);display:none;}
-.stat.ss-stat.on{display:block;}
-.stat.ss-stat::after{background:linear-gradient(90deg,transparent,var(--yellow),transparent);}
-.main{display:grid;grid-template-columns:1fr 340px;gap:14px;margin-bottom:14px;}
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;}
-.ph{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(0,0,0,0.3);border-bottom:1px solid var(--border);}
-.ph-t{font-family:'Orbitron';font-size:9px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;}
-.ph-r{font-size:9px;color:var(--muted);}
-.pb{padding:14px;}
-#chart{width:100%;height:200px;display:block;}
-.sig-grid{padding:12px 14px;display:flex;flex-direction:column;gap:10px;}
-.sig-row{display:flex;align-items:center;gap:8px;}
-.sig-n{width:78px;font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;flex-shrink:0;}
-.sig-bg{flex:1;height:4px;background:var(--dim);border-radius:2px;position:relative;}
-.sig-mid{position:absolute;left:50%;top:-2px;width:1px;height:8px;background:var(--border2);}
-.sig-fill{position:absolute;height:100%;border-radius:2px;transition:all 0.8s ease;}
-.sig-val{width:40px;text-align:right;font-size:10px;font-weight:bold;}
-.strat-tabs{display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);}
-.strat-tab{padding:4px 12px;border-radius:2px;font-size:9px;letter-spacing:1.5px;font-weight:bold;border:1px solid var(--border2);color:var(--muted);transition:all 0.2s;cursor:default;}
-.strat-tab.active-a{border-color:var(--green);color:var(--green);background:rgba(0,255,157,0.07);}
-.strat-tab.active-b{border-color:var(--yellow);color:var(--yellow);background:rgba(255,210,0,0.07);}
-.strat-tab.active-c{border-color:var(--blue);color:var(--blue);background:rgba(0,180,255,0.07);}
-.strat-tab.active-ss{border-color:var(--yellow);color:var(--yellow);background:rgba(255,210,0,0.12);animation:ssblink 1s infinite;}
-.strat-tab.off{opacity:0.3;}
-.price-big{text-align:center;padding:18px 14px 14px;border-bottom:1px solid var(--border);}
-.price-num{font-family:'Orbitron';font-size:34px;font-weight:900;color:var(--bright);letter-spacing:-1px;line-height:1;text-shadow:0 0 30px rgba(0,180,255,0.3);}
-.price-chg{font-size:13px;font-weight:bold;margin-top:4px;}
-.price-meta{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);}
-.pm{background:var(--panel);padding:8px 12px;text-align:center;}
-.pm-l{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;}
-.pm-v{font-size:12px;font-weight:bold;margin-top:3px;color:var(--text);}
-.mkt-row{display:grid;grid-template-columns:1fr 48px 40px 44px 36px;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);transition:background 0.2s;}
-.mkt-row:hover{background:rgba(0,100,200,0.05);}
-.mkt-row:last-child{border-bottom:none;}
-.mkt-q{font-size:10px;color:var(--text);line-height:1.4;}
-.mkt-pct{font-size:12px;font-weight:bold;text-align:center;font-family:'Orbitron';}
-.mkt-side{font-size:8px;font-weight:bold;letter-spacing:1px;padding:2px 5px;border-radius:2px;text-align:center;}
-.s-yes{background:rgba(0,255,157,0.1);color:var(--green);border:1px solid rgba(0,255,157,0.2);}
-.s-no{background:rgba(255,45,85,0.1);color:var(--red);border:1px solid rgba(255,45,85,0.2);}
-.s-watch{background:rgba(26,64,96,0.4);color:var(--muted);border:1px solid var(--border2);}
-.mkt-edge{font-size:9px;text-align:right;color:var(--muted);}
-.mkt-edge.e{color:var(--yellow);}
-.mkt-min{font-size:9px;color:var(--dim);text-align:right;}
-.bets-hdr{display:grid;grid-template-columns:1fr 52px 52px 64px 24px;gap:8px;padding:6px 14px;font-size:8px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;border-bottom:1px solid var(--border);}
-.bet-row{border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;}
-.bet-row:hover{background:rgba(0,100,200,0.06);}
-.bet-row:last-child{border-bottom:none;}
-.bet-summary{display:grid;grid-template-columns:1fr 52px 52px 64px 24px;gap:8px;align-items:center;padding:9px 14px;font-size:10px;}
-.bet-q{color:var(--muted);font-size:9px;line-height:1.3;}
-.bet-c{text-align:right;}
-.bet-chevron{text-align:center;color:var(--dim);font-size:10px;transition:transform 0.2s;}
-.bet-chevron.open{transform:rotate(90deg);}
-.bet-detail{display:none;padding:0 14px 12px;border-top:1px solid var(--border);background:rgba(0,0,0,0.25);}
-.bet-detail.open{display:block;}
-.bd-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
-.bd-item{padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--border2);}
-.bd-label{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:3px;}
-.bd-val{font-size:11px;color:var(--bright);font-weight:bold;}
-.bd-reasoning{padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--cyan);font-size:9px;color:var(--text);line-height:1.6;}
-.bd-reasoning .bd-label{color:var(--cyan);margin-bottom:4px;}
-.s-open{color:var(--yellow);}.s-won{color:var(--green);}.s-lost{color:var(--red);}
-.wall-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px;}
-.wall-item{text-align:center;}
-.wall-lbl{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
-.wall-p{font-family:'Orbitron';font-size:13px;font-weight:700;margin-top:4px;}
-.wall-s{font-size:9px;color:var(--muted);margin-top:2px;}
-.console{background:#020608;border:1px solid var(--border);border-radius:4px;overflow:hidden;}
-.con-body{padding:10px 12px;height:160px;overflow-y:auto;font-size:10px;line-height:1.7;}
-.con-body::-webkit-scrollbar{width:3px;}
-.con-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
-.ll{display:flex;gap:8px;}
-.lt{color:var(--dim);flex-shrink:0;font-size:9px;}
-.lok{color:var(--green);}.lerr{color:var(--red);}.lwarn{color:var(--yellow);}.linfo{color:var(--muted);}
-.bottom{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.pos{color:var(--green);}.neg{color:var(--red);}.neutral{color:var(--bright);}
-.empty{text-align:center;padding:24px;color:var(--dim);font-size:10px;letter-spacing:1px;}
-@media(max-width:1000px){.main{grid-template-columns:1fr;}.stats{grid-template-columns:repeat(3,1fr);}.bottom{grid-template-columns:1fr;}}
+
+@media(max-width:700px){.main{grid-template-columns:1fr;}.stats{grid-template-columns:repeat(2,1fr);}}
 </style>
 </head>
 <body>
@@ -179,7 +189,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
     <div class="logo-hex"></div>
     <div class="logo-text">
       <h1>POLY<span>BETTOR</span></h1>
-      <div class="sub">Momentum Scalp Engine · Prediction Markets</div>
+      <div class="sub">Automated Prediction Market Engine</div>
     </div>
   </div>
   <div class="hdr-right">
@@ -192,62 +202,94 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
       <span id="status-txt">ONLINE</span>
     </div>
     <span class="badge badge-dry" id="mode-badge">DRY RUN</span>
-    <span class="badge badge-ss" id="ss-badge" style="display:none">⚡ SHARP</span>
     <span style="font-size:9px;color:var(--muted)" id="last-upd">--:--:--</span>
-    <button class="gear-btn" id="gear-btn" onclick="openSettings()" title="Settings">⚙</button>
+    <button class="gear-btn" id="gear-btn" onclick="openSettings()">⚙</button>
   </div>
 </header>
 
-<!-- Ticker -->
-<div class="ticker">
-  <div class="ti"><span class="ti-l">BTC/USD</span><span class="ti-v neutral" id="tk-p">$—</span><span id="tk-chg" style="font-size:11px;font-weight:bold">—</span></div>
-  <div class="ti-d"></div>
-  <div class="ti"><span class="ti-l">Strategy</span><span class="ti-v" id="tk-strat" style="font-size:13px;letter-spacing:2px">—</span></div>
-  <div class="ti-d"></div>
-  <div class="ti"><span class="ti-l">Bias</span><span class="ti-v" id="tk-bias">—</span></div>
-  <div class="ti-d"></div>
-  <div class="ti"><span class="ti-l">RSI</span><span class="ti-v neutral" id="tk-rsi">—</span></div>
-  <div class="ti-d"></div>
-  <div class="ti"><span class="ti-l">P&L</span><span class="ti-v" id="tk-pnl">$0.00</span></div>
-  <div class="ti-d"></div>
-  <div class="ti"><span class="ti-l">Scalps</span><span class="ti-v neutral" id="tk-scalps">0</span></div>
-  <!-- SharpShooter slot counter -->
-  <div class="ss-ticker" id="ss-ticker">⚡ <span id="ss-slots">0</span>/10 SLOTS</div>
-  <div class="oracle-tag">⛓ <span id="oracle-p">CHAINLINK —</span></div>
-</div>
-
-<!-- Stats -->
-<div class="stats">
-  <div class="stat g"><div class="stat-l">Balance</div><div class="stat-v neutral" id="s-balance">$40.00</div><div class="stat-s" id="s-wag">$0 wagered</div></div>
-  <div class="stat g" style="border-left:2px solid var(--green)"><div class="stat-l">Session P&L</div><div class="stat-v neutral" id="s-pnl">$0.00</div><div class="stat-s" id="s-pnl-pct">+0.0% return</div></div>
-  <div class="stat b"><div class="stat-l">Win Rate</div><div class="stat-v neutral" id="s-wr">N/A</div><div class="stat-s" id="s-wl">0W / 0L</div></div>
-  <div class="stat y"><div class="stat-l">Active Bets</div><div class="stat-v neutral" id="s-active">0</div><div class="stat-s" id="s-total">0 placed</div></div>
-  <div class="stat c"><div class="stat-l">Scalp Exits</div><div class="stat-v neutral" id="s-scalps">0</div><div class="stat-s" id="s-scans">0 scans</div></div>
-  <div class="stat g"><div class="stat-l">Confidence</div><div class="stat-v neutral" id="s-conf">—</div><div class="stat-s" id="s-strat">—</div></div>
-  <div class="stat b"><div class="stat-l">Open P&amp;L</div><div class="stat-v neutral" id="s-opl">$0.00</div><div class="stat-s" id="s-opl-sub">0 open positions</div></div>
-  <div class="stat y"><div class="stat-l">Next Expiry</div><div class="stat-v neutral" id="s-exp">—</div><div class="stat-s" id="s-exp-sub">no active bets</div></div>
-  <!-- SharpShooter stat card — hidden until SS mode on -->
-  <div class="stat ss-stat y" id="ss-stat-card">
-    <div class="stat-l">⚡ Sharp Shooter</div>
-    <div class="stat-v" style="color:var(--yellow);font-size:14px" id="ss-stat-slots">0/10</div>
-    <div class="stat-s" id="ss-stat-sub">$2 flat · 3-5% TP</div>
+<!-- Always-on dual P/L bar -->
+<div class="dual-bar">
+  <div class="dual-seg">
+    <div>
+      <div class="dual-label">⚽ Sports P/L</div>
+      <div class="dual-val neutral" id="dual-sports-pnl">$0.00</div>
+    </div>
+    <div>
+      <div class="dual-label">Open</div>
+      <div id="dual-sports-sub" style="font-size:10px;color:var(--muted)">0 bets</div>
+    </div>
+    <div style="margin-left:auto;text-align:right">
+      <div class="dual-label">Record</div>
+      <div id="dual-sports-record" style="font-size:10px;color:var(--muted)">0W / 0L</div>
+    </div>
+  </div>
+  <div class="dual-divider"></div>
+  <div class="dual-seg">
+    <div>
+      <div class="dual-label">₿ Crypto P/L</div>
+      <div class="dual-val neutral" id="dual-crypto-pnl">$0.00</div>
+    </div>
+    <div>
+      <div class="dual-label">Open</div>
+      <div id="dual-crypto-sub" style="font-size:10px;color:var(--muted)">0 bets</div>
+    </div>
+    <div style="margin-left:auto;text-align:right">
+      <div class="dual-label">Record</div>
+      <div id="dual-crypto-record" style="font-size:10px;color:var(--muted)">0W / 0L</div>
+    </div>
   </div>
 </div>
 
-<!-- Main -->
+<!-- Stat cards -->
+<div class="stats">
+  <div class="stat g">
+    <div class="stat-l">Balance</div>
+    <div class="stat-v neutral" id="s-balance">$—</div>
+    <div class="stat-s" id="s-wag">$0 wagered</div>
+  </div>
+  <div class="stat g" style="border-left:2px solid var(--green)">
+    <div class="stat-l">Session P/L</div>
+    <div class="stat-v neutral" id="s-pnl">$0.00</div>
+    <div class="stat-s" id="s-pnl-sub">+0.0% return</div>
+  </div>
+  <div class="stat b">
+    <div class="stat-l">Win Rate</div>
+    <div class="stat-v neutral" id="s-wr">N/A</div>
+    <div class="stat-s" id="s-wl">0W / 0L</div>
+  </div>
+  <div class="stat y">
+    <div class="stat-l">Active Bets</div>
+    <div class="stat-v neutral" id="s-active">0</div>
+    <div class="stat-s" id="s-total">0 total placed</div>
+  </div>
+  <div class="stat b">
+    <div class="stat-l">Open P/L</div>
+    <div class="stat-v neutral" id="s-opl">$0.00</div>
+    <div class="stat-s" id="s-opl-sub">live mark-to-market</div>
+  </div>
+  <div class="stat y">
+    <div class="stat-l">Total P/L</div>
+    <div class="stat-v neutral" id="s-total-pnl">$0.00</div>
+    <div class="stat-s" id="s-total-pnl-sub">realized + open</div>
+  </div>
+</div>
+
+<!-- Animated P/L Chart -->
+<div class="chart-panel">
+  <div class="ph">
+    <span class="ph-t" id="chart-title">⚽ Sports P/L Curve</span>
+    <span class="ph-r" id="chart-info" style="color:var(--muted);font-size:9px">live session</span>
+  </div>
+  <div id="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+</div>
+
+<!-- Main grid -->
 <div class="main">
-  <div style="display:flex;flex-direction:column;gap:14px">
-    <!-- Chart -->
-    <div class="panel">
-      <div class="ph"><span class="ph-t">P&L Curve</span><span class="ph-r" id="chart-info">Session</span></div>
-      <div class="pb" style="padding:10px 12px"><canvas id="chart"></canvas></div>
-    </div>
-    <!-- Markets -->
-    <div class="panel">
-      <div class="ph"><span class="ph-t">Scalp Markets (15–90 min)</span><span class="ph-r" id="mkt-count">0</span></div>
-      <div id="mkt-list"><div class="empty">SCANNING...</div></div>
-    </div>
-    <!-- Bets -->
+  <div>
+
+    <!-- Bet History -->
     <div class="panel">
       <div class="ph">
         <span class="ph-t">Bet History</span>
@@ -256,14 +298,28 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
           <span class="ph-r" id="bets-count">0 bets</span>
         </div>
       </div>
-      <div class="bets-hdr"><span>Market</span><span style="text-align:right">Side</span><span style="text-align:right">Size</span><span style="text-align:right">P&L</span><span></span></div>
+      <div class="bet-hdr">
+        <span>Market</span>
+        <span style="text-align:right">Entry</span>
+        <span style="text-align:right">Size</span>
+        <span style="text-align:right">P/L</span>
+        <span></span>
+      </div>
       <div id="bets-list"><div class="empty">NO BETS YET</div></div>
     </div>
+
+    <!-- Markets -->
+    <div class="panel">
+      <div class="ph"><span class="ph-t" id="mkt-header">Available Markets</span><span class="ph-r" id="mkt-count">0</span></div>
+      <div id="mkt-list"><div class="empty">SCANNING...</div></div>
+    </div>
+
   </div>
 
-  <!-- Right col -->
-  <div style="display:flex;flex-direction:column;gap:14px">
-    <!-- Price -->
+  <!-- Right col — crypto only, hidden on SPORTS view -->
+  <div id="crypto-right-col" style="display:none;flex-direction:column;gap:12px">
+
+    <!-- BTC Price -->
     <div class="panel">
       <div class="ph"><span class="ph-t">BTC / USD</span><span id="bias-tag" style="font-size:9px;letter-spacing:2px;font-weight:bold;color:var(--muted)">NEUTRAL</span></div>
       <div class="price-big">
@@ -278,102 +334,62 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
       </div>
     </div>
 
-    <!-- Strategy signals -->
+    <!-- Signals -->
     <div class="panel">
-      <div class="strat-tabs" id="strat-tabs">
-        <div class="strat-tab" id="tab-a">TREND</div>
-        <div class="strat-tab" id="tab-b">MOMENTUM</div>
-        <div class="strat-tab" id="tab-c">MEAN REV</div>
-        <div class="strat-tab" id="tab-ss" style="display:none">⚡SHARP</div>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:9px" id="auto-label">
-          <span style="color:var(--muted)">AUTO</span>
+      <div class="ph" style="gap:6px">
+        <div style="display:flex;gap:6px">
+          <div class="strat-tab" id="tab-a">TREND</div>
+          <div class="strat-tab" id="tab-b">WALL</div>
+          <div class="strat-tab" id="tab-c">BREAK</div>
         </div>
+        <span style="font-size:9px;color:var(--cyan)">AUTO</span>
       </div>
-      <div class="sig-grid" id="sig-grid"><div class="empty" style="padding:16px">LOADING...</div></div>
+      <div style="padding-top:12px" id="sig-grid"><div class="empty" style="padding:16px">LOADING...</div></div>
     </div>
 
     <!-- Walls -->
     <div class="panel">
-      <div class="ph"><span class="ph-t">Momentum</span><span class="ph-r" id="wall-bias-val">—</span></div>
+      <div class="ph"><span class="ph-t">Order Book</span><span class="ph-r" id="wall-bias-val">—</span></div>
       <div class="wall-grid">
-        <div class="wall-item"><div class="wall-lbl">Bull Wall (Support)</div><div class="wall-p pos" id="w-bull-p">—</div><div class="wall-s" id="w-bull-s">—</div></div>
-        <div class="wall-item"><div class="wall-lbl">Bear Wall (Resist)</div><div class="wall-p neg" id="w-bear-p">—</div><div class="wall-s" id="w-bear-s">—</div></div>
+        <div class="wall-item"><div class="wall-lbl">Bull Wall</div><div class="wall-p pos" id="w-bull-p">—</div><div class="wall-s" id="w-bull-s">—</div></div>
+        <div class="wall-item"><div class="wall-lbl">Bear Wall</div><div class="wall-p neg" id="w-bear-p">—</div><div class="wall-s" id="w-bear-s">—</div></div>
       </div>
       <div style="padding:0 14px 12px">
-        <div style="font-size:9px;color:var(--muted);margin-bottom:4px;letter-spacing:1px">BID/ASK DEPTH</div>
+        <div style="font-size:9px;color:var(--muted);margin-bottom:4px;letter-spacing:1px">BID / ASK DEPTH</div>
         <div style="height:6px;background:var(--dim);border-radius:3px;overflow:hidden">
           <div id="depth-bar" style="height:100%;background:var(--green);border-radius:3px;transition:width 0.8s;width:50%"></div>
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:8px;color:var(--muted)"><span>ASKS</span><span id="depth-pct">50%</span><span>BIDS</span></div>
       </div>
     </div>
+
   </div>
 </div>
 
-<!-- Bottom -->
-<div class="bottom">
-  <div class="console">
-    <div class="ph"><span class="ph-t">System Log</span><span class="ph-r" id="log-count">0</span></div>
-    <div class="con-body" id="con-log">
-      <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">POLYBETTOR INITIALIZING...</span></div>
-    </div>
-  </div>
-  <div class="panel">
-    <div class="ph"><span class="ph-t">Strategy Status</span><span class="ph-r" id="strat-mode-label">AUTO</span></div>
-    <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
-      <div id="strat-status-a" style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--dim)">
-        <div class="strat-indicator strat-a"></div>
-        <div><div style="font-size:10px;color:var(--bright);font-weight:bold">TREND</div><div style="font-size:9px;color:var(--muted);margin-top:3px;line-height:1.5">EMA 9/21 + RSI momentum. Best for trending conditions.</div><div style="font-size:9px;color:var(--muted);margin-top:4px" id="strat-a-meta">—</div></div>
-      </div>
-      <div id="strat-status-b" style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--dim)">
-        <div class="strat-indicator strat-b"></div>
-        <div><div style="font-size:10px;color:var(--bright);font-weight:bold">MOMENTUM / WALL</div><div style="font-size:9px;color:var(--muted);margin-top:3px;line-height:1.5">Order book wall detection. Best for ranging markets.</div><div style="font-size:9px;color:var(--muted);margin-top:4px" id="strat-b-meta">—</div></div>
-      </div>
-      <div id="strat-status-c" style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--dim)">
-        <div class="strat-indicator strat-c"></div>
-        <div><div style="font-size:10px;color:var(--bright);font-weight:bold">BREAKOUT</div><div style="font-size:9px;color:var(--muted);margin-top:3px;line-height:1.5">ATR volatility breakout + volume surge. Catches big moves.</div><div style="font-size:9px;color:var(--muted);margin-top:4px" id="strat-c-meta">—</div></div>
-      </div>
-      <!-- SharpShooter status row -->
-      <div id="strat-status-ss" style="display:none;align-items:flex-start;gap:10px;padding:10px;background:rgba(255,210,0,0.04);border-radius:3px;border-left:2px solid var(--yellow)">
-        <div style="font-size:16px">⚡</div>
-        <div>
-          <div style="font-size:10px;color:var(--yellow);font-weight:bold;letter-spacing:2px">SHARP SHOOTER ACTIVE</div>
-          <div style="font-size:9px;color:var(--muted);margin-top:3px;line-height:1.5">10 concurrent slots · $2 flat bets · 3% TP / 5% max · 8% SL · Up to 3 entries per scan cycle</div>
-          <div style="font-size:9px;color:var(--yellow);margin-top:4px" id="ss-runtime-meta">Slots: 0/10 · Scalps: 0</div>
-        </div>
-      </div>
-    </div>
+<!-- Console log -->
+<div class="console">
+  <div class="ph"><span class="ph-t">System Log</span><span class="ph-r" id="log-count">0</span></div>
+  <div class="con-body" id="con-log">
+    <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">POLYBETTOR INITIALIZING...</span></div>
   </div>
 </div>
 
 </div><!-- end wrap -->
 
-<!-- ── Settings Overlay ──────────────────────────────────────── -->
+<!-- Settings Overlay -->
 <div class="settings-overlay" id="settings-overlay" onclick="closeOnOutside(event)">
   <div class="settings-panel">
     <div class="sp-header">
-      <span class="sp-title">⚙ SYSTEM SETTINGS</span>
+      <span class="sp-title">⚙ SETTINGS</span>
       <button class="sp-close" onclick="closeSettings()">✕</button>
     </div>
     <div class="sp-body">
-
-      <!-- Bot on/off -->
       <div class="sp-section">
         <div class="sp-section-label">Bot Control</div>
         <div class="toggle-row">
           <div class="toggle-info">
-            <div class="toggle-name">Bot Active</div>
-            <div class="toggle-desc">Pause/resume all trading. Open positions are still monitored for exits.</div>
-          </div>
-          <label class="toggle-wrap">
-            <input type="checkbox" id="tog-enabled" onchange="saveSetting('enabled', this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <div class="toggle-info">
             <div class="toggle-name" id="dry-label">🧪 Dry Run Mode</div>
-            <div class="toggle-desc" id="dry-desc">ON = simulate only, no real orders. Turn OFF to go LIVE with real money. <strong style="color:var(--red)">Switching to LIVE places real bets immediately.</strong></div>
+            <div class="toggle-desc" id="dry-desc">ON = simulate only, no real orders. <strong style="color:var(--red)">Turning OFF places real bets immediately.</strong></div>
           </div>
           <label class="toggle-wrap">
             <input type="checkbox" id="tog-dry" onchange="confirmDryToggle(this)">
@@ -381,554 +397,221 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
           </label>
         </div>
       </div>
-
-      <!-- SharpShooter — PROMINENT SECTION -->
       <div class="sp-section">
-        <div class="sp-section-label" style="color:var(--yellow)">⚡ Sharp Shooter Mode</div>
-        <div class="toggle-row" style="border:1px solid rgba(255,210,0,0.2);border-radius:4px;padding:12px;margin-bottom:8px;background:rgba(255,210,0,0.03)">
-          <div class="toggle-info">
-            <div class="toggle-name" style="color:var(--yellow)">⚡ SHARP SHOOTER</div>
-            <div class="toggle-desc">Maximum volume mode. 10 concurrent bets · Fixed $2 per bet · Take profit at 3-5% · Tight 8% stop loss · Up to 3 entries per scan · Rapid profit cycling</div>
-          </div>
-          <label class="toggle-wrap ss-toggle">
-            <input type="checkbox" id="tog-sharp" onchange="toggleSharpShooter(this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <!-- Info panel shown when SS is ON -->
-        <div class="ss-banner" id="ss-banner">
-          <div class="ss-banner-title">⚡ SHARP SHOOTER PARAMETERS</div>
-          <div class="ss-banner-row"><span>Bet Size</span><span class="ss-banner-val">$2.00 flat</span></div>
-          <div class="ss-banner-row"><span>Max Concurrent</span><span class="ss-banner-val">10 slots</span></div>
-          <div class="ss-banner-row"><span>Take Profit (min)</span><span class="ss-banner-val">3% ($0.06)</span></div>
-          <div class="ss-banner-row"><span>Take Profit (max)</span><span class="ss-banner-val">5% ($0.10)</span></div>
-          <div class="ss-banner-row"><span>Stop Loss</span><span class="ss-banner-val">8% ($0.16)</span></div>
-          <div class="ss-banner-row"><span>Entries per Scan</span><span class="ss-banner-val">up to 3</span></div>
-          <div class="ss-banner-row"><span>Capital Deployed</span><span class="ss-banner-val">up to $20</span></div>
-        </div>
-      </div>
-
-      <!-- Auto mode -->
-      <div class="sp-section">
-        <div class="sp-section-label">Strategy Mode</div>
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <div class="toggle-name">Auto Strategy <span class="auto-badge">AUTO</span></div>
-            <div class="toggle-desc">Bot picks the best strategy automatically based on volatility and market conditions.</div>
-          </div>
-          <label class="toggle-wrap">
-            <input type="checkbox" id="tog-auto" onchange="saveSetting('autoMode', this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-      </div>
-
-      <!-- Strategies -->
-      <div class="sp-section" id="manual-strats">
-        <div class="sp-section-label">Manual Strategy Selection</div>
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <div class="toggle-name"><span class="strat-indicator strat-a" style="display:inline-block"></span> Trend Scalp</div>
-            <div class="toggle-desc">RSI(14) + EMA 9/21. Best for trending momentum scalps.</div>
-          </div>
-          <label class="toggle-wrap">
-            <input type="checkbox" id="tog-trend" onchange="saveSetting('strategies.TREND_SCALP', this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <div class="toggle-name"><span class="strat-indicator strat-b" style="display:inline-block"></span> Momentum</div>
-            <div class="toggle-desc">Bid/ask wall detection. Best for ranging/choppy conditions.</div>
-          </div>
-          <label class="toggle-wrap">
-            <input type="checkbox" id="tog-mom" onchange="saveSetting('strategies.MOMENTUM', this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <div class="toggle-name"><span class="strat-indicator strat-c" style="display:inline-block"></span> Mean Revert</div>
-            <div class="toggle-desc">Volatility breakout + volume surge. Best for catching big moves early.</div>
-          </div>
-          <label class="toggle-wrap">
-            <input type="checkbox" id="tog-mean" onchange="saveSetting('strategies.MEAN_REVERT', this.checked)">
-            <div class="toggle-track"></div>
-          </label>
-        </div>
-      </div>
-
-      <!-- Live config values -->
-      <div class="sp-section" style="margin-bottom:0">
-        <div class="sp-section-label">Live Values (Railway env)</div>
+        <div class="sp-section-label">Live Values</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:10px">
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">STOP LOSS</div><div style="color:var(--red);font-weight:bold;font-size:13px" id="cfg-sl">—</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">TAKE PROFIT</div><div style="color:var(--green);font-weight:bold;font-size:13px" id="cfg-tp">—</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">MIN EDGE</div><div style="color:var(--yellow);font-weight:bold;font-size:13px" id="cfg-edge">—</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">MAX BET</div><div style="color:var(--blue);font-weight:bold;font-size:13px" id="cfg-bet">—</div></div>
           <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">BANKROLL</div><div style="color:var(--cyan);font-weight:bold;font-size:13px" id="cfg-bank">—</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">KELLY FRACTION</div><div style="color:var(--text);font-weight:bold;font-size:13px" id="cfg-kelly">—</div></div>
+          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">BET SIZE</div><div style="color:var(--green);font-weight:bold;font-size:13px">$10 flat</div></div>
+          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">MAX CONCURRENT</div><div style="color:var(--yellow);font-weight:bold;font-size:13px">6</div></div>
+          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">ENTRY RANGE</div><div style="color:var(--blue);font-weight:bold;font-size:13px">60-70¢</div></div>
         </div>
       </div>
-
     </div>
   </div>
 </div>
 
 <script>
-// ── Chart ─────────────────────────────────────────────────────
+'use strict';
+
+// ── State ─────────────────────────────────────────────────────
+let currentMode = 'SPORTS';
+let currentSettings = { dryRun: true };
+let pnlHistory = { SPORTS: [], CRYPTO: [] };
+let prevPnl = { SPORTS: null, CRYPTO: null };
+let openBets = new Set();
+let uiLogs = [];
+
+// ── Canvas / chart ────────────────────────────────────────────
 const canvas = document.getElementById('chart');
-const ctx    = canvas.getContext('2d');
-let pnlHistory = [{ t: Date.now(), v: 0 }];
+const ctx = canvas.getContext('2d');
+
+// Animated line draw state
+let animFrame = null;
+let animProgress = 1; // 0→1 animation
+let pendingPoints = null;
 
 function resizeCanvas() {
-  canvas.width  = canvas.offsetWidth  * devicePixelRatio;
-  canvas.height = canvas.offsetHeight * devicePixelRatio;
+  const wrap = document.getElementById('chart-wrap');
+  canvas.width = wrap.offsetWidth * devicePixelRatio;
+  canvas.height = 180 * devicePixelRatio;
+  canvas.style.width = wrap.offsetWidth + 'px';
+  canvas.style.height = '180px';
   ctx.scale(devicePixelRatio, devicePixelRatio);
-  drawChart();
+  drawChart(1);
 }
 
-function drawChart() {
-  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+function drawChart(progress) {
+  const W = canvas.offsetWidth / devicePixelRatio;
+  const H = 180;
   ctx.clearRect(0, 0, W, H);
-  if (pnlHistory.length < 2) {
-    ctx.fillStyle='#1a4060';ctx.font='10px Share Tech Mono';ctx.textAlign='center';
-    ctx.fillText('> P&L CHART POPULATES AFTER FIRST BETS', W/2, H/2); return;
+
+  const hist = pnlHistory[currentMode] || [];
+  if (hist.length < 2) {
+    ctx.fillStyle = '#1a4060';
+    ctx.font = '10px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('▶ P/L CHART POPULATES AFTER FIRST BETS', W/2, H/2);
+    return;
   }
-  const vals = pnlHistory.map(p => p.v);
-  const minV = Math.min(...vals,-0.5), maxV = Math.max(...vals,0.5);
+
+  const vals = hist.map(p => p.v);
+  const minV = Math.min(...vals, -0.5);
+  const maxV = Math.max(...vals, 0.5);
   const range = maxV - minV || 1;
-  const pad = {t:16,b:28,l:52,r:12};
-  const toX = i => pad.l + (i/(pnlHistory.length-1))*(W-pad.l-pad.r);
-  const toY = v => pad.t + (1-(v-minV)/range)*(H-pad.t-pad.b);
-  ctx.strokeStyle='#0a2040';ctx.lineWidth=1;ctx.setLineDash([2,4]);
-  for(let i=0;i<=4;i++){const y=pad.t+(i/4)*(H-pad.t-pad.b);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();}
+  const pad = { t: 20, b: 30, l: 54, r: 16 };
+  const toX = i => pad.l + (i / (hist.length - 1)) * (W - pad.l - pad.r);
+  const toY = v => pad.t + (1 - (v - minV) / range) * (H - pad.t - pad.b);
+
+  // Grid lines
+  ctx.strokeStyle = '#0a2040';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (i / 4) * (H - pad.t - pad.b);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+  }
+
+  // Zero line
+  ctx.strokeStyle = '#0d3060';
+  ctx.setLineDash([4, 4]);
+  const zY = toY(0);
+  ctx.beginPath(); ctx.moveTo(pad.l, zY); ctx.lineTo(W - pad.r, zY); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.strokeStyle='#0d3060';ctx.lineWidth=1;ctx.setLineDash([4,4]);
-  const zY=toY(0);ctx.beginPath();ctx.moveTo(pad.l,zY);ctx.lineTo(W-pad.r,zY);ctx.stroke();ctx.setLineDash([]);
-  const lastV=vals[vals.length-1];
-  const lc=lastV>=0?'#00ff9d':'#ff2d55';
-  ctx.beginPath();ctx.moveTo(toX(0),toY(vals[0]));
-  for(let i=1;i<pnlHistory.length;i++)ctx.lineTo(toX(i),toY(vals[i]));
-  ctx.lineTo(toX(pnlHistory.length-1),H-pad.b);ctx.lineTo(toX(0),H-pad.b);ctx.closePath();
-  const g=ctx.createLinearGradient(0,pad.t,0,H-pad.b);
-  g.addColorStop(0,lastV>=0?'rgba(0,255,157,0.15)':'rgba(255,45,85,0.15)');g.addColorStop(1,'transparent');
-  ctx.fillStyle=g;ctx.fill();
-  ctx.beginPath();ctx.moveTo(toX(0),toY(vals[0]));
-  for(let i=1;i<pnlHistory.length;i++)ctx.lineTo(toX(i),toY(vals[i]));
-  ctx.strokeStyle=lc;ctx.lineWidth=1.5;ctx.stroke();
-  const lx=toX(pnlHistory.length-1),ly=toY(lastV);
-  ctx.beginPath();ctx.arc(lx,ly,3,0,Math.PI*2);ctx.fillStyle=lc;ctx.fill();
-  ctx.fillStyle='#2a6090';ctx.font='9px Share Tech Mono';ctx.textAlign='right';
-  [minV,0,maxV].forEach(v=>{ctx.fillText('$'+v.toFixed(2),pad.l-4,toY(v)+3);});
-}
 
-window.addEventListener('resize',()=>setTimeout(resizeCanvas,50));
-setTimeout(resizeCanvas,150);
+  const lastV = vals[vals.length - 1];
+  const lc = lastV >= 0 ? '#00ff9d' : '#ff2d55';
 
-// ── Helpers ───────────────────────────────────────────────────
-const fmt  = n => n?.toLocaleString('en-US',{maximumFractionDigits:0})||'—';
-const fmtD = n => n!=null?'$'+fmt(n):'—';
+  // Determine draw count based on animation progress
+  const drawCount = Math.max(2, Math.ceil(hist.length * (progress || 1)));
+  const slice = hist.slice(0, drawCount);
+  const sliceVals = slice.map(p => p.v);
 
-function sigBar(name, score, col) {
-  const c = col||(score>0.15?'#00ff9d':score<-0.15?'#ff2d55':'#ffd200');
-  const left = score>=0?'50%':((score+1)/2*100)+'%';
-  const w = Math.abs(score)*50;
-  return `<div class="sig-row"><div class="sig-n">${name}</div><div class="sig-bg"><div class="sig-mid"></div><div class="sig-fill" style="left:${left};width:${w}%;background:${c}"></div></div><div class="sig-val" style="color:${c}">${score>=0?'+':''}${score.toFixed(2)}</div></div>`;
-}
-
-// ── SharpShooter ──────────────────────────────────────────────
-async function toggleSharpShooter(on) {
-  try {
-    const res  = await fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sharpShooter:on})});
-    const data = await res.json();
-    if (data.ok) {
-      currentSettings = data.settings;
-      applySSUI(on);
-      addUILog('ok', on ? '⚡ SharpShooter ENABLED — 10 slots · $2 · 3-5% TP' : 'SharpShooter OFF');
+  // Glow effect — draw line 3x with decreasing opacity/width
+  [[3, 0.15], [1.8, 0.25], [1.2, 1]].forEach(([lw, alpha]) => {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(sliceVals[0]));
+    for (let i = 1; i < slice.length; i++) {
+      // Smooth bezier for animated feel
+      const x0 = toX(i - 1), y0 = toY(sliceVals[i - 1]);
+      const x1 = toX(i), y1 = toY(sliceVals[i]);
+      const cpx = (x0 + x1) / 2;
+      ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
     }
-  } catch(e) { addUILog('err','SharpShooter toggle failed: '+e.message); }
-}
+    ctx.strokeStyle = lc;
+    ctx.lineWidth = lw;
+    ctx.stroke();
+    ctx.restore();
+  });
 
-function applySSUI(on) {
-  // Header badge
-  document.getElementById('ss-badge').style.display = on ? '' : 'none';
-  // Ticker slot counter
-  document.getElementById('ss-ticker').className = on ? 'ss-ticker on' : 'ss-ticker';
-  // Stat card
-  document.getElementById('ss-stat-card').className = on ? 'stat ss-stat y on' : 'stat ss-stat y';
-  // Strategy tab
-  document.getElementById('tab-ss').style.display = on ? '' : 'none';
-  if(on) document.getElementById('tab-ss').className = 'strat-tab active-ss';
-  // Strategy status row
-  document.getElementById('strat-status-ss').style.display = on ? 'flex' : 'none';
-  // Settings banner
-  document.getElementById('ss-banner').className = on ? 'ss-banner visible' : 'ss-banner';
-  // Toggle sync
-  document.getElementById('tog-sharp').checked = on;
-}
-
-// ── Settings ──────────────────────────────────────────────────
-let currentSettings = {strategies:{TREND_SCALP:true,MOMENTUM:true,MEAN_REVERT:true},autoMode:true,enabled:true,sharpShooter:false};
-
-function openSettings() {
-  document.getElementById('settings-overlay').classList.add('open');
-  document.getElementById('gear-btn').classList.add('active');
-  syncToggles();
-}
-function closeSettings() {
-  document.getElementById('settings-overlay').classList.remove('open');
-  document.getElementById('gear-btn').classList.remove('active');
-}
-function closeOnOutside(e){if(e.target===document.getElementById('settings-overlay'))closeSettings();}
-
-function syncToggles() {
-  document.getElementById('tog-enabled').checked = currentSettings.enabled;
-  document.getElementById('tog-auto').checked    = currentSettings.autoMode;
-  document.getElementById('tog-trend').checked   = currentSettings.strategies?.TREND_SCALP??true;
-  document.getElementById('tog-mom').checked     = currentSettings.strategies?.MOMENTUM??true;
-  document.getElementById('tog-mean').checked    = currentSettings.strategies?.MEAN_REVERT??true;
-  const isDry = currentSettings.dryRun??true;
-  document.getElementById('tog-dry').checked = isDry;
-  updateDryLabel(isDry);
-  applySSUI(currentSettings.sharpShooter||false);
-}
-
-function updateDryLabel(isDry){
-  const lbl=document.getElementById('dry-label'),dsc=document.getElementById('dry-desc');
-  if(isDry){lbl.textContent='🧪 Dry Run Mode';lbl.style.color='var(--yellow)';dsc.innerHTML='ON = simulate only, no real orders. Turn OFF to go LIVE with real money. <strong style="color:var(--red)">Switching to LIVE places real bets immediately.</strong>';}
-  else{lbl.textContent='🔴 LIVE MODE — REAL MONEY';lbl.style.color='var(--red)';dsc.innerHTML='LIVE mode is active. Real orders are being placed on Polymarket. Toggle ON to return to dry run.';}
-}
-
-function confirmDryToggle(checkbox){
-  const goingLive=!checkbox.checked;
-  if(goingLive){
-    const ok=window.confirm('⚠️ SWITCHING TO LIVE MODE\n\nReal USDC will be wagered on Polymarket.\nOrders execute immediately on next scan.\n\nAre you sure?');
-    if(!ok){checkbox.checked=true;return;}
+  // Fill area under line
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(sliceVals[0]));
+  for (let i = 1; i < slice.length; i++) {
+    const x0 = toX(i - 1), y0 = toY(sliceVals[i - 1]);
+    const x1 = toX(i), y1 = toY(sliceVals[i]);
+    const cpx = (x0 + x1) / 2;
+    ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
   }
-  saveSetting('dryRun',checkbox.checked);
-  updateDryLabel(checkbox.checked);
-}
+  ctx.lineTo(toX(slice.length - 1), H - pad.b);
+  ctx.lineTo(toX(0), H - pad.b);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+  g.addColorStop(0, lc);
+  g.addColorStop(1, 'transparent');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
 
-async function saveSetting(key, val) {
-  const body={};
-  if(key==='enabled')body.enabled=val;
-  else if(key==='autoMode')body.autoMode=val;
-  else if(key==='dryRun')body.dryRun=val;
-  else if(key.startsWith('strategies.')){const k=key.split('.')[1];body.strategies={...currentSettings.strategies,[k]:val};}
-  try{
-    const res=await fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const data=await res.json();
-    if(data.ok){currentSettings=data.settings;if(data.changes?.length)for(const c of data.changes)addUILog('ok',c);}
-  }catch(err){addUILog('err','Settings save failed: '+err.message);}
-}
-
-// ── UI Log ────────────────────────────────────────────────────
-let uiLogs=[];
-function addUILog(type,msg){
-  const ts=new Date().toTimeString().slice(0,8);
-  uiLogs.unshift({ts,type,msg});
-  if(uiLogs.length>100)uiLogs.pop();
-  renderLog();
-}
-function renderLog(){
-  const el=document.getElementById('con-log');
-  el.innerHTML=uiLogs.map(l=>`<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`).join('');
-  document.getElementById('log-count').textContent=uiLogs.length;
-}
-
-// ── Main fetch loop ───────────────────────────────────────────
-let prevPnl = 0;
-
-async function refresh() {
-  try {
-    const [rootR,betsR,sigR,mktsR,logR] = await Promise.allSettled([
-      fetch('/').then(r=>r.json()),
-      fetch('/bets').then(r=>r.json()),
-      fetch('/signals').then(r=>r.json()),
-      fetch('/markets').then(r=>r.json()),
-      fetch('/log').then(r=>r.json()),
-    ]);
-
-    document.getElementById('last-upd').textContent = new Date().toTimeString().slice(0,8);
-    document.getElementById('dot').className='dot dot-g';
-
-    // Root / stats
-    if(rootR.status==='fulfilled'){
-      const root=rootR.value;
-      const s=root.stats||{};
-      const isDry=root.settings?.dryRun??(root.mode==='DRY_RUN');
-      const pnl=parseFloat(s.pnl||0);
-      const startBal=parseFloat(root.config?.bankroll||40);
-      const currentBal=startBal+pnl;
-      const pnlPct=((pnl/startBal)*100).toFixed(1);
-
-      currentSettings=root.settings||currentSettings;
-
-      // Sync SharpShooter state from server
-      const ssOn=root.settings?.sharpShooter||false;
-      applySSUI(ssOn);
-
-      document.getElementById('mode-badge').textContent = isDry?'◎ DRY RUN':'⬤ LIVE';
-      document.getElementById('mode-badge').className = 'badge '+(isDry?'badge-dry':'badge-live');
-
-      // Balance
-      // In LIVE mode, prefer the real Polymarket account balance (s.liveBalance)
-      // pushed from index.js via getBuyingPower(). Fall back to the computed
-      // bankroll+pnl figure if the live balance isn't available yet.
-      const balEl=document.getElementById('s-balance');
-      if(balEl){
-        let disp;
-        if(isDry){
-          disp = s.dryBalance!=null ? s.dryBalance : currentBal.toFixed(2);
-        } else {
-          disp = s.liveBalance!=null ? s.liveBalance : currentBal.toFixed(2);
-        }
-        balEl.textContent='$'+parseFloat(disp).toFixed(2);
-        balEl.className='stat-v '+(pnl>=0?'pos':'neg');
-      }
-      const wagEl=document.getElementById('s-wag');
-      if(wagEl)wagEl.textContent='$'+(parseFloat(s.totalWagered)||0).toFixed(2)+' wagered';
-
-      // P&L
-      const pnlEl=document.getElementById('s-pnl');
-      if(pnlEl){pnlEl.textContent=(pnl>=0?'+':'')+'$'+Math.abs(pnl).toFixed(2);pnlEl.className='stat-v '+(pnl>0?'pos':pnl<0?'neg':'neutral');}
-      const pnlPctEl=document.getElementById('s-pnl-pct');
-      if(pnlPctEl)pnlPctEl.textContent=(pnl>=0?'+':'')+pnlPct+'% return';
-      const tkPnl=document.getElementById('tk-pnl');
-      if(tkPnl){tkPnl.textContent=(pnl>=0?'+':'')+'$'+Math.abs(pnl).toFixed(2);tkPnl.className='ti-v '+(pnl>0?'pos':pnl<0?'neg':'neutral');}
-
-      // Win rate
-      const wrEl=document.getElementById('s-wr');
-      if(wrEl){wrEl.textContent=s.winRate||'N/A';wrEl.className='stat-v '+(s.winRate&&s.winRate!=='N/A'?(parseFloat(s.winRate)>=50?'pos':'neg'):'neutral');}
-      const wlEl=document.getElementById('s-wl');
-      if(wlEl)wlEl.textContent=(s.wins||0)+'W / '+(s.losses||0)+'L';
-
-      // Active
-      const actEl=document.getElementById('s-active');
-      if(actEl){actEl.textContent=s.activeBets||0;actEl.className='stat-v '+(s.activeBets>0?'pos':'neutral');}
-      const totEl=document.getElementById('s-total');
-      if(totEl)totEl.textContent=(s.betsPlaced||0)+' placed';
-
-      // Scalps
-      const scEl=document.getElementById('s-scalps');
-      if(scEl)scEl.textContent=s.scalps||0;
-      const scansEl=document.getElementById('s-scans');
-      if(scansEl)scansEl.textContent=(s.scansCompleted||0)+' scans';
-      const tkSc=document.getElementById('tk-scalps');
-      if(tkSc)tkSc.textContent=s.scalps||0;
-
-      // SharpShooter slot counter
-      const maxSlots=ssOn?10:3;
-      const slotEl=document.getElementById('ss-slots');
-      if(slotEl)slotEl.textContent=s.activeBets||0;
-      const ssStatSlot=document.getElementById('ss-stat-slots');
-      if(ssStatSlot)ssStatSlot.textContent=(s.activeBets||0)+'/'+maxSlots;
-      const ssSubEl=document.getElementById('ss-stat-sub');
-      if(ssSubEl)ssSubEl.textContent='$2 flat · '+(s.scalps||0)+' scalps';
-      const ssRunEl=document.getElementById('ss-runtime-meta');
-      if(ssRunEl)ssRunEl.textContent='Slots: '+(s.activeBets||0)+'/10 · Scalps: '+(s.scalps||0);
-
-      // Config values
-      const c=root.config||{};
-      const cfgSl=document.getElementById('cfg-sl');if(cfgSl)cfgSl.textContent=c.stopLoss?(c.stopLoss*100).toFixed(0)+'%':'—';
-      const cfgTp=document.getElementById('cfg-tp');if(cfgTp)cfgTp.textContent=c.tpLow?((c.tpLow*100).toFixed(0)+'-'+(c.tpHigh*100).toFixed(0)+'%'):'—';
-      const cfgEdge=document.getElementById('cfg-edge');if(cfgEdge)cfgEdge.textContent=c.minEdge?(c.minEdge*100).toFixed(1)+'%':'—';
-      const cfgBet=document.getElementById('cfg-bet');if(cfgBet)cfgBet.textContent=c.maxBetSize?'$'+c.maxBetSize:'—';
-      const cfgBank=document.getElementById('cfg-bank');if(cfgBank)cfgBank.textContent=c.bankroll?'$'+c.bankroll:'—';
-      const cfgKelly=document.getElementById('cfg-kelly');if(cfgKelly)cfgKelly.textContent=c.kellyFraction?(c.kellyFraction*100).toFixed(0)+'%':'—';
-
-      // P&L chart
-      if(pnl!==prevPnl){pnlHistory.push({t:Date.now(),v:pnl});if(pnlHistory.length>120)pnlHistory.shift();prevPnl=pnl;drawChart();}
-    }
-
-    // Signals
-    if(sigR.status==='fulfilled'&&sigR.value&&sigR.value.bias!=null){
-      const sig=sigR.value;
-      const price=sig.currentPrice||0;
-      const bias=sig.bias||0;
-      const conf=sig.confidence||0;
-      const ssOn=currentSettings.sharpShooter||false;
-
-      document.getElementById('tk-p').textContent='$'+price.toLocaleString('en-US',{maximumFractionDigits:0});
-      const tkChg=document.getElementById('tk-chg');
-      const chg=sig.stats?.priceChangePercent||0;
-      tkChg.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';
-      tkChg.style.color=chg>=0?'#00ff9d':'#ff2d55';
-
-      const stratName=ssOn?'⚡SHARP':sig.activeStrategy||'—';
-      const tkStrat=document.getElementById('tk-strat');
-      tkStrat.textContent=stratName;
-      tkStrat.style.color=ssOn?'#ffd200':(sig.activeStrategy==='BREAKOUT'?'#00b4ff':sig.activeStrategy==='WALL'?'#ffd200':'#00ff9d');
-
-      const tkBias=document.getElementById('tk-bias');
-      tkBias.textContent=(bias>=0?'↑':'↓')+(Math.abs(bias)*100).toFixed(0)+'%';
-      tkBias.style.color=bias>0.1?'#00ff9d':bias<-0.1?'#ff2d55':'#ffd200';
-      tkBias.className='ti-v';
-
-      const rsi=sig.rsi||50;
-      const tkRsi=document.getElementById('tk-rsi');
-      tkRsi.textContent=rsi.toFixed(0);
-      tkRsi.style.color=rsi>70?'#ff2d55':rsi<30?'#00ff9d':'#d0eeff';
-
-      document.getElementById('price-big').textContent='$'+price.toLocaleString('en-US',{maximumFractionDigits:0});
-      const pc=document.getElementById('price-chg');
-      pc.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';
-      pc.style.color=chg>=0?'#00ff9d':'#ff2d55';
-
-      const bt=document.getElementById('bias-tag');
-      bt.textContent=bias>0.15?'↑ BULLISH':bias<-0.15?'↓ BEARISH':'→ NEUTRAL';
-      bt.style.color=bias>0.15?'#00ff9d':bias<-0.15?'#ff2d55':'#ffd200';
-
-      const confEl=document.getElementById('s-conf');
-      if(confEl){confEl.textContent=(conf*100).toFixed(0)+'%';confEl.style.color=conf>0.5?'#00ff9d':conf>0.3?'#ffd200':'#a0c8e0';}
-      const stratEl=document.getElementById('s-strat');
-      if(stratEl)stratEl.textContent=ssOn?'⚡ SHARP SHOOTER':(sig.activeStrategy||'—');
-
-      const pm=sig.stats||{};
-      const hi=document.getElementById('pm-high');if(hi)hi.textContent='$'+(pm.high||price).toLocaleString('en-US',{maximumFractionDigits:0});
-      const lo=document.getElementById('pm-low');if(lo)lo.textContent='$'+(pm.low||price).toLocaleString('en-US',{maximumFractionDigits:0});
-      const e9=document.getElementById('pm-ema9');if(e9)e9.textContent='$'+(sig.ema9||0).toLocaleString('en-US',{maximumFractionDigits:0});
-      const e21=document.getElementById('pm-ema21');if(e21)e21.textContent='$'+(sig.ema21||0).toLocaleString('en-US',{maximumFractionDigits:0});
-
-      const op=document.getElementById('oracle-p');
-      if(op)op.textContent=sig.oraclePrice?'CHAINLINK $'+sig.oraclePrice.toLocaleString('en-US',{maximumFractionDigits:0}):'CHAINLINK —';
-
-      // Strategy tabs
-      const strats={RSI_EMA:'tab-a',TREND_SCALP:'tab-a',WALL:'tab-b',MOMENTUM:'tab-b',BREAKOUT:'tab-c',MEAN_REVERT:'tab-c'};
-      ['tab-a','tab-b','tab-c'].forEach(t=>{const el=document.getElementById(t);if(el)el.className='strat-tab';});
-      const tabId=strats[sig.activeStrategy];
-      if(tabId){const el=document.getElementById(tabId);if(el)el.className='strat-tab active-'+(tabId.split('-')[1]);}
-      if(ssOn){const sst=document.getElementById('tab-ss');if(sst){sst.style.display='';sst.className='strat-tab active-ss';}}
-
-      // Signal bars
-      const sg=document.getElementById('sig-grid');
-      if(sg){
-        const A=sig.strategies?.A,B=sig.strategies?.B,C=sig.strategies?.C;
-        sg.innerHTML=
-          sigBar('RSI_EMA', A?.bias||0, A?.name===sig.activeStrategy?null:'#2a6090')+
-          sigBar('WALL',    B?.bias||0, B?.name===sig.activeStrategy?null:'#2a6090')+
-          sigBar('BREAKOUT',C?.bias||0, C?.name===sig.activeStrategy?null:'#2a6090')+
-          sigBar('FINAL',   bias, bias>0.1?'#00ff9d':bias<-0.1?'#ff2d55':'#ffd200');
-      }
-
-      // Strategy meta
-      const smA=document.getElementById('strat-a-meta');if(smA&&sig.strategies?.A)smA.textContent=sig.strategies.A.meta||'—';
-      const smB=document.getElementById('strat-b-meta');if(smB&&sig.strategies?.B)smB.textContent=sig.strategies.B.meta||'—';
-      const smC=document.getElementById('strat-c-meta');if(smC&&sig.strategies?.C)smC.textContent=sig.strategies.C.meta||'—';
-
-      // Walls
-      const w=sig.walls||{};
-      const wbv=document.getElementById('wall-bias-val');
-      if(wbv){wbv.textContent=(w.wallBias>=0?'BULL ':'BEAR ')+(Math.abs(w.wallBias||0)*100).toFixed(0)+'%';wbv.style.color=w.wallBias>0?'#00ff9d':'#ff2d55';}
-      const wbp=document.getElementById('w-bull-p');if(wbp)wbp.textContent=w.bullWall?'$'+(w.bullWall.price||0).toLocaleString('en-US',{maximumFractionDigits:0}):'—';
-      const wbs=document.getElementById('w-bull-s');if(wbs)wbs.textContent=w.bullWall?'$'+(w.bullWall.usd/1e6).toFixed(1)+'M':'—';
-      const wap=document.getElementById('w-bear-p');if(wap)wap.textContent=w.bearWall?'$'+(w.bearWall.price||0).toLocaleString('en-US',{maximumFractionDigits:0}):'—';
-      const was=document.getElementById('w-bear-s');if(was)was.textContent=w.bearWall?'$'+(w.bearWall.usd/1e6).toFixed(1)+'M':'—';
-      const dep=w.depthRatio||0;
-      const depEl=document.getElementById('depth-bar');
-      if(depEl){depEl.style.width=Math.max(5,Math.min(95,50+dep*50))+'%';depEl.style.background=dep>0?'#00ff9d':'#ff2d55';}
-      const depPct=document.getElementById('depth-pct');
-      if(depPct)depPct.textContent=(dep>=0?'BULL ':'BEAR ')+(Math.abs(dep)*100).toFixed(0)+'%';
-    }
-
-    // Markets
-    if(mktsR.status==='fulfilled'){
-      const mkts=mktsR.value||[];
-      const ssOn=currentSettings.sharpShooter||false;
-      document.getElementById('mkt-count').textContent=mkts.length+' markets';
-      const ml=document.getElementById('mkt-list');
-      if(!mkts.length){ml.innerHTML='<div class="empty">NO MARKETS — USING SYNTHETIC</div>';}
-      else{
-        ml.innerHTML=mkts.slice(0,8).map(m=>{
-          const d=m._decision||{};
-          const q=m._quality||0;
-          const side=d.shouldBet?d.side:'—';
-          const sc=side==='YES'?'s-yes':side==='NO'?'s-no':'s-watch';
-          const edge=d.edge?((d.edge*100).toFixed(1)+'%'):'—';
-          const minLeft=m.endDateIso?Math.round((new Date(m.endDateIso)-Date.now())/60000):'?';
-          const ssTag=ssOn?'<span style="color:#ffd200;font-size:8px"> ⚡$2</span>':'';
-          return `<div class="mkt-row"><div class="mkt-q">${(m.question||'').slice(0,55)}${ssTag}</div><div class="mkt-pct neutral">${(q*100).toFixed(0)}</div><div class="mkt-side ${sc}">${side}</div><div class="mkt-edge ${d.shouldBet?'e':''}">${edge}</div><div class="mkt-min">${minLeft}m</div></div>`;
-        }).join('');
-      }
-    }
-
-    // Bets
-    if(betsR.status==='fulfilled'){
-      const bets=betsR.value||[];
-      document.getElementById('bets-count').textContent=bets.length+' bets';
-      const wins=bets.filter(b=>b.status==='won').length;
-      const losses=bets.filter(b=>b.status==='lost').length;
-      document.getElementById('bets-stats').textContent=wins+'W / '+losses+'L';
-      const bl=document.getElementById('bets-list');
-      if(!bets.length){bl.innerHTML='<div class="empty">NO BETS YET</div>';}
-      else{
-        bl.innerHTML=bets.slice().reverse().slice(0,50).map((b,i)=>{
-          const key=String(b.orderId||b.marketConditionId||((b.marketQuestion||'')+'|'+(b.placedAt||''))).replace(/"/g,'&quot;');
-          const isOpen=openBets.has(key);
-          const pnl=b.pnl!=null?(b.pnl>=0?'+$'+b.pnl.toFixed(2):'-$'+Math.abs(b.pnl).toFixed(2)):'open';
-          const pnlC=b.pnl==null?'neutral':b.pnl>0?'pos':'neg';
-          const sc=b.side==='YES'?'s-yes':'s-no';
-          const stC=b.status==='won'?'s-won':b.status==='lost'?'s-lost':b.status==='expired'?'neutral':'s-open';
-          const ssTag=b.sharpShooter?'⚡ ':'';
-          return `<div class="bet-row" data-betkey="${key}" onclick="toggleBet(this,${i})">
-            <div class="bet-summary">
-              <div class="bet-q">${ssTag}${(b.marketQuestion||'').slice(0,42)}</div>
-              <div class="bet-c"><span class="mkt-side ${sc}">${b.side}</span></div>
-              <div class="bet-c neutral">$${b.betSize?.toFixed(2)||'—'}</div>
-              <div class="bet-c ${pnlC}">${pnl}</div>
-              <div class="bet-chevron${isOpen?' open':''}" id="chev-${i}">›</div>
-            </div>
-            <div class="bet-detail${isOpen?' open':''}" id="det-${i}">
-              <div class="bd-grid">
-                <div class="bd-item"><div class="bd-label">Strategy</div><div class="bd-val">${ssTag}${b.strategy||'—'}</div></div>
-                <div class="bd-item"><div class="bd-label">Status</div><div class="bd-val ${stC}">${b.status||'open'}</div></div>
-                <div class="bd-item"><div class="bd-label">Entry Price</div><div class="bd-val">${b.entryPrice!=null?(b.entryPrice*100).toFixed(1)+'¢':'—'}</div></div>
-                <div class="bd-item"><div class="bd-label">Exit Price</div><div class="bd-val">${b.exitPrice!=null?(b.exitPrice*100).toFixed(1)+'¢':'—'}</div></div>
-                <div class="bd-item"><div class="bd-label">Edge</div><div class="bd-val">${b.edge!=null?(b.edge*100).toFixed(1)+'%':'—'}</div></div>
-                <div class="bd-item"><div class="bd-label">Exit Reason</div><div class="bd-val">${b.exitReason||'—'}</div></div>
-                <div class="bd-item"><div class="bd-label">Coin</div><div class="bd-val">${b.entryCoin||'BTC'}</div></div>
-                <div class="bd-item"><div class="bd-label">Hold Time</div><div class="bd-val">${b.placedAt&&b.closedAt?Math.round((new Date(b.closedAt)-new Date(b.placedAt))/1000)+'s':'open'}</div></div>
-                <div class="bd-item"><div class="bd-label">Entry BTC$</div><div class="bd-val">${b.entryBtcPrice?'$'+b.entryBtcPrice.toFixed(0):'—'}</div></div>
-                <div class="bd-item"><div class="bd-label">Payout</div><div class="bd-val">${b.entryPrice&&b.betSize?(b.betSize/b.entryPrice).toFixed(2):'—'}</div></div>
-              </div>
-              <div class="bd-reasoning"><div class="bd-label">REASONING</div>${b.reasoning||'—'}</div>
-            </div>
-          </div>`;
-        }).join('');
-      }
-    }
-
-    // Log
-    if(logR.status==='fulfilled'){
-      const logs=logR.value||[];
-      uiLogs=logs.slice(0,50).map(l=>({ts:l.ts?.slice(11,19)||'—',type:l.type,msg:l.msg}));
-      renderLog();
-    }
-
-  } catch(e) {
-    document.getElementById('dot').className='dot dot-r';
-    document.getElementById('status-txt').textContent='OFFLINE';
-    addUILog('err','Fetch error: '+e.message);
+  // Animated scanning dot at latest point
+  if (progress >= 1) {
+    const lx = toX(slice.length - 1), ly = toY(sliceVals[slice.length - 1]);
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 300);
+    ctx.beginPath();
+    ctx.arc(lx, ly, 3 + pulse * 2, 0, Math.PI * 2);
+    ctx.fillStyle = lc;
+    ctx.globalAlpha = 0.3 + 0.4 * pulse;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+    ctx.fillStyle = lc;
+    ctx.fill();
   }
+
+  // Y-axis labels
+  ctx.fillStyle = '#2a6090';
+  ctx.font = '9px Share Tech Mono';
+  ctx.textAlign = 'right';
+  ctx.globalAlpha = 1;
+  [minV, 0, maxV].forEach(v => {
+    ctx.fillText('$' + v.toFixed(2), pad.l - 4, toY(v) + 3);
+  });
 }
 
-const openBets=new Set();
-function toggleBet(el,i) {
-  const det=document.getElementById('det-'+i);
-  const chev=document.getElementById('chev-'+i);
-  if(!det)return;
-  const open=det.classList.toggle('open');
-  if(chev)chev.classList.toggle('open',open);
-  const key=el&&el.dataset?el.dataset.betkey:null;
-  if(key){ if(open) openBets.add(key); else openBets.delete(key); }
+// Pulsing dot animation loop
+function startPulse() {
+  function pulse() {
+    drawChart(1);
+    requestAnimationFrame(pulse);
+  }
+  requestAnimationFrame(pulse);
 }
 
-setInterval(refresh, 3000);
-refresh();
+// Animated line draw when new data arrives
+function animateLine() {
+  if (animFrame) cancelAnimationFrame(animFrame);
+  animProgress = 0;
+  const start = performance.now();
+  const dur = 600;
+  function step(now) {
+    animProgress = Math.min(1, (now - start) / dur);
+    // Ease out cubic
+    const t = 1 - Math.pow(1 - animProgress, 3);
+    drawChart(t);
+    if (animProgress < 1) animFrame = requestAnimationFrame(step);
+    else animFrame = null;
+  }
+  animFrame = requestAnimationFrame(step);
+}
 
-// Mode switching
+window.addEventListener('resize', () => setTimeout(resizeCanvas, 50));
+setTimeout(() => { resizeCanvas(); startPulse(); }, 200);
+
+// ── View toggling ─────────────────────────────────────────────
+function applyViewUI(mode) {
+  const isSports = mode === 'SPORTS';
+  const cryptoRight = document.getElementById('crypto-right-col');
+  const mainGrid = document.querySelector('.main');
+  const chartTitle = document.getElementById('chart-title');
+  const mktHeader = document.getElementById('mkt-header');
+
+  if (cryptoRight) cryptoRight.style.display = isSports ? 'none' : 'flex';
+  if (mainGrid) mainGrid.style.gridTemplateColumns = isSports ? '1fr' : '1fr 320px';
+  if (chartTitle) chartTitle.textContent = isSports ? '⚽ Sports P/L Curve' : '₿ Crypto P/L Curve';
+  if (mktHeader) mktHeader.textContent = isSports ? '⚽ Available Sports Markets' : '₿ Crypto Markets';
+
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+
+  animateLine();
+}
+
+// ── Mode switch (with warning) ────────────────────────────────
 async function switchMode(mode) {
+  if (mode === currentMode) return;
+  const label = mode === 'SPORTS' ? '⚽ Sports' : '₿ Crypto';
+  const ok = window.confirm(
+    'Switch dashboard view to ' + label + '?\n\n' +
+    '⚠️ Both Sports and Crypto bots keep running in the background\n' +
+    'regardless of which board you view.\n\n' +
+    'This only changes what you see — it does NOT stop any trading.'
+  );
+  if (!ok) return;
   try {
     const res = await fetch('/api/mode', {
       method: 'POST',
@@ -936,16 +619,389 @@ async function switchMode(mode) {
       body: JSON.stringify({ mode })
     });
     const data = await res.json();
-    console.log('Mode switched to:', data.mode);
-    
-    // Update button states
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.mode === mode);
-    });
-  } catch(e) {
-    console.error('Mode switch error:', e);
+    currentMode = data.mode;
+    applyViewUI(currentMode);
+    addLog('ok', 'View → ' + label + ' (both bots running)');
+  } catch (e) {
+    addLog('err', 'View switch failed: ' + e.message);
   }
 }
+
+// ── Settings ──────────────────────────────────────────────────
+function openSettings() {
+  document.getElementById('settings-overlay').classList.add('open');
+  document.getElementById('gear-btn').classList.add('active');
+  document.getElementById('tog-dry').checked = currentSettings.dryRun !== false;
+  updateDryLabel(currentSettings.dryRun !== false);
+  const cfgBank = document.getElementById('cfg-bank');
+  if (cfgBank) cfgBank.textContent = '$' + (window._bankroll || '—');
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open');
+  document.getElementById('gear-btn').classList.remove('active');
+}
+function closeOnOutside(e) { if (e.target === document.getElementById('settings-overlay')) closeSettings(); }
+
+function updateDryLabel(isDry) {
+  const lbl = document.getElementById('dry-label');
+  const dsc = document.getElementById('dry-desc');
+  if (isDry) {
+    lbl.textContent = '🧪 Dry Run Mode';
+    lbl.style.color = 'var(--yellow)';
+    dsc.innerHTML = 'ON = simulate only. <strong style="color:var(--red)">Turn OFF to go LIVE with real money.</strong>';
+  } else {
+    lbl.textContent = '🔴 LIVE MODE — REAL MONEY';
+    lbl.style.color = 'var(--red)';
+    dsc.innerHTML = 'LIVE mode active. Real orders are being placed on Polymarket.';
+  }
+}
+
+function confirmDryToggle(checkbox) {
+  if (!checkbox.checked) {
+    const ok = window.confirm('⚠️ SWITCHING TO LIVE MODE\n\nReal USDC will be wagered on Polymarket.\nOrders execute immediately on the next scan.\n\nAre you sure?');
+    if (!ok) { checkbox.checked = true; return; }
+  }
+  fetch('/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dryRun: checkbox.checked })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { currentSettings = d.settings; updateDryLabel(checkbox.checked); }
+  });
+}
+
+// ── Sport badge HTML ──────────────────────────────────────────
+function sportBadge(entryCoin, question) {
+  const text = ((entryCoin || '') + ' ' + (question || '')).toUpperCase();
+  let label = entryCoin || 'SPORT';
+  let cls = 'sp-SPORT';
+  if (/\bmlb\b|baseball/.test(text))               { label = 'MLB';     cls = 'sp-MLB'; }
+  else if (/\bnba\b|basketball/.test(text))         { label = 'NBA';     cls = 'sp-NBA'; }
+  else if (/\bnfl\b|football/.test(text))           { label = 'NFL';     cls = 'sp-NFL'; }
+  else if (/\bnhl\b|hockey/.test(text))             { label = 'NHL';     cls = 'sp-NHL'; }
+  else if (/tennis|atp|wta|grand\s*slam/.test(text)){ label = 'TENNIS'; cls = 'sp-TENNIS'; }
+  else if (/mma|ufc|fight/.test(text))              { label = 'MMA';     cls = 'sp-MMA'; }
+  else if (/soccer|mls|epl|liga/.test(text))        { label = 'SOCCER'; cls = 'sp-SOCCER'; }
+  else if (/esport|gaming|league\s*of/.test(text))  { label = 'ESPORTS'; cls = 'sp-ESPORTS'; }
+  else if (entryCoin && entryCoin.length <= 8)      { label = entryCoin; }
+  return `<span class="bet-sport ${cls}">${label}</span>`;
+}
+
+// ── Bet row renderer ──────────────────────────────────────────
+function renderBets(bets) {
+  const bl = document.getElementById('bets-list');
+  if (!bets.length) { bl.innerHTML = '<div class="empty">NO BETS YET</div>'; return; }
+
+  // Sort: open first, then most recent closed
+  const sorted = [...bets].sort((a, b) => {
+    const ao = !a.status || a.status === 'open';
+    const bo = !b.status || b.status === 'open';
+    if (ao !== bo) return ao ? -1 : 1;
+    return new Date(b.placedAt || 0) - new Date(a.placedAt || 0);
+  });
+
+  bl.innerHTML = sorted.slice(0, 50).map((b, i) => {
+    const key = String(b.orderId || b.marketConditionId || (b.marketQuestion + '|' + b.placedAt)).replace(/"/g, '&quot;');
+    const isOpen = openBets.has(key);
+    const status = b.status || 'open';
+    const stCls = status === 'won' ? 's-won' : status === 'lost' ? 's-lost' : 's-open';
+
+    let pnlDisp, pnlCls;
+    if (b.pnl != null) {
+      pnlDisp = (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(2);
+      pnlCls = b.pnl > 0 ? 'pos' : b.pnl < 0 ? 'neg' : 'neutral';
+    } else {
+      pnlDisp = 'open';
+      pnlCls = 'neutral';
+    }
+
+    const entry = b.entryPrice != null ? (b.entryPrice * 100).toFixed(0) + '¢' : '—';
+    const q = (b.marketQuestion || '').replace(/^\[.*?\]\s*/,'').slice(0, 50);
+    const badge = sportBadge(b.entryCoin, b.marketQuestion);
+    const sideCls = b.side === 'YES' ? 's-yes' : 's-no';
+
+    // Expandable detail
+    const holdMs = b.placedAt && b.closedAt
+      ? Math.round((new Date(b.closedAt) - new Date(b.placedAt)) / 60000) + 'm'
+      : status === 'open' ? 'holding' : '—';
+    const payout = b.entryPrice && b.betSize ? '$' + (b.betSize / b.entryPrice).toFixed(2) : '—';
+
+    return `<div class="bet-row" data-key="${key}" onclick="toggleBet(this,'${key}',${i})">
+      <div class="bet-summary">
+        <div>
+          ${badge}
+          <div class="bet-q">${q}</div>
+        </div>
+        <div class="bet-c">${entry}</div>
+        <div class="bet-c neutral">$${(b.betSize||0).toFixed(2)}</div>
+        <div class="bet-c ${pnlCls}">${pnlDisp}</div>
+        <div class="bet-chev${isOpen?' open':''}" id="chev-${i}">›</div>
+      </div>
+      <div class="bet-detail${isOpen?' open':''}" id="det-${i}">
+        <div class="bd-grid">
+          <div class="bd-item"><div class="bd-lbl">Status</div><div class="bd-val ${stCls}">${status.toUpperCase()}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Side</div><div class="bd-val"><span class="bet-side ${sideCls}">${b.side}</span></div></div>
+          <div class="bd-item"><div class="bd-lbl">Entry Price</div><div class="bd-val">${entry}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Win Payout</div><div class="bd-val">${payout}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Exit Price</div><div class="bd-val">${b.exitPrice!=null?(b.exitPrice*100).toFixed(0)+'¢':'—'}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Exit Reason</div><div class="bd-val">${b.exitReason||'—'}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Hold Time</div><div class="bd-val">${holdMs}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Placed</div><div class="bd-val">${b.placedAt?new Date(b.placedAt).toLocaleTimeString():'—'}</div></div>
+        </div>
+        <div class="bd-reasoning"><div class="bd-lbl">REASONING</div>${b.reasoning||'—'}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleBet(el, key, i) {
+  const det = document.getElementById('det-' + i);
+  const chev = document.getElementById('chev-' + i);
+  if (!det) return;
+  const open = det.classList.toggle('open');
+  if (chev) chev.classList.toggle('open', open);
+  if (open) openBets.add(key); else openBets.delete(key);
+}
+
+// ── UI Log ────────────────────────────────────────────────────
+function addLog(type, msg) {
+  const ts = new Date().toTimeString().slice(0, 8);
+  uiLogs.unshift({ ts, type, msg });
+  if (uiLogs.length > 100) uiLogs.pop();
+  const el = document.getElementById('con-log');
+  el.innerHTML = uiLogs.map(l =>
+    `<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`
+  ).join('');
+  document.getElementById('log-count').textContent = uiLogs.length;
+}
+
+// ── Signals (crypto) ──────────────────────────────────────────
+function sigBar(name, score, active) {
+  const c = active ? (score > 0.15 ? '#00ff9d' : score < -0.15 ? '#ff2d55' : '#ffd200') : '#1a4060';
+  const left = score >= 0 ? '50%' : ((score + 1) / 2 * 100) + '%';
+  const w = Math.abs(score) * 50;
+  return `<div class="sig-row"><div class="sig-n">${name}</div><div class="sig-bg"><div class="sig-mid"></div><div class="sig-fill" style="left:${left};width:${w}%;background:${c}"></div></div><div class="sig-val" style="color:${c}">${score >= 0 ? '+' : ''}${score.toFixed(2)}</div></div>`;
+}
+
+// ── Main refresh loop ─────────────────────────────────────────
+async function refresh() {
+  try {
+    const [rootR, betsR, sigR, mktsR, logR] = await Promise.allSettled([
+      fetch('/').then(r => r.json()),
+      fetch('/bets').then(r => r.json()),
+      fetch('/signals').then(r => r.json()),
+      fetch('/markets').then(r => r.json()),
+      fetch('/log').then(r => r.json()),
+    ]);
+
+    document.getElementById('last-upd').textContent = new Date().toTimeString().slice(0, 8);
+    document.getElementById('dot').className = 'dot dot-g';
+
+    // ── Root / stats ──
+    if (rootR.status === 'fulfilled') {
+      const root = rootR.value;
+      const s = root.stats || {};
+      const isDry = root.settings?.dryRun !== false;
+      window._bankroll = parseFloat(root.config?.bankroll || 70);
+      currentSettings = root.settings || currentSettings;
+
+      // Sync view if server-side mode changed
+      if (root.mode && root.mode !== currentMode) {
+        currentMode = root.mode;
+        applyViewUI(currentMode);
+      }
+
+      // Mode badge
+      document.getElementById('mode-badge').textContent = isDry ? '◎ DRY RUN' : '⬤ LIVE';
+      document.getElementById('mode-badge').className = 'badge ' + (isDry ? 'badge-dry' : 'badge-live');
+
+      // ── Dual always-on P/L bar ──
+      const sp = s.sports || {};
+      const cr = s.crypto || {};
+      const spTotal = parseFloat(sp.totalPnl || sp.pnl || 0);
+      const crTotal = parseFloat(cr.totalPnl || cr.pnl || 0);
+
+      const spEl = document.getElementById('dual-sports-pnl');
+      if (spEl) { spEl.textContent = (spTotal >= 0 ? '+' : '') + '$' + Math.abs(spTotal).toFixed(2); spEl.className = 'dual-val ' + (spTotal > 0 ? 'pos' : spTotal < 0 ? 'neg' : 'neutral'); }
+      document.getElementById('dual-sports-sub').textContent = (sp.activeBets || 0) + ' open';
+      document.getElementById('dual-sports-record').textContent = (sp.wins || 0) + 'W / ' + (sp.losses || 0) + 'L';
+
+      const crEl = document.getElementById('dual-crypto-pnl');
+      if (crEl) { crEl.textContent = (crTotal >= 0 ? '+' : '') + '$' + Math.abs(crTotal).toFixed(2); crEl.className = 'dual-val ' + (crTotal > 0 ? 'pos' : crTotal < 0 ? 'neg' : 'neutral'); }
+      document.getElementById('dual-crypto-sub').textContent = (cr.activeBets || 0) + ' open';
+      document.getElementById('dual-crypto-record').textContent = (cr.wins || 0) + 'W / ' + (cr.losses || 0) + 'L';
+
+      // Track per-mode P/L history → animate when changed
+      if (spTotal !== prevPnl.SPORTS) {
+        pnlHistory.SPORTS.push({ t: Date.now(), v: spTotal });
+        if (pnlHistory.SPORTS.length > 120) pnlHistory.SPORTS.shift();
+        prevPnl.SPORTS = spTotal;
+        if (currentMode === 'SPORTS') animateLine();
+      }
+      if (crTotal !== prevPnl.CRYPTO) {
+        pnlHistory.CRYPTO.push({ t: Date.now(), v: crTotal });
+        if (pnlHistory.CRYPTO.length > 120) pnlHistory.CRYPTO.shift();
+        prevPnl.CRYPTO = crTotal;
+        if (currentMode === 'CRYPTO') animateLine();
+      }
+
+      // ── Stat cards (scoped to current view) ──
+      const active = currentMode === 'SPORTS' ? sp : cr;
+      const pnl = parseFloat(active.pnl || 0);
+      const openPnl = parseFloat(active.openPnl || 0);
+      const totalPnl = parseFloat(active.totalPnl || 0);
+      const startBal = window._bankroll;
+
+      // Balance
+      const balEl = document.getElementById('s-balance');
+      if (balEl) {
+        const disp = isDry ? (s.dryBalance || startBal) : (s.liveBalance || startBal);
+        balEl.textContent = '$' + parseFloat(disp).toFixed(2);
+        balEl.className = 'stat-v ' + (totalPnl >= 0 ? 'pos' : 'neg');
+      }
+      const wagEl = document.getElementById('s-wag');
+      if (wagEl) wagEl.textContent = '$' + parseFloat(active.totalWagered || 0).toFixed(2) + ' wagered';
+
+      // Session P/L
+      const pnlEl = document.getElementById('s-pnl');
+      if (pnlEl) { pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2); pnlEl.className = 'stat-v ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neutral'); }
+      const pnlSub = document.getElementById('s-pnl-sub');
+      if (pnlSub) pnlSub.textContent = (pnl >= 0 ? '+' : '') + ((pnl / Math.max(1, startBal)) * 100).toFixed(1) + '% realized';
+
+      // Win rate
+      const wrEl = document.getElementById('s-wr');
+      if (wrEl) { wrEl.textContent = active.winRate || 'N/A'; wrEl.className = 'stat-v ' + (active.winRate && active.winRate !== 'N/A' ? (parseFloat(active.winRate) >= 50 ? 'pos' : 'neg') : 'neutral'); }
+      const wlEl = document.getElementById('s-wl');
+      if (wlEl) wlEl.textContent = (active.wins || 0) + 'W / ' + (active.losses || 0) + 'L';
+
+      // Active bets
+      const actEl = document.getElementById('s-active');
+      if (actEl) { actEl.textContent = active.activeBets || 0; actEl.className = 'stat-v ' + (active.activeBets > 0 ? 'pos' : 'neutral'); }
+      const totEl = document.getElementById('s-total');
+      if (totEl) totEl.textContent = (active.totalBets || 0) + ' total placed';
+
+      // Open P/L
+      const oplEl = document.getElementById('s-opl');
+      if (oplEl) { oplEl.textContent = (openPnl >= 0 ? '+' : '') + '$' + Math.abs(openPnl).toFixed(2); oplEl.className = 'stat-v ' + (openPnl > 0 ? 'pos' : openPnl < 0 ? 'neg' : 'neutral'); }
+
+      // Total P/L
+      const tplEl = document.getElementById('s-total-pnl');
+      if (tplEl) { tplEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2); tplEl.className = 'stat-v ' + (totalPnl > 0 ? 'pos' : totalPnl < 0 ? 'neg' : 'neutral'); }
+      const tplSub = document.getElementById('s-total-pnl-sub');
+      if (tplSub) tplSub.textContent = 'realized + ' + (openPnl >= 0 ? '+' : '') + '$' + Math.abs(openPnl).toFixed(2) + ' open';
+
+      // Bet history header
+      document.getElementById('bets-stats').textContent = (active.wins || 0) + 'W / ' + (active.losses || 0) + 'L';
+    }
+
+    // ── Bets ──
+    if (betsR.status === 'fulfilled') {
+      const bets = betsR.value || [];
+      document.getElementById('bets-count').textContent = bets.length + ' bets';
+      renderBets(bets);
+    }
+
+    // ── Markets ──
+    if (mktsR.status === 'fulfilled') {
+      const mkts = mktsR.value || [];
+      document.getElementById('mkt-count').textContent = mkts.length + ' markets';
+      const ml = document.getElementById('mkt-list');
+      if (!mkts.length) {
+        ml.innerHTML = '<div class="empty">NO MARKETS IN RANGE</div>';
+      } else {
+        ml.innerHTML = mkts.slice(0, 8).map(m => {
+          const d = m._decision || {};
+          const q = parseFloat(m._quality || 0);
+          const side = d.shouldBet ? d.side : '—';
+          const sideCls = side === 'YES' ? 's-yes' : side === 'NO' ? 's-no' : '';
+          const edge = d.edge ? ((d.edge * 100).toFixed(1) + '%') : '—';
+          const minLeft = m.endDateIso ? Math.round((new Date(m.endDateIso) - Date.now()) / 60000) : '?';
+          return `<div class="mkt-row">
+            <div style="font-size:10px;line-height:1.4;color:var(--text)">${(m.question || '').slice(0, 55)}</div>
+            <div class="mkt-pct neutral">${(q * 100).toFixed(0)}</div>
+            <div style="text-align:center"><span class="bet-side ${sideCls}">${side}</span></div>
+            <div class="mkt-edge ${d.shouldBet ? 'e' : ''}">${edge}</div>
+            <div class="mkt-min">${minLeft}m</div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    // ── Signals (crypto right panel) ──
+    if (sigR.status === 'fulfilled' && sigR.value && sigR.value.bias != null) {
+      const sig = sigR.value;
+      const bias = sig.bias || 0;
+      const price = sig.currentPrice || 0;
+      const chg = sig.stats?.priceChangePercent || 0;
+
+      if (document.getElementById('price-big')) {
+        document.getElementById('price-big').textContent = '$' + price.toLocaleString('en-US', { maximumFractionDigits: 0 });
+        const pc = document.getElementById('price-chg');
+        pc.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+        pc.style.color = chg >= 0 ? '#00ff9d' : '#ff2d55';
+        const bt = document.getElementById('bias-tag');
+        bt.textContent = bias > 0.15 ? '↑ BULLISH' : bias < -0.15 ? '↓ BEARISH' : '→ NEUTRAL';
+        bt.style.color = bias > 0.15 ? '#00ff9d' : bias < -0.15 ? '#ff2d55' : '#ffd200';
+        const pm = sig.stats || {};
+        const hi = document.getElementById('pm-high'); if (hi) hi.textContent = '$' + (pm.high || price).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        const lo = document.getElementById('pm-low'); if (lo) lo.textContent = '$' + (pm.low || price).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        const e9 = document.getElementById('pm-ema9'); if (e9) e9.textContent = '$' + (sig.ema9 || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        const e21 = document.getElementById('pm-ema21'); if (e21) e21.textContent = '$' + (sig.ema21 || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+      }
+
+      const strats = { RSI_EMA: 'tab-a', WALL: 'tab-b', BREAKOUT: 'tab-c' };
+      ['tab-a', 'tab-b', 'tab-c'].forEach(t => { const el = document.getElementById(t); if (el) el.className = 'strat-tab'; });
+      const tabId = strats[sig.activeStrategy];
+      if (tabId) { const el = document.getElementById(tabId); if (el) el.className = 'strat-tab active-' + tabId.split('-')[1]; }
+
+      const sg = document.getElementById('sig-grid');
+      if (sg) {
+        const A = sig.strategies?.A, B = sig.strategies?.B, C = sig.strategies?.C;
+        sg.innerHTML =
+          sigBar('RSI_EMA', A?.bias || 0, A?.name === sig.activeStrategy) +
+          sigBar('WALL', B?.bias || 0, B?.name === sig.activeStrategy) +
+          sigBar('BREAKOUT', C?.bias || 0, C?.name === sig.activeStrategy) +
+          sigBar('FINAL', bias, true);
+      }
+
+      const w = sig.walls || {};
+      const wbv = document.getElementById('wall-bias-val');
+      if (wbv) { wbv.textContent = (w.wallBias >= 0 ? 'BULL ' : 'BEAR ') + (Math.abs(w.wallBias || 0) * 100).toFixed(0) + '%'; wbv.style.color = w.wallBias > 0 ? '#00ff9d' : '#ff2d55'; }
+      const dep = w.depthRatio || 0;
+      const depEl = document.getElementById('depth-bar');
+      if (depEl) { depEl.style.width = Math.max(5, Math.min(95, 50 + dep * 50)) + '%'; depEl.style.background = dep > 0 ? '#00ff9d' : '#ff2d55'; }
+      const depPct = document.getElementById('depth-pct');
+      if (depPct) depPct.textContent = (dep >= 0 ? 'BULL ' : 'BEAR ') + (Math.abs(dep) * 100).toFixed(0) + '%';
+    }
+
+    // ── Log ──
+    if (logR.status === 'fulfilled') {
+      const logs = logR.value || [];
+      uiLogs = logs.slice(0, 60).map(l => ({
+        ts: (l.ts || '').slice(11, 19) || '—',
+        type: l.type,
+        msg: l.msg
+      }));
+      const el = document.getElementById('con-log');
+      el.innerHTML = uiLogs.map(l =>
+        `<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`
+      ).join('');
+      document.getElementById('log-count').textContent = uiLogs.length;
+    }
+
+  } catch (e) {
+    document.getElementById('dot').className = 'dot dot-r';
+    document.getElementById('status-txt').textContent = 'OFFLINE';
+    addLog('err', 'Fetch error: ' + e.message);
+  }
+}
+
+// Apply initial view
+setTimeout(() => applyViewUI(currentMode), 100);
+
+// Start polling
+setInterval(refresh, 3000);
+refresh();
 </script>
 </body>
 </html>
