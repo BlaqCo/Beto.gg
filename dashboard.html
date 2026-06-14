@@ -1131,6 +1131,7 @@ async function refresh(){
       document.getElementById('mode-badge').className='badge '+(isDry?'badge-dry':'badge-live');
 
       // P/L history — use real Polymarket portfolio open P/L when available
+      const sp=s.sports||{},cr=s.crypto||{};
       const spTotal=parseFloat(sp.totalPnl||sp.pnl||0);
       const crTotal=parseFloat(cr.totalPnl||cr.pnl||0);
       // If server sent real portfolio data, use it to anchor the sports open P/L
