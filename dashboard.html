@@ -7,189 +7,398 @@
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#020408;--surface:#050d14;--panel:#060f18;
-  --border:#0a2040;--border2:#0d3060;
-  --green:#00ff9d;--red:#ff2d55;--yellow:#ffd200;
-  --blue:#00b4ff;--cyan:#00e5ff;
-  --dim:#1a4060;--muted:#2a6090;--text:#a0c8e0;--bright:#d0eeff;
-  --glow:rgba(0,255,157,0.12);
+  --bg:#03060f;
+  --g:#00ff9d;--g2:#00cc7a;
+  --r:#ff2d55;--y:#ffd200;
+  --b:#00b4ff;--c:#00e5ff;--p:#a855f7;
+  --dim:#0d2035;--muted:#1e4060;--text:#7ab8d8;--bright:#c8e8f8;
+  --card:rgba(6,15,28,0.7);
+  --card-border:rgba(0,180,255,0.12);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;min-height:100vh;overflow-x:hidden;}
-body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.025) 2px,rgba(0,0,0,0.025) 4px);pointer-events:none;z-index:9998;}
-body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,100,180,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,100,180,0.03) 1px,transparent 1px);background-size:32px 32px;pointer-events:none;z-index:0;}
-.wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:14px;}
+html,body{height:100%;}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Share Tech Mono',monospace;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+
+/* ── Animated background ── */
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;}
+.wrap{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:14px 16px 40px;}
 
 /* ── Header ── */
-header{display:flex;align-items:center;justify-content:space-between;padding:10px 0 14px;border-bottom:1px solid var(--border2);margin-bottom:14px;flex-wrap:wrap;gap:8px;}
-.logo{display:flex;align-items:center;gap:12px;}
-.logo-hex::before{content:'⬡';font-size:38px;line-height:1;color:var(--green);text-shadow:0 0 20px var(--green),0 0 40px rgba(0,255,157,0.3);animation:hex 3s ease-in-out infinite;}
-@keyframes hex{0%,100%{text-shadow:0 0 20px var(--green),0 0 40px rgba(0,255,157,0.3);}50%{text-shadow:0 0 35px var(--green),0 0 70px rgba(0,255,157,0.5);}}
-.logo-text h1{font-family:'Orbitron';font-size:18px;font-weight:900;color:var(--bright);letter-spacing:4px;}
-.logo-text h1 span{color:var(--green);}
-.logo-text .sub{font-size:8px;letter-spacing:3px;color:var(--muted);margin-top:2px;}
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 0 16px;margin-bottom:16px;
+  border-bottom:1px solid rgba(0,180,255,0.15);
+  flex-wrap:wrap;gap:10px;
+}
+.logo{display:flex;align-items:center;gap:14px;}
+.logo-icon{
+  width:44px;height:44px;border-radius:12px;
+  background:linear-gradient(135deg,rgba(0,255,157,0.15),rgba(0,180,255,0.1));
+  border:1px solid rgba(0,255,157,0.3);
+  display:flex;align-items:center;justify-content:center;
+  font-size:22px;
+  box-shadow:0 0 20px rgba(0,255,157,0.15),inset 0 1px 0 rgba(255,255,255,0.05);
+  animation:icon-pulse 4s ease-in-out infinite;
+}
+@keyframes icon-pulse{0%,100%{box-shadow:0 0 20px rgba(0,255,157,0.15),inset 0 1px 0 rgba(255,255,255,0.05);}50%{box-shadow:0 0 35px rgba(0,255,157,0.3),inset 0 1px 0 rgba(255,255,255,0.05);}}
+.logo-text h1{font-family:'Orbitron';font-size:20px;font-weight:900;letter-spacing:5px;color:var(--bright);}
+.logo-text h1 em{color:var(--g);font-style:normal;}
+.logo-sub{font-size:8px;letter-spacing:3px;color:var(--muted);margin-top:3px;}
 .hdr-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.mode-switch{display:flex;gap:4px;background:rgba(0,0,0,0.3);border:1px solid var(--border2);border-radius:3px;padding:2px;}
-.mode-btn{padding:5px 12px;font-size:9px;letter-spacing:2px;background:transparent;border:none;color:var(--muted);cursor:pointer;transition:all 0.2s;text-transform:uppercase;border-radius:2px;}
-.mode-btn.active{background:rgba(0,255,157,0.15);color:var(--green);}
-.badge{padding:3px 10px;border-radius:2px;font-size:9px;letter-spacing:2px;font-weight:bold;text-transform:uppercase;}
-.badge-dry{background:rgba(255,210,0,0.08);color:var(--yellow);border:1px solid rgba(255,210,0,0.2);}
-.badge-live{background:rgba(0,255,157,0.08);color:var(--green);border:1px solid rgba(0,255,157,0.25);}
-.status-bar{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);}
-.dot{width:6px;height:6px;border-radius:50%;animation:blink 1.2s ease-in-out infinite;}
-.dot-g{background:var(--green);box-shadow:0 0 6px var(--green);}
-.dot-r{background:var(--red);box-shadow:0 0 6px var(--red);animation:none;}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
-.gear-btn{background:transparent;border:1px solid var(--border2);color:var(--muted);width:30px;height:30px;border-radius:4px;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
-.gear-btn:hover,.gear-btn.active{border-color:var(--green);color:var(--green);box-shadow:0 0 8px var(--glow);}
+.mode-switch{
+  display:flex;gap:3px;
+  background:rgba(0,0,0,0.4);
+  border:1px solid rgba(0,180,255,0.15);
+  border-radius:8px;padding:3px;
+}
+.mode-btn{
+  padding:5px 14px;font-size:9px;letter-spacing:2px;
+  background:transparent;border:none;color:var(--muted);
+  cursor:pointer;transition:all 0.25s;text-transform:uppercase;
+  border-radius:6px;font-family:'Share Tech Mono',monospace;
+}
+.mode-btn.active{
+  background:linear-gradient(135deg,rgba(0,255,157,0.2),rgba(0,180,255,0.1));
+  color:var(--g);
+  box-shadow:0 0 12px rgba(0,255,157,0.2);
+}
+.badge{
+  padding:4px 12px;border-radius:6px;
+  font-size:9px;letter-spacing:2px;font-weight:bold;text-transform:uppercase;
+  font-family:'Share Tech Mono',monospace;
+}
+.badge-dry{background:rgba(255,210,0,0.08);color:var(--y);border:1px solid rgba(255,210,0,0.25);}
+.badge-live{
+  background:linear-gradient(135deg,rgba(0,255,157,0.1),rgba(0,180,255,0.08));
+  color:var(--g);border:1px solid rgba(0,255,157,0.3);
+  animation:live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse{0%,100%{box-shadow:0 0 8px rgba(0,255,157,0.2);}50%{box-shadow:0 0 18px rgba(0,255,157,0.4);}}
+.status-dot{width:7px;height:7px;border-radius:50%;animation:blink 1.4s ease-in-out infinite;}
+.dot-g{background:var(--g);box-shadow:0 0 8px var(--g);}
+.dot-r{background:var(--r);box-shadow:0 0 8px var(--r);animation:none;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
+.gear-btn{
+  background:rgba(0,0,0,0.3);
+  border:1px solid rgba(0,180,255,0.15);
+  color:var(--muted);width:32px;height:32px;
+  border-radius:8px;font-size:15px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all 0.2s;
+}
+.gear-btn:hover,.gear-btn.active{
+  border-color:rgba(0,255,157,0.4);color:var(--g);
+  background:rgba(0,255,157,0.08);
+  box-shadow:0 0 12px rgba(0,255,157,0.15);
+}
 
-/* ── Dual P/L always-on bar ── */
-.dual-bar{display:grid;grid-template-columns:1fr 1px 1fr;gap:0;background:var(--surface);border:1px solid var(--border2);border-radius:4px;margin-bottom:12px;overflow:hidden;}
-.dual-seg{padding:10px 16px;display:flex;align-items:center;gap:14px;}
-.dual-divider{background:var(--border2);}
-.dual-label{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
-.dual-val{font-family:'Orbitron';font-size:18px;font-weight:700;}
+/* ── Glass card base ── */
+.card{
+  background:var(--card);
+  border:1px solid var(--card-border);
+  border-radius:14px;
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  overflow:hidden;
+  position:relative;
+}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(0,180,255,0.3),transparent);
+}
+
+/* ── Dual always-on P/L strip ── */
+.dual-strip{
+  display:grid;grid-template-columns:1fr 1px 1fr;
+  background:rgba(4,10,20,0.6);
+  border:1px solid rgba(0,180,255,0.12);
+  border-radius:12px;
+  margin-bottom:14px;
+  overflow:hidden;
+  backdrop-filter:blur(20px);
+}
+.dual-seg{padding:12px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.dual-seg:hover{background:rgba(0,180,255,0.03);transition:background 0.3s;}
+.dual-lbl{font-size:8px;letter-spacing:2.5px;color:var(--muted);text-transform:uppercase;margin-bottom:4px;}
+.dual-val{font-family:'Orbitron';font-size:20px;font-weight:700;}
 .dual-meta{font-size:9px;color:var(--muted);}
+.dual-record{
+  text-align:right;
+  font-family:'Orbitron';font-size:12px;
+  padding:4px 10px;border-radius:6px;
+  background:rgba(0,0,0,0.3);
+  border:1px solid rgba(255,255,255,0.05);
+}
+.divider-v{background:rgba(0,180,255,0.12);}
 
-/* ── Stat cards ── */
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
-.stat{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px 14px;position:relative;overflow:hidden;transition:border-color 0.3s;}
-.stat::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;}
-.g::after{background:linear-gradient(90deg,transparent,var(--green),transparent);}
-.b::after{background:linear-gradient(90deg,transparent,var(--blue),transparent);}
-.y::after{background:linear-gradient(90deg,transparent,var(--yellow),transparent);}
-.r::after{background:linear-gradient(90deg,transparent,var(--red),transparent);}
-.stat-l{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px;}
-.stat-v{font-family:'Orbitron';font-size:22px;font-weight:700;line-height:1;transition:color 0.4s;}
-.stat-s{font-size:9px;color:var(--muted);margin-top:4px;}
+/* ── Stat cards grid ── */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+.stat-card{
+  background:rgba(4,10,20,0.65);
+  border:1px solid rgba(0,180,255,0.1);
+  border-radius:14px;padding:16px;
+  position:relative;overflow:hidden;
+  backdrop-filter:blur(20px);
+  transition:border-color 0.3s,transform 0.2s;
+  cursor:default;
+}
+.stat-card:hover{transform:translateY(-2px);border-color:rgba(0,180,255,0.25);}
+.stat-card::after{
+  content:'';position:absolute;
+  top:0;left:0;right:0;height:2px;
+  border-radius:14px 14px 0 0;
+}
+.sc-g::after{background:linear-gradient(90deg,transparent,var(--g),transparent);}
+.sc-b::after{background:linear-gradient(90deg,transparent,var(--b),transparent);}
+.sc-y::after{background:linear-gradient(90deg,transparent,var(--y),transparent);}
+.sc-r::after{background:linear-gradient(90deg,transparent,var(--r),transparent);}
+.sc-p::after{background:linear-gradient(90deg,transparent,var(--p),transparent);}
+.sc-c::after{background:linear-gradient(90deg,transparent,var(--c),transparent);}
+/* Glow orb in corner */
+.stat-card .orb{
+  position:absolute;top:-20px;right:-20px;
+  width:80px;height:80px;border-radius:50%;
+  opacity:0.06;filter:blur(20px);
+}
+.sc-g .orb{background:var(--g);}
+.sc-b .orb{background:var(--b);}
+.sc-y .orb{background:var(--y);}
+.sc-r .orb{background:var(--r);}
+.sc-p .orb{background:var(--p);}
+.sc-c .orb{background:var(--c);}
+.stat-lbl{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:8px;}
+.stat-val{font-family:'Orbitron';font-size:24px;font-weight:700;line-height:1;transition:color 0.4s;}
+.stat-sub{font-size:9px;color:var(--muted);margin-top:5px;}
 
-/* ── Chart ── */
-.chart-panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;overflow:hidden;}
-.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:rgba(0,0,0,0.3);border-bottom:1px solid var(--border);}
-.ph-t{font-family:'Orbitron';font-size:9px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;}
-.ph-r{font-size:9px;color:var(--muted);}
-#chart-wrap{padding:8px 12px 12px;position:relative;}
-#chart{width:100%;height:180px;display:block;}
+/* ── P/L Chart ── */
+.chart-card{
+  background:rgba(3,8,18,0.75);
+  border:1px solid rgba(0,180,255,0.1);
+  border-radius:14px;margin-bottom:14px;
+  overflow:hidden;backdrop-filter:blur(20px);
+}
+.card-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 16px;
+  border-bottom:1px solid rgba(0,180,255,0.07);
+  background:rgba(0,0,0,0.2);
+}
+.card-title{font-family:'Orbitron';font-size:9px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;}
+.card-meta{font-size:9px;color:var(--muted);}
+#chart-wrap{padding:10px 14px 14px;}
+#chart{width:100%;height:190px;display:block;}
 
 /* ── Bet history ── */
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:12px;}
-.bet-hdr{display:grid;grid-template-columns:2fr 60px 50px 70px 22px;gap:6px;padding:6px 14px;font-size:8px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;border-bottom:1px solid var(--border);}
-.bet-row{border-bottom:1px solid rgba(10,32,64,0.6);cursor:pointer;transition:background 0.15s;}
-.bet-row:hover{background:rgba(0,100,200,0.06);}
+.bets-card{
+  background:rgba(4,10,20,0.65);
+  border:1px solid rgba(0,180,255,0.1);
+  border-radius:14px;margin-bottom:14px;
+  overflow:hidden;backdrop-filter:blur(20px);
+}
+.bet-hdr-row{
+  display:grid;grid-template-columns:2fr 58px 50px 72px 22px;gap:6px;
+  padding:7px 16px;
+  font-size:7px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;
+  border-bottom:1px solid rgba(0,180,255,0.07);
+  background:rgba(0,0,0,0.2);
+}
+.bet-row{
+  border-bottom:1px solid rgba(0,30,60,0.5);
+  cursor:pointer;
+  transition:background 0.15s;
+}
+.bet-row:hover{background:rgba(0,100,200,0.05);}
 .bet-row:last-child{border-bottom:none;}
-.bet-summary{display:grid;grid-template-columns:2fr 60px 50px 70px 22px;gap:6px;align-items:center;padding:9px 14px;}
-.bet-sport{font-size:8px;font-weight:bold;letter-spacing:1px;padding:2px 6px;border-radius:2px;display:inline-block;margin-bottom:3px;}
-.sp-MLB{background:rgba(0,180,255,0.12);color:#00b4ff;border:1px solid rgba(0,180,255,0.3);}
-.sp-NBA{background:rgba(255,102,0,0.12);color:#ff6600;border:1px solid rgba(255,102,0,0.3);}
-.sp-NFL{background:rgba(0,255,157,0.12);color:#00ff9d;border:1px solid rgba(0,255,157,0.3);}
-.sp-TENNIS,.sp-ATP,.sp-WTA{background:rgba(255,210,0,0.12);color:#ffd200;border:1px solid rgba(255,210,0,0.3);}
-.sp-MMA,.sp-UFC{background:rgba(255,45,85,0.12);color:#ff2d55;border:1px solid rgba(255,45,85,0.3);}
-.sp-NHL{background:rgba(0,229,255,0.12);color:#00e5ff;border:1px solid rgba(0,229,255,0.3);}
-.sp-SOCCER,.sp-MLS{background:rgba(0,255,157,0.1);color:#00cc7a;border:1px solid rgba(0,255,157,0.25);}
-.sp-ESPORTS,.sp-ESPORT{background:rgba(160,80,255,0.12);color:#a050ff;border:1px solid rgba(160,80,255,0.3);}
-.sp-SPORT,.sp-OTHER{background:rgba(42,96,144,0.3);color:var(--muted);border:1px solid var(--border2);}
-.bet-q{font-size:9px;color:var(--text);line-height:1.4;}
+.bet-summary{
+  display:grid;grid-template-columns:2fr 58px 50px 72px 22px;gap:6px;
+  align-items:center;padding:10px 16px;
+}
+/* Sport badges */
+.sport-badge{
+  font-size:7px;font-weight:bold;letter-spacing:1.5px;
+  padding:2px 7px;border-radius:4px;
+  display:inline-block;margin-bottom:4px;text-transform:uppercase;
+}
+.sb-MLB{background:rgba(0,180,255,0.15);color:#00b4ff;border:1px solid rgba(0,180,255,0.3);}
+.sb-NBA{background:rgba(255,102,0,0.15);color:#ff6600;border:1px solid rgba(255,102,0,0.3);}
+.sb-NFL{background:rgba(0,255,157,0.12);color:#00ff9d;border:1px solid rgba(0,255,157,0.3);}
+.sb-NHL{background:rgba(0,229,255,0.12);color:#00e5ff;border:1px solid rgba(0,229,255,0.3);}
+.sb-TENNIS{background:rgba(255,210,0,0.12);color:#ffd200;border:1px solid rgba(255,210,0,0.3);}
+.sb-MMA{background:rgba(255,45,85,0.12);color:#ff2d55;border:1px solid rgba(255,45,85,0.3);}
+.sb-SOCCER{background:rgba(0,200,100,0.12);color:#00cc64;border:1px solid rgba(0,200,100,0.3);}
+.sb-ESPORTS{background:rgba(168,85,247,0.15);color:#a855f7;border:1px solid rgba(168,85,247,0.3);}
+.sb-SPORT{background:rgba(30,64,96,0.4);color:var(--muted);border:1px solid rgba(0,180,255,0.1);}
+.bet-q{font-size:9px;color:var(--bright);line-height:1.4;}
 .bet-c{text-align:right;font-size:10px;}
-.bet-side{font-size:8px;font-weight:bold;letter-spacing:1px;padding:2px 5px;border-radius:2px;text-align:center;}
-.s-yes{background:rgba(0,255,157,0.1);color:var(--green);border:1px solid rgba(0,255,157,0.2);}
-.s-no{background:rgba(255,45,85,0.1);color:var(--red);border:1px solid rgba(255,45,85,0.2);}
-.bet-chev{text-align:center;color:var(--dim);font-size:10px;transition:transform 0.2s;}
-.bet-chev.open{transform:rotate(90deg);}
-.bet-detail{display:none;padding:10px 14px 14px;border-top:1px solid var(--border);background:rgba(0,0,0,0.25);}
+.side-pill{
+  font-size:7px;font-weight:bold;letter-spacing:1px;
+  padding:2px 6px;border-radius:4px;text-align:center;display:inline-block;
+}
+.s-yes{background:rgba(0,255,157,0.12);color:var(--g);border:1px solid rgba(0,255,157,0.25);}
+.s-no{background:rgba(255,45,85,0.12);color:var(--r);border:1px solid rgba(255,45,85,0.25);}
+.chevron{text-align:center;color:var(--muted);font-size:11px;transition:transform 0.2s;}
+.chevron.open{transform:rotate(90deg);}
+.bet-detail{
+  display:none;padding:12px 16px 14px;
+  border-top:1px solid rgba(0,30,60,0.5);
+  background:rgba(0,0,0,0.2);
+}
 .bet-detail.open{display:block;}
 .bd-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;}
-.bd-item{padding:7px 10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--border2);}
-.bd-lbl{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:3px;}
+.bd-item{
+  padding:8px 10px;
+  background:rgba(0,0,0,0.3);border-radius:8px;
+  border-left:2px solid rgba(0,180,255,0.2);
+}
+.bd-lbl{font-size:7px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:3px;}
 .bd-val{font-size:11px;color:var(--bright);font-weight:bold;}
-.bd-reasoning{padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px;border-left:2px solid var(--cyan);font-size:9px;color:var(--text);line-height:1.6;}
-.bd-reasoning .bd-lbl{color:var(--cyan);margin-bottom:4px;}
-.s-open{color:var(--yellow);}
-.s-won{color:var(--green);}
-.s-lost{color:var(--red);}
-.pos{color:var(--green);}
-.neg{color:var(--red);}
+.bd-reasoning{
+  padding:9px 12px;background:rgba(0,0,0,0.3);
+  border-radius:8px;border-left:2px solid rgba(0,229,255,0.3);
+  font-size:9px;color:var(--text);line-height:1.7;
+}
+.bd-reasoning .bd-lbl{color:var(--c);margin-bottom:5px;}
+.s-open{color:var(--y);}
+.s-won{color:var(--g);}
+.s-lost{color:var(--r);}
+.pos{color:var(--g);}
+.neg{color:var(--r);}
 .neutral{color:var(--bright);}
 
-/* ── Markets panel ── */
-.mkt-row{display:grid;grid-template-columns:1fr 48px 40px 44px 36px;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);transition:background 0.2s;font-size:10px;}
+/* ── Markets ── */
+.mkt-row{
+  display:grid;grid-template-columns:1fr 48px 44px 44px 36px;gap:8px;
+  align-items:center;padding:10px 16px;
+  border-bottom:1px solid rgba(0,30,60,0.4);
+  font-size:10px;transition:background 0.15s;
+}
+.mkt-row:hover{background:rgba(0,100,200,0.04);}
 .mkt-row:last-child{border-bottom:none;}
-.mkt-row:hover{background:rgba(0,100,200,0.05);}
-.mkt-pct{font-size:12px;font-weight:bold;text-align:center;font-family:'Orbitron';}
+.mkt-pct{font-family:'Orbitron';font-size:13px;font-weight:700;text-align:center;}
 .mkt-edge{font-size:9px;text-align:right;color:var(--muted);}
-.mkt-edge.e{color:var(--yellow);}
+.mkt-edge.e{color:var(--y);}
 .mkt-min{font-size:9px;color:var(--dim);text-align:right;}
 
-/* ── Crypto panels (hidden on SPORTS view) ── */
-.sig-row{display:flex;align-items:center;gap:8px;padding:0 14px 10px;}
-.sig-n{width:78px;font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;flex-shrink:0;}
-.sig-bg{flex:1;height:4px;background:var(--dim);border-radius:2px;position:relative;}
-.sig-mid{position:absolute;left:50%;top:-2px;width:1px;height:8px;background:var(--border2);}
-.sig-fill{position:absolute;height:100%;border-radius:2px;transition:all 0.8s ease;}
-.sig-val{width:40px;text-align:right;font-size:10px;font-weight:bold;}
-.strat-tab{padding:4px 12px;border-radius:2px;font-size:9px;letter-spacing:1.5px;font-weight:bold;border:1px solid var(--border2);color:var(--muted);cursor:default;}
-.strat-tab.active-a{border-color:var(--green);color:var(--green);background:rgba(0,255,157,0.07);}
-.strat-tab.active-b{border-color:var(--yellow);color:var(--yellow);background:rgba(255,210,0,0.07);}
-.strat-tab.active-c{border-color:var(--blue);color:var(--blue);background:rgba(0,180,255,0.07);}
-.price-big{text-align:center;padding:16px 14px 12px;border-bottom:1px solid var(--border);}
-.price-num{font-family:'Orbitron';font-size:32px;font-weight:900;color:var(--bright);letter-spacing:-1px;line-height:1;}
-.price-chg{font-size:13px;font-weight:bold;margin-top:4px;}
-.price-meta{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);}
-.pm{background:var(--panel);padding:8px 12px;text-align:center;}
-.pm-l{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;}
+/* ── Crypto right panel ── */
+.price-big{text-align:center;padding:18px 16px 14px;border-bottom:1px solid rgba(0,30,60,0.4);}
+.price-num{font-family:'Orbitron';font-size:30px;font-weight:900;color:var(--bright);line-height:1;}
+.price-chg{font-size:13px;font-weight:bold;margin-top:5px;}
+.price-meta{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(0,30,60,0.4);}
+.pm{background:rgba(3,8,18,0.8);padding:9px 12px;text-align:center;}
+.pm-l{font-size:7px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;}
 .pm-v{font-size:12px;font-weight:bold;margin-top:3px;color:var(--text);}
-.wall-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px;}
-.wall-item{text-align:center;}
-.wall-lbl{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
+.sig-row{display:flex;align-items:center;gap:8px;padding:8px 16px;}
+.sig-n{width:72px;font-size:8px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;flex-shrink:0;}
+.sig-bg{flex:1;height:3px;background:rgba(0,30,60,0.6);border-radius:2px;position:relative;}
+.sig-mid{position:absolute;left:50%;top:-3px;width:1px;height:9px;background:rgba(0,180,255,0.2);}
+.sig-fill{position:absolute;height:100%;border-radius:2px;transition:all 0.8s ease;}
+.sig-val{width:38px;text-align:right;font-size:10px;font-weight:bold;}
+.strat-pill{padding:4px 10px;border-radius:6px;font-size:8px;letter-spacing:1.5px;font-weight:bold;border:1px solid rgba(0,180,255,0.15);color:var(--muted);}
+.strat-pill.active-a{border-color:var(--g);color:var(--g);background:rgba(0,255,157,0.08);}
+.strat-pill.active-b{border-color:var(--y);color:var(--y);background:rgba(255,210,0,0.08);}
+.strat-pill.active-c{border-color:var(--b);color:var(--b);background:rgba(0,180,255,0.08);}
+.wall-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 16px;}
+.wall-lbl{font-size:7px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
 .wall-p{font-family:'Orbitron';font-size:13px;font-weight:700;margin-top:4px;}
 .wall-s{font-size:9px;color:var(--muted);margin-top:2px;}
-.main{display:grid;grid-template-columns:1fr 320px;gap:12px;margin-bottom:12px;}
+.depth-bar-wrap{padding:0 16px 14px;}
+.depth-track{height:5px;background:rgba(0,30,60,0.6);border-radius:3px;overflow:hidden;}
+.depth-fill{height:100%;border-radius:3px;transition:width 0.8s;}
 
 /* ── Console ── */
-.console{background:#020608;border:1px solid var(--border);border-radius:4px;margin-bottom:12px;}
-.con-body{padding:10px 12px;height:140px;overflow-y:auto;font-size:10px;line-height:1.7;}
+.console-card{
+  background:rgba(2,5,10,0.8);
+  border:1px solid rgba(0,180,255,0.08);
+  border-radius:14px;overflow:hidden;
+  backdrop-filter:blur(20px);
+  margin-bottom:14px;
+}
+.con-body{padding:10px 14px;height:130px;overflow-y:auto;font-size:10px;line-height:1.8;}
 .con-body::-webkit-scrollbar{width:3px;}
-.con-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+.con-body::-webkit-scrollbar-thumb{background:rgba(0,180,255,0.2);border-radius:2px;}
 .ll{display:flex;gap:8px;}
-.lt{color:var(--dim);flex-shrink:0;font-size:9px;}
-.lok{color:var(--green);}.lerr{color:var(--red);}.lwarn{color:var(--yellow);}.linfo{color:var(--muted);}
-.empty{text-align:center;padding:24px;color:var(--dim);font-size:10px;letter-spacing:1px;}
+.lt{color:rgba(0,180,255,0.3);flex-shrink:0;font-size:9px;}
+.lok{color:var(--g);}.lerr{color:var(--r);}.lwarn{color:var(--y);}.linfo{color:var(--muted);}
+
+/* ── Main layout ── */
+.main{display:grid;grid-template-columns:1fr 300px;gap:12px;margin-bottom:12px;}
+.empty{text-align:center;padding:28px;color:var(--muted);font-size:9px;letter-spacing:2px;}
 
 /* ── Settings overlay ── */
-.settings-overlay{display:none;position:fixed;inset:0;background:rgba(2,4,8,0.92);z-index:1000;overflow-y:auto;-webkit-overflow-scrolling:touch;backdrop-filter:blur(4px);padding:16px 0 40px;}
+.settings-overlay{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,0.85);
+  z-index:1000;overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  backdrop-filter:blur(12px);
+  padding:20px 0 40px;
+}
 .settings-overlay.open{display:block;}
-.settings-panel{background:var(--panel);border:1px solid var(--border2);border-radius:6px;width:calc(100% - 32px);max-width:460px;margin:0 auto;box-shadow:0 0 60px rgba(0,180,255,0.15);overflow:hidden;}
-.sp-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border2);background:rgba(0,0,0,0.5);position:sticky;top:0;z-index:10;border-radius:6px 6px 0 0;}
-.sp-title{font-family:'Orbitron';font-size:11px;letter-spacing:3px;color:var(--cyan);}
-.sp-close{background:rgba(255,45,85,0.15);border:1px solid rgba(255,45,85,0.5);color:#ff2d55;font-size:14px;cursor:pointer;width:32px;height:32px;border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.sp-close:hover{background:rgba(255,45,85,0.3);}
-.sp-body{padding:0 18px 24px;}
-.sp-section{margin-top:16px;}
-.sp-section-label{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
-.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(10,32,64,0.5);}
+.settings-panel{
+  background:rgba(4,10,22,0.95);
+  border:1px solid rgba(0,180,255,0.15);
+  border-radius:16px;
+  width:calc(100% - 32px);max-width:440px;
+  margin:0 auto;
+  box-shadow:0 0 60px rgba(0,180,255,0.1);
+  overflow:hidden;
+}
+.sp-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;
+  border-bottom:1px solid rgba(0,180,255,0.1);
+  background:rgba(0,0,0,0.4);
+  position:sticky;top:0;z-index:10;border-radius:16px 16px 0 0;
+}
+.sp-title{font-family:'Orbitron';font-size:11px;letter-spacing:3px;color:var(--c);}
+.sp-close{
+  background:rgba(255,45,85,0.12);border:1px solid rgba(255,45,85,0.4);
+  color:var(--r);font-size:14px;cursor:pointer;
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+}
+.sp-close:hover{background:rgba(255,45,85,0.25);}
+.sp-body{padding:0 20px 24px;}
+.sp-section{margin-top:18px;}
+.sp-lbl{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid rgba(0,180,255,0.07);}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(0,30,60,0.4);}
 .toggle-row:last-child{border-bottom:none;}
 .toggle-info{flex:1;}
 .toggle-name{font-size:11px;color:var(--bright);font-weight:bold;}
 .toggle-desc{font-size:9px;color:var(--muted);margin-top:3px;line-height:1.4;}
-.toggle-wrap{position:relative;width:44px;height:24px;flex-shrink:0;margin-left:12px;}
+.toggle-wrap{position:relative;width:44px;height:24px;flex-shrink:0;margin-left:14px;}
 .toggle-wrap input{opacity:0;width:0;height:0;position:absolute;}
-.toggle-track{position:absolute;inset:0;background:var(--dim);border-radius:12px;cursor:pointer;transition:all 0.3s;}
-.toggle-track::after{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;background:var(--muted);border-radius:50%;transition:all 0.3s;}
-.toggle-wrap input:checked~.toggle-track{background:rgba(0,255,157,0.25);border:1px solid var(--green);}
-.toggle-wrap input:checked~.toggle-track::after{transform:translateX(20px);background:var(--green);box-shadow:0 0 8px var(--green);}
+.toggle-track{position:absolute;inset:0;background:rgba(0,30,60,0.6);border-radius:12px;cursor:pointer;transition:all 0.3s;border:1px solid rgba(0,180,255,0.1);}
+.toggle-track::after{content:'';position:absolute;left:3px;top:3px;width:16px;height:16px;background:var(--muted);border-radius:50%;transition:all 0.3s;}
+.toggle-wrap input:checked~.toggle-track{background:rgba(0,255,157,0.2);border-color:var(--g);}
+.toggle-wrap input:checked~.toggle-track::after{transform:translateX(20px);background:var(--g);box-shadow:0 0 8px var(--g);}
+.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.cfg-item{padding:9px 12px;background:rgba(0,0,0,0.3);border-radius:8px;border:1px solid rgba(0,180,255,0.07);}
+.cfg-lbl{font-size:7px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:4px;}
 
-@media(max-width:700px){.main{grid-template-columns:1fr;}.stats{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:680px){.main{grid-template-columns:1fr;}.stats{grid-template-columns:repeat(2,1fr);}}
 </style>
 </head>
 <body>
+
+<!-- Animated particle canvas -->
+<canvas id="bg-canvas"></canvas>
+
 <div class="wrap">
 
 <!-- Header -->
 <header>
   <div class="logo">
-    <div class="logo-hex"></div>
+    <div class="logo-icon">🎯</div>
     <div class="logo-text">
-      <h1>POLY<span>BETTOR</span></h1>
-      <div class="sub">Automated Prediction Market Engine</div>
+      <h1>POLY<em>BETTOR</em></h1>
+      <div class="logo-sub">Automated Prediction Market Engine · v4</div>
     </div>
   </div>
   <div class="hdr-right">
@@ -197,9 +406,9 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
       <button class="mode-btn active" data-mode="SPORTS" onclick="switchMode('SPORTS')">⚽ Sports</button>
       <button class="mode-btn" data-mode="CRYPTO" onclick="switchMode('CRYPTO')">₿ Crypto</button>
     </div>
-    <div class="status-bar">
-      <div class="dot dot-g" id="dot"></div>
-      <span id="status-txt">ONLINE</span>
+    <div style="display:flex;align-items:center;gap:6px;font-size:9px;color:var(--muted)">
+      <div class="status-dot dot-g" id="dot"></div>
+      <span id="status-txt">LIVE</span>
     </div>
     <span class="badge badge-dry" id="mode-badge">DRY RUN</span>
     <span style="font-size:9px;color:var(--muted)" id="last-upd">--:--:--</span>
@@ -207,98 +416,87 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
   </div>
 </header>
 
-<!-- Always-on dual P/L bar -->
-<div class="dual-bar">
+<!-- Always-on Dual P/L strip -->
+<div class="dual-strip">
   <div class="dual-seg">
     <div>
-      <div class="dual-label">⚽ Sports P/L</div>
+      <div class="dual-lbl">⚽ Sports P/L</div>
       <div class="dual-val neutral" id="dual-sports-pnl">$0.00</div>
+      <div class="dual-meta" id="dual-sports-sub">0 open positions</div>
     </div>
-    <div>
-      <div class="dual-label">Open</div>
-      <div id="dual-sports-sub" style="font-size:10px;color:var(--muted)">0 bets</div>
-    </div>
-    <div style="margin-left:auto;text-align:right">
-      <div class="dual-label">Record</div>
-      <div id="dual-sports-record" style="font-size:10px;color:var(--muted)">0W / 0L</div>
-    </div>
+    <div class="dual-record neutral" id="dual-sports-record">0W · 0L</div>
   </div>
-  <div class="dual-divider"></div>
+  <div class="divider-v"></div>
   <div class="dual-seg">
     <div>
-      <div class="dual-label">₿ Crypto P/L</div>
+      <div class="dual-lbl">₿ Crypto P/L</div>
       <div class="dual-val neutral" id="dual-crypto-pnl">$0.00</div>
+      <div class="dual-meta" id="dual-crypto-sub">0 open positions</div>
     </div>
-    <div>
-      <div class="dual-label">Open</div>
-      <div id="dual-crypto-sub" style="font-size:10px;color:var(--muted)">0 bets</div>
-    </div>
-    <div style="margin-left:auto;text-align:right">
-      <div class="dual-label">Record</div>
-      <div id="dual-crypto-record" style="font-size:10px;color:var(--muted)">0W / 0L</div>
-    </div>
+    <div class="dual-record neutral" id="dual-crypto-record">0W · 0L</div>
   </div>
 </div>
 
 <!-- Stat cards -->
 <div class="stats">
-  <div class="stat g">
-    <div class="stat-l">Balance</div>
-    <div class="stat-v neutral" id="s-balance">$—</div>
-    <div class="stat-s" id="s-wag">$0 wagered</div>
+  <div class="stat-card sc-g"><div class="orb"></div>
+    <div class="stat-lbl">Account Balance</div>
+    <div class="stat-val neutral" id="s-balance">$—</div>
+    <div class="stat-sub" id="s-wag">$0.00 wagered</div>
   </div>
-  <div class="stat g" style="border-left:2px solid var(--green)">
-    <div class="stat-l">Session P/L</div>
-    <div class="stat-v neutral" id="s-pnl">$0.00</div>
-    <div class="stat-s" id="s-pnl-sub">+0.0% return</div>
+  <div class="stat-card sc-b"><div class="orb"></div>
+    <div class="stat-lbl">Total P/L</div>
+    <div class="stat-val neutral" id="s-total-pnl">$0.00</div>
+    <div class="stat-sub" id="s-total-pnl-sub">realized + open</div>
   </div>
-  <div class="stat b">
-    <div class="stat-l">Win Rate</div>
-    <div class="stat-v neutral" id="s-wr">N/A</div>
-    <div class="stat-s" id="s-wl">0W / 0L</div>
+  <div class="stat-card sc-y"><div class="orb"></div>
+    <div class="stat-lbl">Win Rate</div>
+    <div class="stat-val neutral" id="s-wr">N/A</div>
+    <div class="stat-sub" id="s-wl">0W / 0L</div>
   </div>
-  <div class="stat y">
-    <div class="stat-l">Active Bets</div>
-    <div class="stat-v neutral" id="s-active">0</div>
-    <div class="stat-s" id="s-total">0 total placed</div>
+  <div class="stat-card sc-p"><div class="orb"></div>
+    <div class="stat-lbl">Active Positions</div>
+    <div class="stat-val neutral" id="s-active">0</div>
+    <div class="stat-sub" id="s-total">0 placed total</div>
   </div>
-  <div class="stat b">
-    <div class="stat-l">Open P/L</div>
-    <div class="stat-v neutral" id="s-opl">$0.00</div>
-    <div class="stat-s" id="s-opl-sub">live mark-to-market</div>
+  <div class="stat-card sc-c"><div class="orb"></div>
+    <div class="stat-lbl">Open P/L</div>
+    <div class="stat-val neutral" id="s-opl">$0.00</div>
+    <div class="stat-sub">live mark-to-market</div>
   </div>
-  <div class="stat y">
-    <div class="stat-l">Total P/L</div>
-    <div class="stat-v neutral" id="s-total-pnl">$0.00</div>
-    <div class="stat-s" id="s-total-pnl-sub">realized + open</div>
+  <div class="stat-card sc-r"><div class="orb"></div>
+    <div class="stat-lbl">Realized P/L</div>
+    <div class="stat-val neutral" id="s-pnl">$0.00</div>
+    <div class="stat-sub" id="s-pnl-sub">closed bets only</div>
   </div>
 </div>
 
-<!-- Animated P/L Chart -->
-<div class="chart-panel">
-  <div class="ph">
-    <span class="ph-t" id="chart-title">⚽ Sports P/L Curve</span>
-    <span class="ph-r" id="chart-info" style="color:var(--muted);font-size:9px">live session</span>
+<!-- P/L Chart -->
+<div class="chart-card">
+  <div class="card-header">
+    <span class="card-title" id="chart-title">⚽ Sports P/L Curve</span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:6px;height:6px;border-radius:50%;background:var(--g);box-shadow:0 0 8px var(--g);animation:blink 1s infinite"></div>
+      <span class="card-meta" id="chart-info">live session</span>
+    </div>
   </div>
-  <div id="chart-wrap">
-    <canvas id="chart"></canvas>
-  </div>
+  <div id="chart-wrap"><canvas id="chart"></canvas></div>
 </div>
 
 <!-- Main grid -->
 <div class="main">
-  <div>
+  <div style="display:flex;flex-direction:column;gap:12px">
 
-    <!-- Bet History -->
-    <div class="panel">
-      <div class="ph">
-        <span class="ph-t">Bet History</span>
-        <div style="display:flex;align-items:center;gap:10px">
+    <!-- Bet history -->
+    <div class="bets-card">
+      <div class="card-header">
+        <span class="card-title">Bet History</span>
+        <div style="display:flex;align-items:center;gap:12px">
           <span style="font-size:9px;color:var(--muted)" id="bets-stats">0W / 0L</span>
-          <span class="ph-r" id="bets-count">0 bets</span>
+          <span class="card-meta" id="bets-count">0 bets</span>
         </div>
       </div>
-      <div class="bet-hdr">
+      <div class="bet-hdr-row">
         <span>Market</span>
         <span style="text-align:right">Entry</span>
         <span style="text-align:right">Size</span>
@@ -309,19 +507,35 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
     </div>
 
     <!-- Markets -->
-    <div class="panel">
-      <div class="ph"><span class="ph-t" id="mkt-header">Available Markets</span><span class="ph-r" id="mkt-count">0</span></div>
-      <div id="mkt-list"><div class="empty">SCANNING...</div></div>
+    <div class="bets-card">
+      <div class="card-header">
+        <span class="card-title" id="mkt-header">⚽ Available Markets</span>
+        <span class="card-meta" id="mkt-count">0 markets</span>
+      </div>
+      <div id="mkt-list"><div class="empty">SCANNING MARKETS...</div></div>
+    </div>
+
+    <!-- Console -->
+    <div class="console-card">
+      <div class="card-header">
+        <span class="card-title">System Log</span>
+        <span class="card-meta" id="log-count">0 entries</span>
+      </div>
+      <div class="con-body" id="con-log">
+        <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">POLYBETTOR INITIALIZING...</span></div>
+      </div>
     </div>
 
   </div>
 
-  <!-- Right col — crypto only, hidden on SPORTS view -->
+  <!-- Right col: crypto panels, hidden on sports view -->
   <div id="crypto-right-col" style="display:none;flex-direction:column;gap:12px">
 
-    <!-- BTC Price -->
-    <div class="panel">
-      <div class="ph"><span class="ph-t">BTC / USD</span><span id="bias-tag" style="font-size:9px;letter-spacing:2px;font-weight:bold;color:var(--muted)">NEUTRAL</span></div>
+    <div class="bets-card">
+      <div class="card-header">
+        <span class="card-title">BTC / USD</span>
+        <span id="bias-tag" style="font-size:9px;letter-spacing:2px;font-weight:bold;color:var(--muted)">NEUTRAL</span>
+      </div>
       <div class="price-big">
         <div class="price-num" id="price-big">$—</div>
         <div class="price-chg" id="price-chg">—</div>
@@ -334,62 +548,72 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
       </div>
     </div>
 
-    <!-- Signals -->
-    <div class="panel">
-      <div class="ph" style="gap:6px">
+    <div class="bets-card">
+      <div class="card-header" style="gap:6px;flex-wrap:wrap">
         <div style="display:flex;gap:6px">
-          <div class="strat-tab" id="tab-a">TREND</div>
-          <div class="strat-tab" id="tab-b">WALL</div>
-          <div class="strat-tab" id="tab-c">BREAK</div>
+          <div class="strat-pill" id="tab-a">TREND</div>
+          <div class="strat-pill" id="tab-b">WALL</div>
+          <div class="strat-pill" id="tab-c">BREAK</div>
         </div>
-        <span style="font-size:9px;color:var(--cyan)">AUTO</span>
+        <span style="font-size:9px;color:var(--c)">AUTO</span>
       </div>
-      <div style="padding-top:12px" id="sig-grid"><div class="empty" style="padding:16px">LOADING...</div></div>
+      <div style="padding:6px 0" id="sig-grid"><div class="empty">LOADING...</div></div>
     </div>
 
-    <!-- Walls -->
-    <div class="panel">
-      <div class="ph"><span class="ph-t">Order Book</span><span class="ph-r" id="wall-bias-val">—</span></div>
+    <div class="bets-card">
+      <div class="card-header">
+        <span class="card-title">Order Book Depth</span>
+        <span class="card-meta" id="wall-bias-val">—</span>
+      </div>
       <div class="wall-grid">
-        <div class="wall-item"><div class="wall-lbl">Bull Wall</div><div class="wall-p pos" id="w-bull-p">—</div><div class="wall-s" id="w-bull-s">—</div></div>
-        <div class="wall-item"><div class="wall-lbl">Bear Wall</div><div class="wall-p neg" id="w-bear-p">—</div><div class="wall-s" id="w-bear-s">—</div></div>
+        <div><div class="wall-lbl">Bull Wall</div><div class="wall-p pos" id="w-bull-p">—</div><div class="wall-s" id="w-bull-s">—</div></div>
+        <div><div class="wall-lbl">Bear Wall</div><div class="wall-p neg" id="w-bear-p">—</div><div class="wall-s" id="w-bear-s">—</div></div>
       </div>
-      <div style="padding:0 14px 12px">
-        <div style="font-size:9px;color:var(--muted);margin-bottom:4px;letter-spacing:1px">BID / ASK DEPTH</div>
-        <div style="height:6px;background:var(--dim);border-radius:3px;overflow:hidden">
-          <div id="depth-bar" style="height:100%;background:var(--green);border-radius:3px;transition:width 0.8s;width:50%"></div>
+      <div class="depth-bar-wrap">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:8px;color:var(--muted)"><span>ASKS</span><span id="depth-pct">50%</span><span>BIDS</span></div>
+        <div class="depth-track">
+          <div class="depth-fill" id="depth-bar" style="width:50%;background:var(--g)"></div>
         </div>
-        <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:8px;color:var(--muted)"><span>ASKS</span><span id="depth-pct">50%</span><span>BIDS</span></div>
       </div>
     </div>
 
-  </div>
-</div>
-
-<!-- Console log -->
-<div class="console">
-  <div class="ph"><span class="ph-t">System Log</span><span class="ph-r" id="log-count">0</span></div>
-  <div class="con-body" id="con-log">
-    <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">POLYBETTOR INITIALIZING...</span></div>
   </div>
 </div>
 
 </div><!-- end wrap -->
 
-<!-- Settings Overlay -->
+<!-- Footer -->
+<div style="position:relative;z-index:1;text-align:center;padding:20px 0 30px;border-top:1px solid rgba(0,180,255,0.08);margin-top:8px;">
+  <a href="https://x.com/0xblaq?s=11" target="_blank" rel="noopener" style="
+    display:inline-flex;align-items:center;gap:8px;
+    text-decoration:none;
+    color:var(--muted);
+    font-size:9px;letter-spacing:3px;text-transform:uppercase;
+    padding:8px 18px;border-radius:8px;
+    border:1px solid rgba(0,180,255,0.1);
+    background:rgba(0,0,0,0.3);
+    transition:all 0.3s;
+  " onmouseover="this.style.color='var(--g)';this.style.borderColor='rgba(0,255,157,0.3)';this.style.boxShadow='0 0 16px rgba(0,255,157,0.1)'"
+     onmouseout="this.style.color='var(--muted)';this.style.borderColor='rgba(0,180,255,0.1)';this.style.boxShadow='none'">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+    Built by 0xblaq
+  </a>
+</div>
+
+<!-- Settings overlay -->
 <div class="settings-overlay" id="settings-overlay" onclick="closeOnOutside(event)">
   <div class="settings-panel">
     <div class="sp-header">
-      <span class="sp-title">⚙ SETTINGS</span>
+      <span class="sp-title">⚙ SYSTEM SETTINGS</span>
       <button class="sp-close" onclick="closeSettings()">✕</button>
     </div>
     <div class="sp-body">
       <div class="sp-section">
-        <div class="sp-section-label">Bot Control</div>
+        <div class="sp-lbl">Bot Control</div>
         <div class="toggle-row">
           <div class="toggle-info">
             <div class="toggle-name" id="dry-label">🧪 Dry Run Mode</div>
-            <div class="toggle-desc" id="dry-desc">ON = simulate only, no real orders. <strong style="color:var(--red)">Turning OFF places real bets immediately.</strong></div>
+            <div class="toggle-desc" id="dry-desc">Simulate only — no real orders placed. <strong style="color:var(--r)">Turn OFF to go LIVE.</strong></div>
           </div>
           <label class="toggle-wrap">
             <input type="checkbox" id="tog-dry" onchange="confirmDryToggle(this)">
@@ -398,12 +622,14 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
         </div>
       </div>
       <div class="sp-section">
-        <div class="sp-section-label">Live Values</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:10px">
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">BANKROLL</div><div style="color:var(--cyan);font-weight:bold;font-size:13px" id="cfg-bank">—</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">BET SIZE</div><div style="color:var(--green);font-weight:bold;font-size:13px">$10 flat</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">MAX CONCURRENT</div><div style="color:var(--yellow);font-weight:bold;font-size:13px">6</div></div>
-          <div style="padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:3px"><div style="font-size:8px;letter-spacing:1px;color:var(--muted);margin-bottom:3px">ENTRY RANGE</div><div style="color:var(--blue);font-weight:bold;font-size:13px">60-70¢</div></div>
+        <div class="sp-lbl">Active Config</div>
+        <div class="cfg-grid">
+          <div class="cfg-item"><div class="cfg-lbl">Bankroll</div><div style="color:var(--c);font-family:'Orbitron';font-size:14px;font-weight:700" id="cfg-bank">—</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Bet Size</div><div style="color:var(--g);font-family:'Orbitron';font-size:14px;font-weight:700">$15 flat</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Max Concurrent</div><div style="color:var(--y);font-family:'Orbitron';font-size:14px;font-weight:700">10</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Entry Range</div><div style="color:var(--b);font-family:'Orbitron';font-size:14px;font-weight:700">60–70¢</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Strategy</div><div style="color:var(--p);font-family:'Orbitron';font-size:12px;font-weight:700">FAVORITE</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Exit</div><div style="color:var(--text);font-family:'Orbitron';font-size:11px;font-weight:700">HOLD TO CLOSE</div></div>
         </div>
       </div>
     </div>
@@ -413,594 +639,480 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
 <script>
 'use strict';
 
-// ── State ─────────────────────────────────────────────────────
-let currentMode = 'SPORTS';
-let currentSettings = { dryRun: true };
-let pnlHistory = { SPORTS: [], CRYPTO: [] };
-let prevPnl = { SPORTS: null, CRYPTO: null };
-let openBets = new Set();
-let uiLogs = [];
+// ── Particle background ───────────────────────────────────────
+(function(){
+  const c=document.getElementById('bg-canvas');
+  const x=c.getContext('2d');
+  let W,H,particles=[];
+  function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight;}
+  resize();window.addEventListener('resize',resize);
+  function mkParticle(){
+    return{
+      x:Math.random()*W,y:Math.random()*H,
+      vx:(Math.random()-0.5)*0.3,vy:(Math.random()-0.5)*0.3,
+      r:Math.random()*1.5+0.3,
+      alpha:Math.random()*0.4+0.05,
+      color:Math.random()>0.6?'0,255,157':Math.random()>0.5?'0,180,255':'168,85,247'
+    };
+  }
+  for(let i=0;i<80;i++)particles.push(mkParticle());
+  function draw(){
+    x.clearRect(0,0,W,H);
+    // Draw connections
+    for(let i=0;i<particles.length;i++){
+      for(let j=i+1;j<particles.length;j++){
+        const p=particles[i],q=particles[j];
+        const d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<120){
+          x.beginPath();
+          x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);
+          x.strokeStyle=`rgba(0,100,180,${0.06*(1-d/120)})`;
+          x.lineWidth=0.5;x.stroke();
+        }
+      }
+    }
+    // Draw particles
+    particles.forEach(p=>{
+      x.beginPath();
+      x.arc(p.x,p.y,p.r,0,Math.PI*2);
+      x.fillStyle=`rgba(${p.color},${p.alpha})`;
+      x.fill();
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<0||p.x>W)p.vx*=-1;
+      if(p.y<0||p.y>H)p.vy*=-1;
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
 
-// ── Canvas / chart ────────────────────────────────────────────
-const canvas = document.getElementById('chart');
-const ctx = canvas.getContext('2d');
+// ── App state ─────────────────────────────────────────────────
+let currentMode='SPORTS';
+let currentSettings={dryRun:true};
+let pnlHistory={SPORTS:[],CRYPTO:[]};
+let prevPnl={SPORTS:null,CRYPTO:null};
+let openBets=new Set();
+let uiLogs=[];
 
-// Animated line draw state
-let animFrame = null;
-let animProgress = 1; // 0→1 animation
-let pendingPoints = null;
+// ── P/L Canvas ────────────────────────────────────────────────
+const chartCanvas=document.getElementById('chart');
+const cx=chartCanvas.getContext('2d');
+let animFrame=null;
 
-function resizeCanvas() {
-  const wrap = document.getElementById('chart-wrap');
-  canvas.width = wrap.offsetWidth * devicePixelRatio;
-  canvas.height = 180 * devicePixelRatio;
-  canvas.style.width = wrap.offsetWidth + 'px';
-  canvas.style.height = '180px';
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-  drawChart(1);
+function resizeChart(){
+  const wrap=document.getElementById('chart-wrap');
+  const dpr=window.devicePixelRatio||1;
+  const w=wrap.offsetWidth;
+  chartCanvas.width=w*dpr;
+  chartCanvas.height=190*dpr;
+  chartCanvas.style.width=w+'px';
+  chartCanvas.style.height='190px';
+  cx.scale(dpr,dpr);
+  renderChart(1);
 }
 
-function drawChart(progress) {
-  const W = canvas.offsetWidth / devicePixelRatio;
-  const H = 180;
-  ctx.clearRect(0, 0, W, H);
-
-  const hist = pnlHistory[currentMode] || [];
-  if (hist.length < 2) {
-    ctx.fillStyle = '#1a4060';
-    ctx.font = '10px Share Tech Mono';
-    ctx.textAlign = 'center';
-    ctx.fillText('▶ P/L CHART POPULATES AFTER FIRST BETS', W/2, H/2);
+function renderChart(progress){
+  const W=chartCanvas.offsetWidth/(window.devicePixelRatio||1);
+  const H=190;
+  cx.clearRect(0,0,W,H);
+  const hist=pnlHistory[currentMode]||[];
+  if(hist.length<2){
+    cx.fillStyle='rgba(0,100,180,0.3)';
+    cx.font='10px Share Tech Mono';
+    cx.textAlign='center';
+    cx.fillText('▶  P/L CHART POPULATES AFTER FIRST BETS',W/2,H/2);
     return;
   }
+  const vals=hist.map(p=>p.v);
+  const minV=Math.min(...vals,-0.5),maxV=Math.max(...vals,0.5);
+  const range=maxV-minV||1;
+  const pad={t:22,b:32,l:56,r:18};
+  const toX=i=>pad.l+(i/(hist.length-1))*(W-pad.l-pad.r);
+  const toY=v=>pad.t+(1-(v-minV)/range)*(H-pad.t-pad.b);
+  const lastV=vals[vals.length-1];
+  const col=lastV>=0?'0,255,157':'255,45,85';
+  const colHex=lastV>=0?'#00ff9d':'#ff2d55';
 
-  const vals = hist.map(p => p.v);
-  const minV = Math.min(...vals, -0.5);
-  const maxV = Math.max(...vals, 0.5);
-  const range = maxV - minV || 1;
-  const pad = { t: 20, b: 30, l: 54, r: 16 };
-  const toX = i => pad.l + (i / (hist.length - 1)) * (W - pad.l - pad.r);
-  const toY = v => pad.t + (1 - (v - minV) / range) * (H - pad.t - pad.b);
+  // Grid
+  cx.strokeStyle='rgba(0,60,120,0.4)';cx.lineWidth=1;cx.setLineDash([2,6]);
+  for(let i=0;i<=4;i++){const y=pad.t+(i/4)*(H-pad.t-pad.b);cx.beginPath();cx.moveTo(pad.l,y);cx.lineTo(W-pad.r,y);cx.stroke();}
+  cx.strokeStyle='rgba(0,100,180,0.3)';cx.setLineDash([6,4]);
+  cx.beginPath();cx.moveTo(pad.l,toY(0));cx.lineTo(W-pad.r,toY(0));cx.stroke();
+  cx.setLineDash([]);
 
-  // Grid lines
-  ctx.strokeStyle = '#0a2040';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2, 4]);
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + (i / 4) * (H - pad.t - pad.b);
-    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+  const drawCount=Math.max(2,Math.ceil(hist.length*(progress||1)));
+  const slice=hist.slice(0,drawCount);
+  const sv=slice.map(p=>p.v);
+
+  // Gradient fill
+  cx.save();
+  const gfill=cx.createLinearGradient(0,pad.t,0,H-pad.b);
+  gfill.addColorStop(0,`rgba(${col},0.15)`);
+  gfill.addColorStop(1,`rgba(${col},0)`);
+  cx.beginPath();
+  cx.moveTo(toX(0),toY(sv[0]));
+  for(let i=1;i<slice.length;i++){
+    const x0=toX(i-1),y0=toY(sv[i-1]),x1=toX(i),y1=toY(sv[i]);
+    cx.bezierCurveTo((x0+x1)/2,y0,(x0+x1)/2,y1,x1,y1);
   }
+  cx.lineTo(toX(slice.length-1),H-pad.b);
+  cx.lineTo(toX(0),H-pad.b);
+  cx.closePath();
+  cx.fillStyle=gfill;cx.fill();
+  cx.restore();
 
-  // Zero line
-  ctx.strokeStyle = '#0d3060';
-  ctx.setLineDash([4, 4]);
-  const zY = toY(0);
-  ctx.beginPath(); ctx.moveTo(pad.l, zY); ctx.lineTo(W - pad.r, zY); ctx.stroke();
-  ctx.setLineDash([]);
-
-  const lastV = vals[vals.length - 1];
-  const lc = lastV >= 0 ? '#00ff9d' : '#ff2d55';
-
-  // Determine draw count based on animation progress
-  const drawCount = Math.max(2, Math.ceil(hist.length * (progress || 1)));
-  const slice = hist.slice(0, drawCount);
-  const sliceVals = slice.map(p => p.v);
-
-  // Glow effect — draw line 3x with decreasing opacity/width
-  [[3, 0.15], [1.8, 0.25], [1.2, 1]].forEach(([lw, alpha]) => {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.moveTo(toX(0), toY(sliceVals[0]));
-    for (let i = 1; i < slice.length; i++) {
-      // Smooth bezier for animated feel
-      const x0 = toX(i - 1), y0 = toY(sliceVals[i - 1]);
-      const x1 = toX(i), y1 = toY(sliceVals[i]);
-      const cpx = (x0 + x1) / 2;
-      ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
+  // Glow layers
+  [[4,0.08],[2.5,0.2],[1.5,1]].forEach(([lw,alpha])=>{
+    cx.save();cx.globalAlpha=alpha;
+    cx.beginPath();
+    cx.moveTo(toX(0),toY(sv[0]));
+    for(let i=1;i<slice.length;i++){
+      const x0=toX(i-1),y0=toY(sv[i-1]),x1=toX(i),y1=toY(sv[i]);
+      cx.bezierCurveTo((x0+x1)/2,y0,(x0+x1)/2,y1,x1,y1);
     }
-    ctx.strokeStyle = lc;
-    ctx.lineWidth = lw;
-    ctx.stroke();
-    ctx.restore();
+    cx.strokeStyle=colHex;cx.lineWidth=lw;cx.stroke();
+    cx.restore();
   });
 
-  // Fill area under line
-  ctx.save();
-  ctx.globalAlpha = 0.08;
-  ctx.beginPath();
-  ctx.moveTo(toX(0), toY(sliceVals[0]));
-  for (let i = 1; i < slice.length; i++) {
-    const x0 = toX(i - 1), y0 = toY(sliceVals[i - 1]);
-    const x1 = toX(i), y1 = toY(sliceVals[i]);
-    const cpx = (x0 + x1) / 2;
-    ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
-  }
-  ctx.lineTo(toX(slice.length - 1), H - pad.b);
-  ctx.lineTo(toX(0), H - pad.b);
-  ctx.closePath();
-  const g = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
-  g.addColorStop(0, lc);
-  g.addColorStop(1, 'transparent');
-  ctx.fillStyle = g;
-  ctx.fill();
-  ctx.restore();
-
-  // Animated scanning dot at latest point
-  if (progress >= 1) {
-    const lx = toX(slice.length - 1), ly = toY(sliceVals[slice.length - 1]);
-    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 300);
-    ctx.beginPath();
-    ctx.arc(lx, ly, 3 + pulse * 2, 0, Math.PI * 2);
-    ctx.fillStyle = lc;
-    ctx.globalAlpha = 0.3 + 0.4 * pulse;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.beginPath();
-    ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-    ctx.fillStyle = lc;
-    ctx.fill();
+  // Pulsing live dot
+  if(progress>=1){
+    const lx=toX(slice.length-1),ly=toY(sv[sv.length-1]);
+    const pulse=0.5+0.5*Math.sin(Date.now()/280);
+    cx.save();
+    cx.globalAlpha=0.15+0.15*pulse;
+    cx.beginPath();cx.arc(lx,ly,10+pulse*5,0,Math.PI*2);
+    cx.fillStyle=colHex;cx.fill();
+    cx.globalAlpha=0.3+0.3*pulse;
+    cx.beginPath();cx.arc(lx,ly,5+pulse*2,0,Math.PI*2);
+    cx.fill();
+    cx.globalAlpha=1;
+    cx.beginPath();cx.arc(lx,ly,3,0,Math.PI*2);
+    cx.fillStyle=colHex;cx.fill();
+    cx.restore();
   }
 
-  // Y-axis labels
-  ctx.fillStyle = '#2a6090';
-  ctx.font = '9px Share Tech Mono';
-  ctx.textAlign = 'right';
-  ctx.globalAlpha = 1;
-  [minV, 0, maxV].forEach(v => {
-    ctx.fillText('$' + v.toFixed(2), pad.l - 4, toY(v) + 3);
-  });
+  // Y labels
+  cx.fillStyle='rgba(0,120,180,0.6)';cx.font='9px Share Tech Mono';cx.textAlign='right';cx.globalAlpha=1;
+  [minV,0,maxV].forEach(v=>cx.fillText('$'+v.toFixed(2),pad.l-4,toY(v)+3));
 }
 
-// Pulsing dot animation loop
-function startPulse() {
-  function pulse() {
-    drawChart(1);
-    requestAnimationFrame(pulse);
+// Animate line draw
+function animateLine(){
+  if(animFrame)cancelAnimationFrame(animFrame);
+  let prog=0;const start=performance.now();const dur=700;
+  function step(now){
+    prog=Math.min(1,(now-start)/dur);
+    const t=1-Math.pow(1-prog,3);
+    renderChart(t);
+    if(prog<1)animFrame=requestAnimationFrame(step);else animFrame=null;
   }
-  requestAnimationFrame(pulse);
+  animFrame=requestAnimationFrame(step);
 }
 
-// Animated line draw when new data arrives
-function animateLine() {
-  if (animFrame) cancelAnimationFrame(animFrame);
-  animProgress = 0;
-  const start = performance.now();
-  const dur = 600;
-  function step(now) {
-    animProgress = Math.min(1, (now - start) / dur);
-    // Ease out cubic
-    const t = 1 - Math.pow(1 - animProgress, 3);
-    drawChart(t);
-    if (animProgress < 1) animFrame = requestAnimationFrame(step);
-    else animFrame = null;
-  }
-  animFrame = requestAnimationFrame(step);
-}
-
-window.addEventListener('resize', () => setTimeout(resizeCanvas, 50));
-setTimeout(() => { resizeCanvas(); startPulse(); }, 200);
+// Continuous pulse loop
+function pulseLoop(){requestAnimationFrame(()=>{if(!animFrame)renderChart(1);pulseLoop();});}
+window.addEventListener('resize',()=>setTimeout(resizeChart,60));
+setTimeout(()=>{resizeChart();pulseLoop();},200);
 
 // ── View toggling ─────────────────────────────────────────────
-function applyViewUI(mode) {
-  const isSports = mode === 'SPORTS';
-  const cryptoRight = document.getElementById('crypto-right-col');
-  const mainGrid = document.querySelector('.main');
-  const chartTitle = document.getElementById('chart-title');
-  const mktHeader = document.getElementById('mkt-header');
-
-  if (cryptoRight) cryptoRight.style.display = isSports ? 'none' : 'flex';
-  if (mainGrid) mainGrid.style.gridTemplateColumns = isSports ? '1fr' : '1fr 320px';
-  if (chartTitle) chartTitle.textContent = isSports ? '⚽ Sports P/L Curve' : '₿ Crypto P/L Curve';
-  if (mktHeader) mktHeader.textContent = isSports ? '⚽ Available Sports Markets' : '₿ Crypto Markets';
-
-  document.querySelectorAll('.mode-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === mode);
-  });
-
+function applyViewUI(mode){
+  const isSports=mode==='SPORTS';
+  const cr=document.getElementById('crypto-right-col');
+  const main=document.querySelector('.main');
+  const chartTitle=document.getElementById('chart-title');
+  const mktHdr=document.getElementById('mkt-header');
+  if(cr)cr.style.display=isSports?'none':'flex';
+  if(main)main.style.gridTemplateColumns=isSports?'1fr':'1fr 300px';
+  if(chartTitle)chartTitle.textContent=isSports?'⚽ Sports P/L Curve':'₿ Crypto P/L Curve';
+  if(mktHdr)mktHdr.textContent=isSports?'⚽ Available Markets':'₿ Crypto Markets';
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
   animateLine();
 }
 
-// ── Mode switch (with warning) ────────────────────────────────
-async function switchMode(mode) {
-  if (mode === currentMode) return;
-  const label = mode === 'SPORTS' ? '⚽ Sports' : '₿ Crypto';
-  const ok = window.confirm(
-    'Switch dashboard view to ' + label + '?\n\n' +
-    '⚠️ Both Sports and Crypto bots keep running in the background\n' +
-    'regardless of which board you view.\n\n' +
-    'This only changes what you see — it does NOT stop any trading.'
+// ── Mode switch ───────────────────────────────────────────────
+async function switchMode(mode){
+  if(mode===currentMode)return;
+  const label=mode==='SPORTS'?'⚽ Sports':'₿ Crypto';
+  const ok=window.confirm(
+    'Switch dashboard to '+label+'?\n\n'+
+    '⚠️  Both Sports and Crypto bots keep running\n'+
+    'in the background. This only changes your view.'
   );
-  if (!ok) return;
-  try {
-    const res = await fetch('/api/mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode })
-    });
-    const data = await res.json();
-    currentMode = data.mode;
-    applyViewUI(currentMode);
-    addLog('ok', 'View → ' + label + ' (both bots running)');
-  } catch (e) {
-    addLog('err', 'View switch failed: ' + e.message);
-  }
+  if(!ok)return;
+  try{
+    const res=await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    const d=await res.json();
+    currentMode=d.mode;applyViewUI(currentMode);
+    addLog('ok','View → '+label);
+  }catch(e){addLog('err','Switch failed: '+e.message);}
 }
 
 // ── Settings ──────────────────────────────────────────────────
-function openSettings() {
+function openSettings(){
   document.getElementById('settings-overlay').classList.add('open');
   document.getElementById('gear-btn').classList.add('active');
-  document.getElementById('tog-dry').checked = currentSettings.dryRun !== false;
-  updateDryLabel(currentSettings.dryRun !== false);
-  const cfgBank = document.getElementById('cfg-bank');
-  if (cfgBank) cfgBank.textContent = '$' + (window._bankroll || '—');
+  document.getElementById('tog-dry').checked=currentSettings.dryRun!==false;
+  updateDryLabel(currentSettings.dryRun!==false);
+  const b=document.getElementById('cfg-bank');
+  if(b)b.textContent='$'+(window._bankroll||'—');
 }
-function closeSettings() {
+function closeSettings(){
   document.getElementById('settings-overlay').classList.remove('open');
   document.getElementById('gear-btn').classList.remove('active');
 }
-function closeOnOutside(e) { if (e.target === document.getElementById('settings-overlay')) closeSettings(); }
-
-function updateDryLabel(isDry) {
-  const lbl = document.getElementById('dry-label');
-  const dsc = document.getElementById('dry-desc');
-  if (isDry) {
-    lbl.textContent = '🧪 Dry Run Mode';
-    lbl.style.color = 'var(--yellow)';
-    dsc.innerHTML = 'ON = simulate only. <strong style="color:var(--red)">Turn OFF to go LIVE with real money.</strong>';
-  } else {
-    lbl.textContent = '🔴 LIVE MODE — REAL MONEY';
-    lbl.style.color = 'var(--red)';
-    dsc.innerHTML = 'LIVE mode active. Real orders are being placed on Polymarket.';
+function closeOnOutside(e){if(e.target===document.getElementById('settings-overlay'))closeSettings();}
+function updateDryLabel(isDry){
+  const l=document.getElementById('dry-label'),d=document.getElementById('dry-desc');
+  if(isDry){l.textContent='🧪 Dry Run Mode';l.style.color='';}
+  else{l.textContent='🔴 LIVE MODE';l.style.color='var(--r)';}
+}
+function confirmDryToggle(cb){
+  if(!cb.checked){
+    const ok=window.confirm('⚠️ GO LIVE?\n\nReal USDC will be wagered on Polymarket immediately.\nAre you absolutely sure?');
+    if(!ok){cb.checked=true;return;}
   }
+  fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dryRun:cb.checked})})
+    .then(r=>r.json()).then(d=>{if(d.ok){currentSettings=d.settings;updateDryLabel(cb.checked);}});
 }
 
-function confirmDryToggle(checkbox) {
-  if (!checkbox.checked) {
-    const ok = window.confirm('⚠️ SWITCHING TO LIVE MODE\n\nReal USDC will be wagered on Polymarket.\nOrders execute immediately on the next scan.\n\nAre you sure?');
-    if (!ok) { checkbox.checked = true; return; }
-  }
-  fetch('/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dryRun: checkbox.checked })
-  }).then(r => r.json()).then(d => {
-    if (d.ok) { currentSettings = d.settings; updateDryLabel(checkbox.checked); }
+// ── Sport badge ───────────────────────────────────────────────
+function sportBadge(coin,question){
+  const t=((coin||'')+' '+(question||'')).toUpperCase();
+  let lbl='SPORT',cls='SPORT';
+  if(/\bMLB\b|BASEBALL/.test(t)){lbl='MLB';cls='MLB';}
+  else if(/\bNBA\b|BASKETBALL/.test(t)){lbl='NBA';cls='NBA';}
+  else if(/\bNFL\b|FOOTBALL/.test(t)){lbl='NFL';cls='NFL';}
+  else if(/\bNHL\b|HOCKEY/.test(t)){lbl='NHL';cls='NHL';}
+  else if(/TENNIS|ATP|WTA|GRAND.?SLAM/.test(t)){lbl='TENNIS';cls='TENNIS';}
+  else if(/MMA|UFC|FIGHT/.test(t)){lbl='MMA';cls='MMA';}
+  else if(/SOCCER|MLS|EPL|LIGA/.test(t)){lbl='SOCCER';cls='SOCCER';}
+  else if(/ESPORT|GAMING|LEAGUE.OF/.test(t)){lbl='ESPORTS';cls='ESPORTS';}
+  else if(coin&&coin.length<=8){lbl=coin;}
+  return `<span class="sport-badge sb-${cls}">${lbl}</span>`;
+}
+
+// ── Bets renderer ─────────────────────────────────────────────
+function renderBets(bets){
+  const bl=document.getElementById('bets-list');
+  if(!bets.length){bl.innerHTML='<div class="empty">NO BETS YET</div>';return;}
+  const sorted=[...bets].sort((a,b)=>{
+    const ao=!a.status||a.status==='open',bo=!b.status||b.status==='open';
+    if(ao!==bo)return ao?-1:1;
+    return new Date(b.placedAt||0)-new Date(a.placedAt||0);
   });
-}
-
-// ── Sport badge HTML ──────────────────────────────────────────
-function sportBadge(entryCoin, question) {
-  const text = ((entryCoin || '') + ' ' + (question || '')).toUpperCase();
-  let label = entryCoin || 'SPORT';
-  let cls = 'sp-SPORT';
-  if (/\bmlb\b|baseball/.test(text))               { label = 'MLB';     cls = 'sp-MLB'; }
-  else if (/\bnba\b|basketball/.test(text))         { label = 'NBA';     cls = 'sp-NBA'; }
-  else if (/\bnfl\b|football/.test(text))           { label = 'NFL';     cls = 'sp-NFL'; }
-  else if (/\bnhl\b|hockey/.test(text))             { label = 'NHL';     cls = 'sp-NHL'; }
-  else if (/tennis|atp|wta|grand\s*slam/.test(text)){ label = 'TENNIS'; cls = 'sp-TENNIS'; }
-  else if (/mma|ufc|fight/.test(text))              { label = 'MMA';     cls = 'sp-MMA'; }
-  else if (/soccer|mls|epl|liga/.test(text))        { label = 'SOCCER'; cls = 'sp-SOCCER'; }
-  else if (/esport|gaming|league\s*of/.test(text))  { label = 'ESPORTS'; cls = 'sp-ESPORTS'; }
-  else if (entryCoin && entryCoin.length <= 8)      { label = entryCoin; }
-  return `<span class="bet-sport ${cls}">${label}</span>`;
-}
-
-// ── Bet row renderer ──────────────────────────────────────────
-function renderBets(bets) {
-  const bl = document.getElementById('bets-list');
-  if (!bets.length) { bl.innerHTML = '<div class="empty">NO BETS YET</div>'; return; }
-
-  // Sort: open first, then most recent closed
-  const sorted = [...bets].sort((a, b) => {
-    const ao = !a.status || a.status === 'open';
-    const bo = !b.status || b.status === 'open';
-    if (ao !== bo) return ao ? -1 : 1;
-    return new Date(b.placedAt || 0) - new Date(a.placedAt || 0);
-  });
-
-  bl.innerHTML = sorted.slice(0, 50).map((b, i) => {
-    const key = String(b.orderId || b.marketConditionId || (b.marketQuestion + '|' + b.placedAt)).replace(/"/g, '&quot;');
-    const isOpen = openBets.has(key);
-    const status = b.status || 'open';
-    const stCls = status === 'won' ? 's-won' : status === 'lost' ? 's-lost' : 's-open';
-
-    let pnlDisp, pnlCls;
-    if (b.pnl != null) {
-      pnlDisp = (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(2);
-      pnlCls = b.pnl > 0 ? 'pos' : b.pnl < 0 ? 'neg' : 'neutral';
-    } else {
-      pnlDisp = 'open';
-      pnlCls = 'neutral';
-    }
-
-    const entry = b.entryPrice != null ? (b.entryPrice * 100).toFixed(0) + '¢' : '—';
-    const q = (b.marketQuestion || '').replace(/^\[.*?\]\s*/,'').slice(0, 50);
-    const badge = sportBadge(b.entryCoin, b.marketQuestion);
-    const sideCls = b.side === 'YES' ? 's-yes' : 's-no';
-
-    // Expandable detail
-    const holdMs = b.placedAt && b.closedAt
-      ? Math.round((new Date(b.closedAt) - new Date(b.placedAt)) / 60000) + 'm'
-      : status === 'open' ? 'holding' : '—';
-    const payout = b.entryPrice && b.betSize ? '$' + (b.betSize / b.entryPrice).toFixed(2) : '—';
-
-    return `<div class="bet-row" data-key="${key}" onclick="toggleBet(this,'${key}',${i})">
+  bl.innerHTML=sorted.slice(0,60).map((b,i)=>{
+    const key=String(b.orderId||b.marketConditionId||(b.marketQuestion+'|'+b.placedAt)).replace(/"/g,'&quot;');
+    const isOpen=openBets.has(key);
+    const status=b.status||'open';
+    const stCls=status==='won'?'s-won':status==='lost'?'s-lost':'s-open';
+    let pnlDisp,pnlCls;
+    if(b.pnl!=null){pnlDisp=(b.pnl>=0?'+$':'-$')+Math.abs(b.pnl).toFixed(2);pnlCls=b.pnl>0?'pos':b.pnl<0?'neg':'neutral';}
+    else{pnlDisp='open';pnlCls='s-open';}
+    const entry=b.entryPrice!=null?(b.entryPrice*100).toFixed(0)+'¢':'—';
+    const q=(b.marketQuestion||'').replace(/^\[.*?\]\s*/,'').slice(0,52);
+    const badge=sportBadge(b.entryCoin,b.marketQuestion);
+    const sideCls=b.side==='YES'?'s-yes':'s-no';
+    const holdMin=b.placedAt&&b.closedAt?Math.round((new Date(b.closedAt)-new Date(b.placedAt))/60000)+'m':status==='open'?'holding':'—';
+    const payout=b.entryPrice&&b.betSize?'$'+(b.betSize/b.entryPrice).toFixed(2):'—';
+    const placed=b.placedAt?new Date(b.placedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'—';
+    return `<div class="bet-row" onclick="toggleBet('${key}',${i})">
       <div class="bet-summary">
-        <div>
-          ${badge}
-          <div class="bet-q">${q}</div>
-        </div>
-        <div class="bet-c">${entry}</div>
-        <div class="bet-c neutral">$${(b.betSize||0).toFixed(2)}</div>
+        <div>${badge}<div class="bet-q">${q}</div></div>
+        <div class="bet-c" style="color:var(--text)">${entry}</div>
+        <div class="bet-c neutral">$${(b.betSize||0).toFixed(0)}</div>
         <div class="bet-c ${pnlCls}">${pnlDisp}</div>
-        <div class="bet-chev${isOpen?' open':''}" id="chev-${i}">›</div>
+        <div class="chevron${isOpen?' open':''}" id="chev-${i}">›</div>
       </div>
       <div class="bet-detail${isOpen?' open':''}" id="det-${i}">
         <div class="bd-grid">
           <div class="bd-item"><div class="bd-lbl">Status</div><div class="bd-val ${stCls}">${status.toUpperCase()}</div></div>
-          <div class="bd-item"><div class="bd-lbl">Side</div><div class="bd-val"><span class="bet-side ${sideCls}">${b.side}</span></div></div>
+          <div class="bd-item"><div class="bd-lbl">Side</div><div class="bd-val"><span class="side-pill ${sideCls}">${b.side}</span></div></div>
           <div class="bd-item"><div class="bd-lbl">Entry Price</div><div class="bd-val">${entry}</div></div>
           <div class="bd-item"><div class="bd-lbl">Win Payout</div><div class="bd-val">${payout}</div></div>
           <div class="bd-item"><div class="bd-lbl">Exit Price</div><div class="bd-val">${b.exitPrice!=null?(b.exitPrice*100).toFixed(0)+'¢':'—'}</div></div>
-          <div class="bd-item"><div class="bd-lbl">Exit Reason</div><div class="bd-val">${b.exitReason||'—'}</div></div>
-          <div class="bd-item"><div class="bd-lbl">Hold Time</div><div class="bd-val">${holdMs}</div></div>
-          <div class="bd-item"><div class="bd-lbl">Placed</div><div class="bd-val">${b.placedAt?new Date(b.placedAt).toLocaleTimeString():'—'}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Exit Reason</div><div class="bd-val">${b.exitReason||'holding'}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Hold Time</div><div class="bd-val">${holdMin}</div></div>
+          <div class="bd-item"><div class="bd-lbl">Placed At</div><div class="bd-val">${placed}</div></div>
         </div>
-        <div class="bd-reasoning"><div class="bd-lbl">REASONING</div>${b.reasoning||'—'}</div>
+        <div class="bd-reasoning"><div class="bd-lbl">Signal / Reasoning</div>${b.reasoning||'—'}</div>
       </div>
     </div>`;
   }).join('');
 }
-
-function toggleBet(el, key, i) {
-  const det = document.getElementById('det-' + i);
-  const chev = document.getElementById('chev-' + i);
-  if (!det) return;
-  const open = det.classList.toggle('open');
-  if (chev) chev.classList.toggle('open', open);
-  if (open) openBets.add(key); else openBets.delete(key);
+function toggleBet(key,i){
+  const det=document.getElementById('det-'+i);
+  const chev=document.getElementById('chev-'+i);
+  if(!det)return;
+  const open=det.classList.toggle('open');
+  if(chev)chev.classList.toggle('open',open);
+  if(open)openBets.add(key);else openBets.delete(key);
 }
 
-// ── UI Log ────────────────────────────────────────────────────
-function addLog(type, msg) {
-  const ts = new Date().toTimeString().slice(0, 8);
-  uiLogs.unshift({ ts, type, msg });
-  if (uiLogs.length > 100) uiLogs.pop();
-  const el = document.getElementById('con-log');
-  el.innerHTML = uiLogs.map(l =>
-    `<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`
-  ).join('');
-  document.getElementById('log-count').textContent = uiLogs.length;
+// ── Log ───────────────────────────────────────────────────────
+function addLog(type,msg){
+  const ts=new Date().toTimeString().slice(0,8);
+  uiLogs.unshift({ts,type,msg});
+  if(uiLogs.length>100)uiLogs.pop();
+  const el=document.getElementById('con-log');
+  el.innerHTML=uiLogs.map(l=>`<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`).join('');
+  document.getElementById('log-count').textContent=uiLogs.length+' entries';
 }
 
-// ── Signals (crypto) ──────────────────────────────────────────
-function sigBar(name, score, active) {
-  const c = active ? (score > 0.15 ? '#00ff9d' : score < -0.15 ? '#ff2d55' : '#ffd200') : '#1a4060';
-  const left = score >= 0 ? '50%' : ((score + 1) / 2 * 100) + '%';
-  const w = Math.abs(score) * 50;
-  return `<div class="sig-row"><div class="sig-n">${name}</div><div class="sig-bg"><div class="sig-mid"></div><div class="sig-fill" style="left:${left};width:${w}%;background:${c}"></div></div><div class="sig-val" style="color:${c}">${score >= 0 ? '+' : ''}${score.toFixed(2)}</div></div>`;
+// ── Signal bars (crypto) ──────────────────────────────────────
+function sigBar(name,score,active){
+  const c=active?(score>0.15?'#00ff9d':score<-0.15?'#ff2d55':'#ffd200'):'rgba(0,60,120,0.6)';
+  const left=score>=0?'50%':((score+1)/2*100)+'%';
+  const w=Math.abs(score)*50;
+  return `<div class="sig-row"><div class="sig-n">${name}</div><div class="sig-bg"><div class="sig-mid"></div><div class="sig-fill" style="left:${left};width:${w}%;background:${c}"></div></div><div class="sig-val" style="color:${c}">${score>=0?'+':''}${score.toFixed(2)}</div></div>`;
 }
 
-// ── Main refresh loop ─────────────────────────────────────────
-async function refresh() {
-  try {
-    const [rootR, betsR, sigR, mktsR, logR] = await Promise.allSettled([
-      fetch('/').then(r => r.json()),
-      fetch('/bets').then(r => r.json()),
-      fetch('/signals').then(r => r.json()),
-      fetch('/markets').then(r => r.json()),
-      fetch('/log').then(r => r.json()),
+// ── Main refresh ──────────────────────────────────────────────
+async function refresh(){
+  try{
+    const [rootR,betsR,sigR,mktsR,logR]=await Promise.allSettled([
+      fetch('/').then(r=>r.json()),
+      fetch('/bets').then(r=>r.json()),
+      fetch('/signals').then(r=>r.json()),
+      fetch('/markets').then(r=>r.json()),
+      fetch('/log').then(r=>r.json()),
     ]);
 
-    document.getElementById('last-upd').textContent = new Date().toTimeString().slice(0, 8);
-    document.getElementById('dot').className = 'dot dot-g';
+    document.getElementById('last-upd').textContent=new Date().toTimeString().slice(0,8);
+    document.getElementById('dot').className='status-dot dot-g';
 
-    // ── Root / stats ──
-    if (rootR.status === 'fulfilled') {
-      const root = rootR.value;
-      const s = root.stats || {};
-      const isDry = root.settings?.dryRun !== false;
-      window._bankroll = parseFloat(root.config?.bankroll || 70);
-      currentSettings = root.settings || currentSettings;
+    if(rootR.status==='fulfilled'){
+      const root=rootR.value;const s=root.stats||{};
+      const isDry=root.settings?.dryRun!==false;
+      window._bankroll=parseFloat(root.config?.bankroll||70);
+      currentSettings=root.settings||currentSettings;
 
-      // Sync view if server-side mode changed
-      if (root.mode && root.mode !== currentMode) {
-        currentMode = root.mode;
-        applyViewUI(currentMode);
-      }
+      if(root.mode&&root.mode!==currentMode){currentMode=root.mode;applyViewUI(currentMode);}
 
-      // Mode badge
-      document.getElementById('mode-badge').textContent = isDry ? '◎ DRY RUN' : '⬤ LIVE';
-      document.getElementById('mode-badge').className = 'badge ' + (isDry ? 'badge-dry' : 'badge-live');
+      document.getElementById('mode-badge').textContent=isDry?'◎ DRY RUN':'⬤ LIVE';
+      document.getElementById('mode-badge').className='badge '+(isDry?'badge-dry':'badge-live');
 
-      // ── Dual always-on P/L bar ──
-      const sp = s.sports || {};
-      const cr = s.crypto || {};
-      const spTotal = parseFloat(sp.totalPnl || sp.pnl || 0);
-      const crTotal = parseFloat(cr.totalPnl || cr.pnl || 0);
+      // Dual strip
+      const sp=s.sports||{},cr=s.crypto||{};
+      const spTotal=parseFloat(sp.totalPnl||sp.pnl||0);
+      const crTotal=parseFloat(cr.totalPnl||cr.pnl||0);
 
-      const spEl = document.getElementById('dual-sports-pnl');
-      if (spEl) { spEl.textContent = (spTotal >= 0 ? '+' : '') + '$' + Math.abs(spTotal).toFixed(2); spEl.className = 'dual-val ' + (spTotal > 0 ? 'pos' : spTotal < 0 ? 'neg' : 'neutral'); }
-      document.getElementById('dual-sports-sub').textContent = (sp.activeBets || 0) + ' open';
-      document.getElementById('dual-sports-record').textContent = (sp.wins || 0) + 'W / ' + (sp.losses || 0) + 'L';
+      const spEl=document.getElementById('dual-sports-pnl');
+      if(spEl){spEl.textContent=(spTotal>=0?'+':'')+'$'+Math.abs(spTotal).toFixed(2);spEl.className='dual-val '+(spTotal>0?'pos':spTotal<0?'neg':'neutral');}
+      document.getElementById('dual-sports-sub').textContent=(sp.activeBets||0)+' open positions';
+      const spRec=document.getElementById('dual-sports-record');
+      if(spRec){spRec.textContent=(sp.wins||0)+'W · '+(sp.losses||0)+'L';spRec.className='dual-record '+(sp.wins>sp.losses?'pos':sp.losses>sp.wins?'neg':'neutral');}
 
-      const crEl = document.getElementById('dual-crypto-pnl');
-      if (crEl) { crEl.textContent = (crTotal >= 0 ? '+' : '') + '$' + Math.abs(crTotal).toFixed(2); crEl.className = 'dual-val ' + (crTotal > 0 ? 'pos' : crTotal < 0 ? 'neg' : 'neutral'); }
-      document.getElementById('dual-crypto-sub').textContent = (cr.activeBets || 0) + ' open';
-      document.getElementById('dual-crypto-record').textContent = (cr.wins || 0) + 'W / ' + (cr.losses || 0) + 'L';
+      const crEl=document.getElementById('dual-crypto-pnl');
+      if(crEl){crEl.textContent=(crTotal>=0?'+':'')+'$'+Math.abs(crTotal).toFixed(2);crEl.className='dual-val '+(crTotal>0?'pos':crTotal<0?'neg':'neutral');}
+      document.getElementById('dual-crypto-sub').textContent=(cr.activeBets||0)+' open positions';
+      const crRec=document.getElementById('dual-crypto-record');
+      if(crRec){crRec.textContent=(cr.wins||0)+'W · '+(cr.losses||0)+'L';crRec.className='dual-record '+(cr.wins>cr.losses?'pos':cr.losses>cr.wins?'neg':'neutral');}
 
-      // Track per-mode P/L history → animate when changed
-      if (spTotal !== prevPnl.SPORTS) {
-        pnlHistory.SPORTS.push({ t: Date.now(), v: spTotal });
-        if (pnlHistory.SPORTS.length > 120) pnlHistory.SPORTS.shift();
-        prevPnl.SPORTS = spTotal;
-        if (currentMode === 'SPORTS') animateLine();
-      }
-      if (crTotal !== prevPnl.CRYPTO) {
-        pnlHistory.CRYPTO.push({ t: Date.now(), v: crTotal });
-        if (pnlHistory.CRYPTO.length > 120) pnlHistory.CRYPTO.shift();
-        prevPnl.CRYPTO = crTotal;
-        if (currentMode === 'CRYPTO') animateLine();
-      }
+      // P/L history
+      if(spTotal!==prevPnl.SPORTS){pnlHistory.SPORTS.push({t:Date.now(),v:spTotal});if(pnlHistory.SPORTS.length>120)pnlHistory.SPORTS.shift();prevPnl.SPORTS=spTotal;if(currentMode==='SPORTS')animateLine();}
+      if(crTotal!==prevPnl.CRYPTO){pnlHistory.CRYPTO.push({t:Date.now(),v:crTotal});if(pnlHistory.CRYPTO.length>120)pnlHistory.CRYPTO.shift();prevPnl.CRYPTO=crTotal;if(currentMode==='CRYPTO')animateLine();}
 
-      // ── Stat cards (scoped to current view) ──
-      const active = currentMode === 'SPORTS' ? sp : cr;
-      const pnl = parseFloat(active.pnl || 0);
-      const openPnl = parseFloat(active.openPnl || 0);
-      const totalPnl = parseFloat(active.totalPnl || 0);
-      const startBal = window._bankroll;
+      // Stat cards (current view)
+      const active=currentMode==='SPORTS'?sp:cr;
+      const pnl=parseFloat(active.pnl||0);
+      const openPnl=parseFloat(active.openPnl||0);
+      const totalPnl=parseFloat(active.totalPnl||0);
 
-      // Balance
-      const balEl = document.getElementById('s-balance');
-      if (balEl) {
-        const disp = isDry ? (s.dryBalance || startBal) : (s.liveBalance || startBal);
-        balEl.textContent = '$' + parseFloat(disp).toFixed(2);
-        balEl.className = 'stat-v ' + (totalPnl >= 0 ? 'pos' : 'neg');
-      }
-      const wagEl = document.getElementById('s-wag');
-      if (wagEl) wagEl.textContent = '$' + parseFloat(active.totalWagered || 0).toFixed(2) + ' wagered';
+      const balEl=document.getElementById('s-balance');
+      if(balEl){const disp=isDry?(s.dryBalance||window._bankroll):(s.liveBalance||window._bankroll);balEl.textContent='$'+parseFloat(disp).toFixed(2);balEl.className='stat-val '+(totalPnl>=0?'pos':'neg');}
+      const wagEl=document.getElementById('s-wag');if(wagEl)wagEl.textContent='$'+parseFloat(active.totalWagered||0).toFixed(2)+' wagered';
 
-      // Session P/L
-      const pnlEl = document.getElementById('s-pnl');
-      if (pnlEl) { pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2); pnlEl.className = 'stat-v ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neutral'); }
-      const pnlSub = document.getElementById('s-pnl-sub');
-      if (pnlSub) pnlSub.textContent = (pnl >= 0 ? '+' : '') + ((pnl / Math.max(1, startBal)) * 100).toFixed(1) + '% realized';
+      const tplEl=document.getElementById('s-total-pnl');
+      if(tplEl){tplEl.textContent=(totalPnl>=0?'+':'')+'$'+Math.abs(totalPnl).toFixed(2);tplEl.className='stat-val '+(totalPnl>0?'pos':totalPnl<0?'neg':'neutral');}
+      const tplSub=document.getElementById('s-total-pnl-sub');if(tplSub)tplSub.textContent='open '+(openPnl>=0?'+':'')+'$'+Math.abs(openPnl).toFixed(2)+' · realized '+(pnl>=0?'+':'')+'$'+Math.abs(pnl).toFixed(2);
 
-      // Win rate
-      const wrEl = document.getElementById('s-wr');
-      if (wrEl) { wrEl.textContent = active.winRate || 'N/A'; wrEl.className = 'stat-v ' + (active.winRate && active.winRate !== 'N/A' ? (parseFloat(active.winRate) >= 50 ? 'pos' : 'neg') : 'neutral'); }
-      const wlEl = document.getElementById('s-wl');
-      if (wlEl) wlEl.textContent = (active.wins || 0) + 'W / ' + (active.losses || 0) + 'L';
+      const wrEl=document.getElementById('s-wr');if(wrEl){wrEl.textContent=active.winRate||'N/A';wrEl.className='stat-val '+(active.winRate&&active.winRate!=='N/A'?(parseFloat(active.winRate)>=50?'pos':'neg'):'neutral');}
+      const wlEl=document.getElementById('s-wl');if(wlEl)wlEl.textContent=(active.wins||0)+'W / '+(active.losses||0)+'L';
 
-      // Active bets
-      const actEl = document.getElementById('s-active');
-      if (actEl) { actEl.textContent = active.activeBets || 0; actEl.className = 'stat-v ' + (active.activeBets > 0 ? 'pos' : 'neutral'); }
-      const totEl = document.getElementById('s-total');
-      if (totEl) totEl.textContent = (active.totalBets || 0) + ' total placed';
+      const actEl=document.getElementById('s-active');if(actEl){actEl.textContent=active.activeBets||0;actEl.className='stat-val '+(active.activeBets>0?'pos':'neutral');}
+      const totEl=document.getElementById('s-total');if(totEl)totEl.textContent=(active.totalBets||0)+' placed total';
 
-      // Open P/L
-      const oplEl = document.getElementById('s-opl');
-      if (oplEl) { oplEl.textContent = (openPnl >= 0 ? '+' : '') + '$' + Math.abs(openPnl).toFixed(2); oplEl.className = 'stat-v ' + (openPnl > 0 ? 'pos' : openPnl < 0 ? 'neg' : 'neutral'); }
+      const oplEl=document.getElementById('s-opl');if(oplEl){oplEl.textContent=(openPnl>=0?'+':'')+'$'+Math.abs(openPnl).toFixed(2);oplEl.className='stat-val '+(openPnl>0?'pos':openPnl<0?'neg':'neutral');}
 
-      // Total P/L
-      const tplEl = document.getElementById('s-total-pnl');
-      if (tplEl) { tplEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2); tplEl.className = 'stat-v ' + (totalPnl > 0 ? 'pos' : totalPnl < 0 ? 'neg' : 'neutral'); }
-      const tplSub = document.getElementById('s-total-pnl-sub');
-      if (tplSub) tplSub.textContent = 'realized + ' + (openPnl >= 0 ? '+' : '') + '$' + Math.abs(openPnl).toFixed(2) + ' open';
+      const pnlEl=document.getElementById('s-pnl');if(pnlEl){pnlEl.textContent=(pnl>=0?'+':'')+'$'+Math.abs(pnl).toFixed(2);pnlEl.className='stat-val '+(pnl>0?'pos':pnl<0?'neg':'neutral');}
+      const pnlSub=document.getElementById('s-pnl-sub');if(pnlSub)pnlSub.textContent=(active.wins||0)+' wins · '+(active.losses||0)+' losses';
 
-      // Bet history header
-      document.getElementById('bets-stats').textContent = (active.wins || 0) + 'W / ' + (active.losses || 0) + 'L';
+      document.getElementById('bets-stats').textContent=(active.wins||0)+'W / '+(active.losses||0)+'L';
     }
 
-    // ── Bets ──
-    if (betsR.status === 'fulfilled') {
-      const bets = betsR.value || [];
-      document.getElementById('bets-count').textContent = bets.length + ' bets';
+    if(betsR.status==='fulfilled'){
+      const bets=betsR.value||[];
+      document.getElementById('bets-count').textContent=bets.length+' bets';
       renderBets(bets);
     }
 
-    // ── Markets ──
-    if (mktsR.status === 'fulfilled') {
-      const mkts = mktsR.value || [];
-      document.getElementById('mkt-count').textContent = mkts.length + ' markets';
-      const ml = document.getElementById('mkt-list');
-      if (!mkts.length) {
-        ml.innerHTML = '<div class="empty">NO MARKETS IN RANGE</div>';
-      } else {
-        ml.innerHTML = mkts.slice(0, 8).map(m => {
-          const d = m._decision || {};
-          const q = parseFloat(m._quality || 0);
-          const side = d.shouldBet ? d.side : '—';
-          const sideCls = side === 'YES' ? 's-yes' : side === 'NO' ? 's-no' : '';
-          const edge = d.edge ? ((d.edge * 100).toFixed(1) + '%') : '—';
-          const minLeft = m.endDateIso ? Math.round((new Date(m.endDateIso) - Date.now()) / 60000) : '?';
+    if(mktsR.status==='fulfilled'){
+      const mkts=mktsR.value||[];
+      document.getElementById('mkt-count').textContent=mkts.length+' markets';
+      const ml=document.getElementById('mkt-list');
+      if(!mkts.length){ml.innerHTML='<div class="empty">NO MARKETS IN RANGE RIGHT NOW</div>';}
+      else{
+        ml.innerHTML=mkts.slice(0,8).map(m=>{
+          const d=m._decision||{};
+          const q=parseFloat(m._quality||0);
+          const side=d.shouldBet?d.side:'—';
+          const sideCls=side==='YES'?'s-yes':side==='NO'?'s-no':'';
+          const edge=d.edge?((d.edge*100).toFixed(1)+'%'):'—';
+          const minLeft=m.endDateIso?Math.round((new Date(m.endDateIso)-Date.now())/60000):'?';
           return `<div class="mkt-row">
-            <div style="font-size:10px;line-height:1.4;color:var(--text)">${(m.question || '').slice(0, 55)}</div>
-            <div class="mkt-pct neutral">${(q * 100).toFixed(0)}</div>
-            <div style="text-align:center"><span class="bet-side ${sideCls}">${side}</span></div>
-            <div class="mkt-edge ${d.shouldBet ? 'e' : ''}">${edge}</div>
+            <div style="font-size:9px;line-height:1.5;color:var(--bright)">${(m.question||'').slice(0,56)}</div>
+            <div class="mkt-pct neutral">${(q*100).toFixed(0)}</div>
+            <div style="text-align:center"><span class="side-pill ${sideCls}">${side}</span></div>
+            <div class="mkt-edge ${d.shouldBet?'e':''}">${edge}</div>
             <div class="mkt-min">${minLeft}m</div>
           </div>`;
         }).join('');
       }
     }
 
-    // ── Signals (crypto right panel) ──
-    if (sigR.status === 'fulfilled' && sigR.value && sigR.value.bias != null) {
-      const sig = sigR.value;
-      const bias = sig.bias || 0;
-      const price = sig.currentPrice || 0;
-      const chg = sig.stats?.priceChangePercent || 0;
-
-      if (document.getElementById('price-big')) {
-        document.getElementById('price-big').textContent = '$' + price.toLocaleString('en-US', { maximumFractionDigits: 0 });
-        const pc = document.getElementById('price-chg');
-        pc.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
-        pc.style.color = chg >= 0 ? '#00ff9d' : '#ff2d55';
-        const bt = document.getElementById('bias-tag');
-        bt.textContent = bias > 0.15 ? '↑ BULLISH' : bias < -0.15 ? '↓ BEARISH' : '→ NEUTRAL';
-        bt.style.color = bias > 0.15 ? '#00ff9d' : bias < -0.15 ? '#ff2d55' : '#ffd200';
-        const pm = sig.stats || {};
-        const hi = document.getElementById('pm-high'); if (hi) hi.textContent = '$' + (pm.high || price).toLocaleString('en-US', { maximumFractionDigits: 0 });
-        const lo = document.getElementById('pm-low'); if (lo) lo.textContent = '$' + (pm.low || price).toLocaleString('en-US', { maximumFractionDigits: 0 });
-        const e9 = document.getElementById('pm-ema9'); if (e9) e9.textContent = '$' + (sig.ema9 || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-        const e21 = document.getElementById('pm-ema21'); if (e21) e21.textContent = '$' + (sig.ema21 || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-      }
-
-      const strats = { RSI_EMA: 'tab-a', WALL: 'tab-b', BREAKOUT: 'tab-c' };
-      ['tab-a', 'tab-b', 'tab-c'].forEach(t => { const el = document.getElementById(t); if (el) el.className = 'strat-tab'; });
-      const tabId = strats[sig.activeStrategy];
-      if (tabId) { const el = document.getElementById(tabId); if (el) el.className = 'strat-tab active-' + tabId.split('-')[1]; }
-
-      const sg = document.getElementById('sig-grid');
-      if (sg) {
-        const A = sig.strategies?.A, B = sig.strategies?.B, C = sig.strategies?.C;
-        sg.innerHTML =
-          sigBar('RSI_EMA', A?.bias || 0, A?.name === sig.activeStrategy) +
-          sigBar('WALL', B?.bias || 0, B?.name === sig.activeStrategy) +
-          sigBar('BREAKOUT', C?.bias || 0, C?.name === sig.activeStrategy) +
-          sigBar('FINAL', bias, true);
-      }
-
-      const w = sig.walls || {};
-      const wbv = document.getElementById('wall-bias-val');
-      if (wbv) { wbv.textContent = (w.wallBias >= 0 ? 'BULL ' : 'BEAR ') + (Math.abs(w.wallBias || 0) * 100).toFixed(0) + '%'; wbv.style.color = w.wallBias > 0 ? '#00ff9d' : '#ff2d55'; }
-      const dep = w.depthRatio || 0;
-      const depEl = document.getElementById('depth-bar');
-      if (depEl) { depEl.style.width = Math.max(5, Math.min(95, 50 + dep * 50)) + '%'; depEl.style.background = dep > 0 ? '#00ff9d' : '#ff2d55'; }
-      const depPct = document.getElementById('depth-pct');
-      if (depPct) depPct.textContent = (dep >= 0 ? 'BULL ' : 'BEAR ') + (Math.abs(dep) * 100).toFixed(0) + '%';
+    if(sigR.status==='fulfilled'&&sigR.value&&sigR.value.bias!=null){
+      const sig=sigR.value;const bias=sig.bias||0;
+      const price=sig.currentPrice||0;const chg=sig.stats?.priceChangePercent||0;
+      const pb=document.getElementById('price-big');if(pb)pb.textContent='$'+price.toLocaleString('en-US',{maximumFractionDigits:0});
+      const pc=document.getElementById('price-chg');if(pc){pc.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';pc.style.color=chg>=0?'#00ff9d':'#ff2d55';}
+      const bt=document.getElementById('bias-tag');if(bt){bt.textContent=bias>0.15?'↑ BULLISH':bias<-0.15?'↓ BEARISH':'→ NEUTRAL';bt.style.color=bias>0.15?'#00ff9d':bias<-0.15?'#ff2d55':'#ffd200';}
+      const pm=sig.stats||{};
+      const hi=document.getElementById('pm-high');if(hi)hi.textContent='$'+(pm.high||price).toLocaleString('en-US',{maximumFractionDigits:0});
+      const lo=document.getElementById('pm-low');if(lo)lo.textContent='$'+(pm.low||price).toLocaleString('en-US',{maximumFractionDigits:0});
+      const e9=document.getElementById('pm-ema9');if(e9)e9.textContent='$'+(sig.ema9||0).toLocaleString('en-US',{maximumFractionDigits:0});
+      const e21=document.getElementById('pm-ema21');if(e21)e21.textContent='$'+(sig.ema21||0).toLocaleString('en-US',{maximumFractionDigits:0});
+      const strats={RSI_EMA:'tab-a',WALL:'tab-b',BREAKOUT:'tab-c'};
+      ['tab-a','tab-b','tab-c'].forEach(t=>{const el=document.getElementById(t);if(el)el.className='strat-pill';});
+      const tid=strats[sig.activeStrategy];if(tid){const el=document.getElementById(tid);if(el)el.className='strat-pill active-'+tid.split('-')[1];}
+      const sg=document.getElementById('sig-grid');
+      if(sg){const A=sig.strategies?.A,B=sig.strategies?.B,C=sig.strategies?.C;sg.innerHTML=sigBar('RSI_EMA',A?.bias||0,A?.name===sig.activeStrategy)+sigBar('WALL',B?.bias||0,B?.name===sig.activeStrategy)+sigBar('BREAKOUT',C?.bias||0,C?.name===sig.activeStrategy)+sigBar('FINAL',bias,true);}
+      const w=sig.walls||{};
+      const wbv=document.getElementById('wall-bias-val');if(wbv){wbv.textContent=(w.wallBias>=0?'BULL ':'BEAR ')+(Math.abs(w.wallBias||0)*100).toFixed(0)+'%';wbv.style.color=w.wallBias>0?'#00ff9d':'#ff2d55';}
+      const dep=w.depthRatio||0;
+      const db=document.getElementById('depth-bar');if(db){db.style.width=Math.max(5,Math.min(95,50+dep*50))+'%';db.style.background=dep>0?'#00ff9d':'#ff2d55';}
+      const dp=document.getElementById('depth-pct');if(dp)dp.textContent=(dep>=0?'BULL ':'BEAR ')+(Math.abs(dep)*100).toFixed(0)+'%';
+      const wbp=document.getElementById('w-bull-p');if(wbp)wbp.textContent=w.bullWall?'$'+(w.bullWall.price||0).toLocaleString('en-US',{maximumFractionDigits:0}):'—';
+      const wbs=document.getElementById('w-bull-s');if(wbs)wbs.textContent=w.bullWall?'$'+(w.bullWall.usd/1e6).toFixed(1)+'M':'—';
+      const wap=document.getElementById('w-bear-p');if(wap)wap.textContent=w.bearWall?'$'+(w.bearWall.price||0).toLocaleString('en-US',{maximumFractionDigits:0}):'—';
+      const was=document.getElementById('w-bear-s');if(was)was.textContent=w.bearWall?'$'+(w.bearWall.usd/1e6).toFixed(1)+'M':'—';
     }
 
-    // ── Log ──
-    if (logR.status === 'fulfilled') {
-      const logs = logR.value || [];
-      uiLogs = logs.slice(0, 60).map(l => ({
-        ts: (l.ts || '').slice(11, 19) || '—',
-        type: l.type,
-        msg: l.msg
-      }));
-      const el = document.getElementById('con-log');
-      el.innerHTML = uiLogs.map(l =>
-        `<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`
-      ).join('');
-      document.getElementById('log-count').textContent = uiLogs.length;
+    if(logR.status==='fulfilled'){
+      uiLogs=(logR.value||[]).slice(0,60).map(l=>({ts:(l.ts||'').slice(11,19)||'—',type:l.type,msg:l.msg}));
+      const el=document.getElementById('con-log');
+      el.innerHTML=uiLogs.map(l=>`<div class="ll"><span class="lt">[${l.ts}]</span><span class="l${l.type}">${l.msg}</span></div>`).join('');
+      document.getElementById('log-count').textContent=uiLogs.length+' entries';
     }
 
-  } catch (e) {
-    document.getElementById('dot').className = 'dot dot-r';
-    document.getElementById('status-txt').textContent = 'OFFLINE';
-    addLog('err', 'Fetch error: ' + e.message);
+  }catch(e){
+    document.getElementById('dot').className='status-dot dot-r';
+    document.getElementById('status-txt').textContent='OFFLINE';
+    addLog('err','Fetch: '+e.message);
   }
 }
 
-// Apply initial view
-setTimeout(() => applyViewUI(currentMode), 100);
-
-// Start polling
-setInterval(refresh, 3000);
+setTimeout(()=>applyViewUI(currentMode),100);
+setInterval(refresh,3000);
 refresh();
 </script>
 </body>
