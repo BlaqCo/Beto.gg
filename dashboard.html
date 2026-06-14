@@ -383,6 +383,7 @@ header{
 .cfg-lbl{font-size:7px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:4px;}
 
 @media(max-width:680px){.main{grid-template-columns:1fr;}.stats{grid-template-columns:repeat(2,1fr);}}
+@keyframes ripple{to{transform:scale(2.5);opacity:0;}}
 </style>
 </head>
 <body>
@@ -608,30 +609,80 @@ header{
       <button class="sp-close" onclick="closeSettings()">✕</button>
     </div>
     <div class="sp-body">
+
+      <!-- Bot Control -->
       <div class="sp-section">
         <div class="sp-lbl">Bot Control</div>
         <div class="toggle-row">
           <div class="toggle-info">
             <div class="toggle-name" id="dry-label">🧪 Dry Run Mode</div>
-            <div class="toggle-desc" id="dry-desc">Simulate only — no real orders placed. <strong style="color:var(--r)">Turn OFF to go LIVE.</strong></div>
+            <div class="toggle-desc" id="dry-desc">Simulate only — no real orders placed. <strong style="color:var(--r)">Turn OFF to go LIVE with real money.</strong></div>
           </div>
           <label class="toggle-wrap">
             <input type="checkbox" id="tog-dry" onchange="confirmDryToggle(this)">
             <div class="toggle-track"></div>
           </label>
         </div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-name">Bot Active</div>
+            <div class="toggle-desc">Pause/resume all trading. Open positions are still monitored for settlement.</div>
+          </div>
+          <label class="toggle-wrap">
+            <input type="checkbox" id="tog-enabled" checked onchange="saveSetting('enabled',this.checked)">
+            <div class="toggle-track"></div>
+          </label>
+        </div>
       </div>
+
+      <!-- Sports Config -->
       <div class="sp-section">
-        <div class="sp-lbl">Active Config</div>
+        <div class="sp-lbl">⚽ Sports Config</div>
         <div class="cfg-grid">
           <div class="cfg-item"><div class="cfg-lbl">Bankroll</div><div style="color:var(--c);font-family:'Orbitron';font-size:14px;font-weight:700" id="cfg-bank">—</div></div>
           <div class="cfg-item"><div class="cfg-lbl">Bet Size</div><div style="color:var(--g);font-family:'Orbitron';font-size:14px;font-weight:700">$15 flat</div></div>
-          <div class="cfg-item"><div class="cfg-lbl">Max Concurrent</div><div style="color:var(--y);font-family:'Orbitron';font-size:14px;font-weight:700">10</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Max Concurrent</div><div style="color:var(--y);font-family:'Orbitron';font-size:14px;font-weight:700">10 slots</div></div>
           <div class="cfg-item"><div class="cfg-lbl">Entry Range</div><div style="color:var(--b);font-family:'Orbitron';font-size:14px;font-weight:700">60–70¢</div></div>
-          <div class="cfg-item"><div class="cfg-lbl">Strategy</div><div style="color:var(--p);font-family:'Orbitron';font-size:12px;font-weight:700">FAVORITE</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Strategy</div><div style="color:var(--p);font-family:'Orbitron';font-size:12px;font-weight:700">FAVORITE ML</div></div>
           <div class="cfg-item"><div class="cfg-lbl">Exit</div><div style="color:var(--text);font-family:'Orbitron';font-size:11px;font-weight:700">HOLD TO CLOSE</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Live Games</div><div style="color:var(--g);font-family:'Orbitron';font-size:11px;font-weight:700">✓ ENABLED</div></div>
+          <div class="cfg-item"><div class="cfg-lbl">Next-24h Games</div><div style="color:var(--g);font-family:'Orbitron';font-size:11px;font-weight:700">✓ ENABLED</div></div>
         </div>
       </div>
+
+      <!-- Crypto Strategy -->
+      <div class="sp-section">
+        <div class="sp-lbl">₿ Crypto Strategy</div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-name">Auto Strategy</div>
+            <div class="toggle-desc">Bot auto-selects best strategy based on volatility and market conditions.</div>
+          </div>
+          <label class="toggle-wrap">
+            <input type="checkbox" id="tog-auto" checked onchange="saveSetting('autoMode',this.checked)">
+            <div class="toggle-track"></div>
+          </label>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          <div class="strat-pill active-a" style="cursor:default;font-size:8px;padding:5px 12px">TREND / RSI-EMA</div>
+          <div class="strat-pill active-b" style="cursor:default;font-size:8px;padding:5px 12px">WALL DETECT</div>
+          <div class="strat-pill active-c" style="cursor:default;font-size:8px;padding:5px 12px">ATR BREAKOUT</div>
+        </div>
+      </div>
+
+      <!-- Safety -->
+      <div class="sp-section">
+        <div class="sp-lbl">Safety</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="padding:8px 12px;background:rgba(0,255,157,0.06);border:1px solid rgba(0,255,157,0.15);border-radius:8px;font-size:9px;color:var(--g);line-height:1.6">
+            ✓ Duplicate entry protection — checks live Polymarket positions before each order<br>
+            ✓ Max 2 entries per market (local state cap)<br>
+            ✓ Balance floor check before every entry<br>
+            ✓ FOK orders only — no partial fills
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -809,8 +860,8 @@ function animateLine(){
   animFrame=requestAnimationFrame(step);
 }
 
-// Continuous pulse loop
-function pulseLoop(){requestAnimationFrame(()=>{if(!animFrame)renderChart(1);pulseLoop();});}
+// Continuous pulse loop with scanline
+function pulseLoop(){requestAnimationFrame(()=>{if(!animFrame){renderChart(1);drawScanline();}pulseLoop();});}
 window.addEventListener('resize',()=>setTimeout(resizeChart,60));
 setTimeout(()=>{resizeChart();pulseLoop();},200);
 
@@ -852,6 +903,8 @@ function openSettings(){
   document.getElementById('settings-overlay').classList.add('open');
   document.getElementById('gear-btn').classList.add('active');
   document.getElementById('tog-dry').checked=currentSettings.dryRun!==false;
+  if(currentSettings.enabled!=null)document.getElementById('tog-enabled').checked=currentSettings.enabled!==false;
+  if(currentSettings.autoMode!=null)document.getElementById('tog-auto').checked=currentSettings.autoMode!==false;
   updateDryLabel(currentSettings.dryRun!==false);
   const b=document.getElementById('cfg-bank');
   if(b)b.textContent='$'+(window._bankroll||'—');
@@ -864,16 +917,102 @@ function closeOnOutside(e){if(e.target===document.getElementById('settings-overl
 function updateDryLabel(isDry){
   const l=document.getElementById('dry-label'),d=document.getElementById('dry-desc');
   if(isDry){l.textContent='🧪 Dry Run Mode';l.style.color='';}
-  else{l.textContent='🔴 LIVE MODE';l.style.color='var(--r)';}
+  else{l.textContent='🔴 LIVE MODE — REAL MONEY';l.style.color='var(--r)';}
 }
 function confirmDryToggle(cb){
   if(!cb.checked){
     const ok=window.confirm('⚠️ GO LIVE?\n\nReal USDC will be wagered on Polymarket immediately.\nAre you absolutely sure?');
     if(!ok){cb.checked=true;return;}
   }
-  fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dryRun:cb.checked})})
-    .then(r=>r.json()).then(d=>{if(d.ok){currentSettings=d.settings;updateDryLabel(cb.checked);}});
+  saveSetting('dryRun',cb.checked);
+  updateDryLabel(cb.checked);
 }
+async function saveSetting(key,val){
+  const body={};
+  if(key==='enabled')body.enabled=val;
+  else if(key==='autoMode')body.autoMode=val;
+  else if(key==='dryRun')body.dryRun=val;
+  try{
+    const res=await fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await res.json();
+    if(d.ok){currentSettings=d.settings;showToast(key+' → '+(val?'ON':'OFF'),val?'ok':'warn');}
+  }catch(e){showToast('Settings error: '+e.message,'err');}
+}
+
+// ── Toast notifications ───────────────────────────────────────
+function showToast(msg,type='ok'){
+  const colors={ok:'var(--g)',err:'var(--r)',warn:'var(--y)',info:'var(--b)'};
+  const t=document.createElement('div');
+  t.style.cssText=`
+    position:fixed;bottom:24px;right:24px;z-index:9999;
+    background:rgba(4,10,22,0.95);
+    border:1px solid ${colors[type]||colors.ok};
+    color:${colors[type]||colors.ok};
+    border-radius:10px;padding:10px 18px;
+    font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:1px;
+    box-shadow:0 0 20px ${colors[type]||colors.ok}33;
+    backdrop-filter:blur(20px);
+    transform:translateY(20px);opacity:0;
+    transition:all 0.3s;pointer-events:none;
+    max-width:280px;
+  `;
+  t.textContent=msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(()=>{t.style.transform='translateY(0)';t.style.opacity='1';});
+  setTimeout(()=>{t.style.transform='translateY(20px)';t.style.opacity='0';setTimeout(()=>t.remove(),300);},3000);
+}
+
+// ── Ripple effect on buttons ──────────────────────────────────
+function addRipple(e){
+  const btn=e.currentTarget;
+  const r=document.createElement('span');
+  const rect=btn.getBoundingClientRect();
+  const size=Math.max(rect.width,rect.height);
+  r.style.cssText=`
+    position:absolute;border-radius:50%;
+    width:${size}px;height:${size}px;
+    left:${e.clientX-rect.left-size/2}px;
+    top:${e.clientY-rect.top-size/2}px;
+    background:rgba(0,255,157,0.2);
+    transform:scale(0);animation:ripple 0.5s ease-out;
+    pointer-events:none;
+  `;
+  btn.style.position='relative';btn.style.overflow='hidden';
+  btn.appendChild(r);
+  setTimeout(()=>r.remove(),500);
+}
+document.querySelectorAll('.mode-btn,.gear-btn').forEach(b=>b.addEventListener('click',addRipple));
+
+// ── Scanline sweep on chart ───────────────────────────────────
+let scanX=0;
+function drawScanline(){
+  const W=chartCanvas.offsetWidth/(window.devicePixelRatio||1);
+  const H=190;
+  scanX=(scanX+0.4)%W;
+  // Draw a faint vertical line that sweeps across
+  cx.save();
+  cx.globalAlpha=0.04;
+  const sg=cx.createLinearGradient(scanX-20,0,scanX+20,0);
+  sg.addColorStop(0,'transparent');
+  sg.addColorStop(0.5,'rgba(0,180,255,1)');
+  sg.addColorStop(1,'transparent');
+  cx.fillStyle=sg;
+  cx.fillRect(scanX-20,0,40,H);
+  cx.restore();
+}
+
+// ── Stat card hover glow interaction ─────────────────────────
+document.querySelectorAll('.stat-card').forEach(card=>{
+  card.addEventListener('mousemove',e=>{
+    const rect=card.getBoundingClientRect();
+    const x=e.clientX-rect.left;
+    const y=e.clientY-rect.top;
+    card.style.background=`radial-gradient(circle at ${x}px ${y}px, rgba(0,180,255,0.06) 0%, rgba(6,15,28,0.7) 70%)`;
+  });
+  card.addEventListener('mouseleave',()=>{
+    card.style.background='rgba(6,15,28,0.7)';
+  });
+});
 
 // ── Sport badge ───────────────────────────────────────────────
 function sportBadge(coin,question){
@@ -1043,6 +1182,22 @@ async function refresh(){
     if(betsR.status==='fulfilled'){
       const bets=betsR.value||[];
       document.getElementById('bets-count').textContent=bets.length+' bets';
+      // Toast on new bets or settlements
+      const prevCount=window._prevBetCount||0;
+      const prevWins=window._prevWins||0;
+      const prevLosses=window._prevLosses||0;
+      const nowOpen=bets.filter(b=>!b.status||b.status==='open').length;
+      const nowWins=bets.filter(b=>b.status==='won').length;
+      const nowLosses=bets.filter(b=>b.status==='lost').length;
+      if(bets.length>prevCount&&prevCount>0){
+        const newest=bets.find(b=>!b.status||b.status==='open');
+        if(newest)showToast('✅ NEW BET: '+(newest.marketQuestion||'').slice(0,35)+'… @ '+(newest.entryPrice*100).toFixed(0)+'¢','ok');
+      }
+      if(nowWins>prevWins)showToast('🏆 WIN! +$'+(15*(1/0.65-1)).toFixed(2)+' settled','ok');
+      if(nowLosses>prevLosses)showToast('❌ LOSS — position settled','err');
+      window._prevBetCount=bets.length;
+      window._prevWins=nowWins;
+      window._prevLosses=nowLosses;
       renderBets(bets);
     }
 
