@@ -463,7 +463,7 @@ header{
   <div class="stat-card sc-c"><div class="orb"></div>
     <div class="stat-lbl">Open P/L</div>
     <div class="stat-val neutral" id="s-opl">$0.00</div>
-    <div class="stat-sub">live mark-to-market</div>
+    <div class="stat-sub" id="s-opl-sub">live mark-to-market</div>
   </div>
   <div class="stat-card sc-r"><div class="orb"></div>
     <div class="stat-lbl">Realized P/L</div>
@@ -1130,14 +1130,19 @@ async function refresh(){
       document.getElementById('mode-badge').textContent=isDry?'◎ DRY RUN':'⬤ LIVE';
       document.getElementById('mode-badge').className='badge '+(isDry?'badge-dry':'badge-live');
 
-      // Dual strip
-      const sp=s.sports||{},cr=s.crypto||{};
+      // P/L history — use real Polymarket portfolio open P/L when available
       const spTotal=parseFloat(sp.totalPnl||sp.pnl||0);
       const crTotal=parseFloat(cr.totalPnl||cr.pnl||0);
+      // If server sent real portfolio data, use it to anchor the sports open P/L
+      const portfolioOpenPnl = s.portfolioOpenPnl;
+      const portfolioValue = s.portfolioValue;
+      const spTotalReal = portfolioOpenPnl != null
+        ? parseFloat(sp.pnl||0) + portfolioOpenPnl  // realized + real open
+        : spTotal;
 
       const spEl=document.getElementById('dual-sports-pnl');
-      if(spEl){spEl.textContent=(spTotal>=0?'+':'')+'$'+Math.abs(spTotal).toFixed(2);spEl.className='dual-val '+(spTotal>0?'pos':spTotal<0?'neg':'neutral');}
-      document.getElementById('dual-sports-sub').textContent=(sp.activeBets||0)+' open positions';
+      if(spEl){spEl.textContent=(spTotalReal>=0?'+':'')+'$'+Math.abs(spTotalReal).toFixed(2);spEl.className='dual-val '+(spTotalReal>0?'pos':spTotalReal<0?'neg':'neutral');}
+      document.getElementById('dual-sports-sub').textContent=(sp.activeBets||0)+' open positions'+(portfolioValue!=null?' · $'+portfolioValue.toFixed(2)+' mkt value':'');
       const spRec=document.getElementById('dual-sports-record');
       if(spRec){spRec.textContent=(sp.wins||0)+'W · '+(sp.losses||0)+'L';spRec.className='dual-record '+(sp.wins>sp.losses?'pos':sp.losses>sp.wins?'neg':'neutral');}
 
@@ -1147,8 +1152,8 @@ async function refresh(){
       const crRec=document.getElementById('dual-crypto-record');
       if(crRec){crRec.textContent=(cr.wins||0)+'W · '+(cr.losses||0)+'L';crRec.className='dual-record '+(cr.wins>cr.losses?'pos':cr.losses>cr.wins?'neg':'neutral');}
 
-      // P/L history
-      if(spTotal!==prevPnl.SPORTS){pnlHistory.SPORTS.push({t:Date.now(),v:spTotal});if(pnlHistory.SPORTS.length>120)pnlHistory.SPORTS.shift();prevPnl.SPORTS=spTotal;if(currentMode==='SPORTS')animateLine();}
+      // P/L history — use real portfolio P/L for sports when available
+      if(spTotalReal!==prevPnl.SPORTS){pnlHistory.SPORTS.push({t:Date.now(),v:spTotalReal});if(pnlHistory.SPORTS.length>120)pnlHistory.SPORTS.shift();prevPnl.SPORTS=spTotalReal;if(currentMode==='SPORTS')animateLine();}
       if(crTotal!==prevPnl.CRYPTO){pnlHistory.CRYPTO.push({t:Date.now(),v:crTotal});if(pnlHistory.CRYPTO.length>120)pnlHistory.CRYPTO.shift();prevPnl.CRYPTO=crTotal;if(currentMode==='CRYPTO')animateLine();}
 
       // Stat cards (current view)
@@ -1171,7 +1176,11 @@ async function refresh(){
       const actEl=document.getElementById('s-active');if(actEl){actEl.textContent=active.activeBets||0;actEl.className='stat-val '+(active.activeBets>0?'pos':'neutral');}
       const totEl=document.getElementById('s-total');if(totEl)totEl.textContent=(active.totalBets||0)+' placed total';
 
-      const oplEl=document.getElementById('s-opl');if(oplEl){oplEl.textContent=(openPnl>=0?'+':'')+'$'+Math.abs(openPnl).toFixed(2);oplEl.className='stat-val '+(openPnl>0?'pos':openPnl<0?'neg':'neutral');}
+      const oplEl=document.getElementById('s-opl');
+      const realOpenPnl = (portfolioOpenPnl!=null&&currentMode==='SPORTS') ? portfolioOpenPnl : parseFloat(active.openPnl||0);
+      if(oplEl){oplEl.textContent=(realOpenPnl>=0?'+':'')+'$'+Math.abs(realOpenPnl).toFixed(2);oplEl.className='stat-val '+(realOpenPnl>0?'pos':realOpenPnl<0?'neg':'neutral');}
+      const oplSub=document.getElementById('s-opl-sub');
+      if(oplSub)oplSub.textContent=portfolioValue!=null&&currentMode==='SPORTS'?'mkt value $'+portfolioValue.toFixed(2):'live mark-to-market';
 
       const pnlEl=document.getElementById('s-pnl');if(pnlEl){pnlEl.textContent=(pnl>=0?'+':'')+'$'+Math.abs(pnl).toFixed(2);pnlEl.className='stat-val '+(pnl>0?'pos':pnl<0?'neg':'neutral');}
       const pnlSub=document.getElementById('s-pnl-sub');if(pnlSub)pnlSub.textContent=(active.wins||0)+' wins · '+(active.losses||0)+' losses';
