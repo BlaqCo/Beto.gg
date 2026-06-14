@@ -1,6 +1,12 @@
 /**
  * index.js — PolyBettor Main Entry
- * Serves dashboard + full data API, runs sports or crypto bot by mode.
+ * Serves dashboard + full data API.
+ *
+ * ARCHITECTURE CHANGE: previously "mode" controlled which bot's scan loop
+ * ran — switching to CRYPTO meant SPORTS positions got zero monitoring
+ * (and vice versa). Now BOTH bot-sports.js and bot.js run independent scan
+ * loops at all times. "Mode" is purely a DASHBOARD VIEW toggle — it picks
+ * which board/markets/stats are shown, but never starts or stops trading.
  */
 
 import express from "express";
@@ -34,9 +40,10 @@ function pushLog(type, args) {
 console.log = (...a) => { pushLog("info", a); _log(...a); };
 console.error = (...a) => { pushLog("err", a); _err(...a); };
 
-// ── Mode + last-scan cache ──────────────────────────────────────
+// ── Dashboard view mode (display-only — does NOT start/stop bots) ──
 let currentMode = process.env.BOT_MODE || "SPORTS"; // SPORTS | CRYPTO
-let botModule = null;
+let sportsBot = null;
+let cryptoBot = null;
 let lastSignals = null;
 
 const settings = {
@@ -47,9 +54,9 @@ const settings = {
   enabled: true,
 };
 
-console.log(`💰 State initialized | Balance: $${state.getDryBalance()} | Mode: ${currentMode} | ${DRY_RUN ? "DRY RUN" : "🔴 LIVE"}`);
+console.log(`💰 State initialized | Balance: $${state.getDryBalance()} | View: ${currentMode} | ${DRY_RUN ? "DRY RUN" : "🔴 LIVE"}`);
 
-// ── Live balance (real Polymarket account, SPORTS + LIVE only) ──
+// ── Live balance (real Polymarket account, LIVE only) ───────────
 // Cached briefly so the dashboard's 3s poll doesn't hammer the signed API.
 let _liveBalCache = { value: null, ts: 0 };
 const LIVE_BAL_TTL = 10_000;
@@ -76,15 +83,15 @@ function allBets() {
   try { return state.getAllActiveBets() || []; } catch { return []; }
 }
 const isSportsBet = b => b?.strategy === "SPORTS_ML";
-function modeBets() {
+function betsForMode(mode) {
   const all = allBets();
-  return currentMode === "SPORTS" ? all.filter(isSportsBet) : all.filter(b => !isSportsBet(b));
+  return mode === "SPORTS" ? all.filter(isSportsBet) : all.filter(b => !isSportsBet(b));
 }
 
-// Open sports bets get live P&L from bot-sports' mark cache
-function withLiveMarks(bets) {
-  if (currentMode !== "SPORTS" || !botModule?.getSportsMarks) return bets;
-  const marks = botModule.getSportsMarks();
+// Open sports bets get live P&L from bot-sports' mark cache (always loaded now)
+function withSportsLiveMarks(bets) {
+  if (!sportsBot?.getSportsMarks) return bets;
+  const marks = sportsBot.getSportsMarks();
   return bets.map(b => {
     if (b.status && b.status !== "open") return b;
     const mk = marks.get(b.marketConditionId);
@@ -98,34 +105,170 @@ function withLiveMarks(bets) {
   });
 }
 
-function fullStats() {
-  const s = state.getStats() || {};
-  const out = { ...s, dryBalance: state.getDryBalance() };
+// ── Real-time Polymarket portfolio mark-to-market ───────────────
+// Fetches live positions from /v1/portfolio/positions + current BBO bids
+// to compute exact open P/L against each bet's entry price.
+// Cached 15s so every dashboard poll (3s) doesn't spam signed API.
+let _portfolioCache = { positions: null, ts: 0 };
+const PORTFOLIO_TTL = 15_000;
 
-  // Scope W/L + P&L to the active mode when bet history is available
-  const mine = modeBets();
-  const closed = mine.filter(b => b.status && b.status !== "open");
-  if (closed.length || ((s.wins || 0) + (s.losses || 0) === 0)) {
-    out.wins = closed.filter(b => b.status === "won").length;
-    out.losses = closed.filter(b => b.status === "lost").length;
-    out.pnl = closed.reduce((a, b) => a + (Number(b.pnl) || 0), 0).toFixed(2);
-    out.totalWagered = mine.reduce((a, b) => a + (Number(b.betSize) || 0), 0).toFixed(2);
-    out.activeBets = mine.filter(b => !b.status || b.status === "open").length;
-    out.totalBets = mine.length;
+async function getLivePortfolioPnl() {
+  if (!settings.dryRun && Date.now() - _portfolioCache.ts < PORTFOLIO_TTL && _portfolioCache.positions) {
+    return _portfolioCache.positions;
   }
-  const total = (out.wins || 0) + (out.losses || 0);
-  out.winRate = total > 0 ? ((out.wins / total) * 100).toFixed(1) + "%" : "N/A";
+  if (settings.dryRun) return null; // dry run — no real account to query
+
+  try {
+    const { getOpenPositions, getBBO } = await import("./polymarket-us.js");
+    const positions = await getOpenPositions();
+    if (!positions) return null;
+
+    // For each open position, fetch current BBO bid to mark-to-market
+    const slugs = Object.keys(positions).filter(s => positions[s].qtyBought > 0);
+    const bboResults = await Promise.allSettled(
+      slugs.map(async slug => {
+        const bbo = await getBBO(slug);
+        return { slug, bid: bbo?.bid ?? bbo?.last ?? null };
+      })
+    );
+
+    const liveMarks = {}; // slug → { bid, qtyBought }
+    for (const r of bboResults) {
+      if (r.status === "fulfilled" && r.value.bid) {
+        const { slug, bid } = r.value;
+        liveMarks[slug] = { bid, qtyBought: positions[slug].qtyBought };
+      }
+    }
+
+    // Match against our local bet records to get entry prices
+    const allBets = state.getAllBets ? state.getAllBets() : [];
+    const openBets = allBets.filter(b => !b.status || b.status === "open");
+
+    let totalOpenPnl = 0;
+    let portfolioValue = 0; // current market value of all open positions
+    const betMarks = {}; // conditionId → { pnl, currentValue, bid, entryPrice }
+
+    for (const bet of openBets) {
+      const slug = bet.marketConditionId;
+      const mark = liveMarks[slug];
+      if (!mark || !bet.entryPrice || !bet.betSize) continue;
+
+      const shares = bet.betSize / bet.entryPrice;
+      const currentValue = shares * mark.bid;
+      const openPnl = currentValue - bet.betSize;
+      totalOpenPnl += openPnl;
+      portfolioValue += currentValue;
+      betMarks[slug] = {
+        pnl: parseFloat(openPnl.toFixed(2)),
+        currentValue: parseFloat(currentValue.toFixed(2)),
+        bid: mark.bid,
+        entryPrice: bet.entryPrice,
+        movePct: (mark.bid - bet.entryPrice) / bet.entryPrice,
+      };
+    }
+
+    const result = {
+      totalOpenPnl: parseFloat(totalOpenPnl.toFixed(2)),
+      portfolioValue: parseFloat(portfolioValue.toFixed(2)),
+      betMarks,
+      slugCount: slugs.length,
+      ts: Date.now(),
+    };
+
+    _portfolioCache = { positions: result, ts: Date.now() };
+    return result;
+  } catch (err) {
+    console.error("⚠️ Portfolio mark-to-market failed:", err.message);
+    return _portfolioCache.positions; // return stale on error
+  }
+}
+
+// Generic per-mode stat block: realized P&L, W/L, active count, wagered.
+async function statsForMode(mode, portfolio) {
+  const mine = betsForMode(mode);
+  const closed = mine.filter(b => b.status && b.status !== "open");
+  const open = mine.filter(b => !b.status || b.status === "open");
+  const wins = closed.filter(b => b.status === "won").length;
+  const losses = closed.filter(b => b.status === "lost").length;
+  const realizedPnl = closed.reduce((a, b) => a + (Number(b.pnl) || 0), 0);
+  const totalWagered = mine.reduce((a, b) => a + (Number(b.betSize) || 0), 0);
+  const total = wins + losses;
+
+  let openPnl = 0;
+
+  if (mode === "SPORTS") {
+    if (portfolio?.betMarks && Object.keys(portfolio.betMarks).length > 0) {
+      // ★ Use real Polymarket position values (LIVE mode)
+      for (const b of open) {
+        const mark = portfolio.betMarks[b.marketConditionId];
+        if (mark) openPnl += mark.pnl;
+      }
+    } else if (sportsBot?.getSportsMarks) {
+      // Fallback: use scan-loop BBO cache (dry run or portfolio unavailable)
+      const marks = sportsBot.getSportsMarks();
+      for (const b of open) {
+        const mk = marks.get(b.marketConditionId);
+        if (mk) openPnl += Number(mk.pnl) || 0;
+      }
+    }
+  }
+
+  return {
+    wins, losses,
+    pnl: realizedPnl.toFixed(2),
+    openPnl: openPnl.toFixed(2),
+    totalPnl: (realizedPnl + openPnl).toFixed(2),
+    totalWagered: totalWagered.toFixed(2),
+    activeBets: open.length,
+    totalBets: mine.length,
+    winRate: total > 0 ? ((wins / total) * 100).toFixed(1) + "%" : "N/A",
+  };
+}
+
+async function fullStats(portfolio) {
+  const s = state.getStats() || {};
+  const sports = await statsForMode("SPORTS", portfolio);
+  const crypto = await statsForMode("CRYPTO", portfolio);
+
+  const out = {
+    ...s,
+    dryBalance: state.getDryBalance(),
+    sports,
+    crypto,
+    // Expose portfolio-level data for dashboard
+    portfolioValue: portfolio?.portfolioValue ?? null,
+    portfolioOpenPnl: portfolio?.totalOpenPnl ?? null,
+  };
+
+  // Legacy top-level fields scoped to current view
+  const active = currentMode === "SPORTS" ? sports : crypto;
+  out.wins = active.wins;
+  out.losses = active.losses;
+  out.pnl = active.pnl;
+  out.totalWagered = active.totalWagered;
+  out.activeBets = active.activeBets;
+  out.totalBets = active.totalBets;
+  out.winRate = active.winRate;
+
   return out;
 }
 
 // ── Dashboard data API (paths the dashboard polls) ──────────────
 app.get("/", async (req, res) => {
-  const stats = fullStats();
+  // Fetch real portfolio mark-to-market and live balance in parallel
+  const [portfolio, liveBal] = await Promise.all([
+    getLivePortfolioPnl(),
+    settings.dryRun ? Promise.resolve(null) : getLiveSportsBalance(),
+  ]);
 
-  // In LIVE sports mode, pull the real Polymarket account balance.
-  if (currentMode === "SPORTS" && !settings.dryRun) {
-    const liveBal = await getLiveSportsBalance();
-    if (liveBal != null) stats.liveBalance = liveBal;
+  const stats = await fullStats(portfolio);
+  if (liveBal != null) stats.liveBalance = liveBal;
+
+  // Expose portfolio value directly on stats for the dashboard P/L curve
+  if (portfolio) {
+    stats.portfolioValue = portfolio.portfolioValue;
+    stats.portfolioOpenPnl = portfolio.totalOpenPnl;
+    stats.portfolioTs = portfolio.ts;
   }
 
   res.json({
@@ -137,7 +280,10 @@ app.get("/", async (req, res) => {
   });
 });
 
-app.get("/bets", (req, res) => res.json(withLiveMarks(modeBets())));
+app.get("/bets", (req, res) => {
+  const bets = betsForMode(currentMode);
+  res.json(currentMode === "SPORTS" ? withSportsLiveMarks(bets) : bets);
+});
 
 app.get("/signals", (req, res) => {
   if (currentMode === "SPORTS" || !lastSignals) {
@@ -178,7 +324,7 @@ app.post("/settings", (req, res) => {
   res.json({ ok: true, settings });
 });
 
-// ── Dashboard page + mode switch + health ───────────────────────
+// ── Dashboard page + view switch + health ───────────────────────
 app.get("/dashboard", (req, res) => res.sendFile(path.join(__dirname, "dashboard.html")));
 
 app.get("/api/status", (req, res) => {
@@ -192,48 +338,66 @@ app.get("/api/status", (req, res) => {
   });
 });
 
+// View switch — DISPLAY ONLY. Both bots keep running regardless.
 app.post("/api/mode", async (req, res) => {
   const { mode } = req.body;
   if (!["SPORTS", "CRYPTO"].includes(mode)) {
     return res.status(400).json({ error: "Invalid mode. Use SPORTS or CRYPTO" });
   }
   currentMode = mode;
-  await loadBotModule(mode);
-  console.log(`🔄 Mode switched to: ${mode}`);
+  console.log(`🔄 Dashboard view switched to: ${mode} (both bots continue running)`);
   res.json({ mode: currentMode });
 });
 
-app.get("/health", (req, res) => res.json({ status: "ok", mode: currentMode }));
+app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
 
 app.use(express.static("public")); // after routes so JSON endpoints win
 
 app.listen(PORT, () => {
-  console.log(`[OK] PolyBettor on port ${PORT} | ${currentMode} | dashboard at /dashboard`);
+  console.log(`[OK] PolyBettor on port ${PORT} | view: ${currentMode} | dashboard at /dashboard`);
 });
 
-// ── Bot loader + scanner ────────────────────────────────────────
-async function loadBotModule(mode) {
+// ── Bot loaders + independent scanners ───────────────────────────
+async function loadBots() {
   try {
-    botModule = mode === "SPORTS"
-      ? await import("./bot-sports.js")
-      : await import("./bot.js");
-    console.log(`[INFO] Loaded ${mode === "SPORTS" ? "bot-sports.js" : "bot.js (crypto VALUE)"}`);
+    sportsBot = await import("./bot-sports.js");
+    console.log("[INFO] Loaded bot-sports.js");
   } catch (err) {
-    console.error("Bot load error:", err.message);
+    console.error("Sports bot load error:", err.message);
+  }
+  try {
+    cryptoBot = await import("./bot.js");
+    console.log("[INFO] Loaded bot.js (crypto)");
+  } catch (err) {
+    console.error("Crypto bot load error:", err.message);
   }
 }
 
 (async () => {
-  await loadBotModule(currentMode);
+  await loadBots();
+
+  // Sports scanner — every 8s
   setInterval(async () => {
     try {
-      if (botModule?.runScanCycle) {
-        const r = await botModule.runScanCycle();
-        if (r?.signals) lastSignals = r.signals;
-      }
+      if (sportsBot?.runScanCycle) await sportsBot.runScanCycle();
     } catch (err) {
-      console.error("Scan error:", err.message);
+      console.error("Sports scan error:", err.message);
     }
   }, 8000);
-  console.log("[INFO] Scanner started — every 8s");
+
+  // Crypto scanner — every 8s, offset by 4s so the two don't fire in lockstep
+  setTimeout(() => {
+    setInterval(async () => {
+      try {
+        if (cryptoBot?.runScanCycle) {
+          const r = await cryptoBot.runScanCycle();
+          if (r?.signals) lastSignals = r.signals;
+        }
+      } catch (err) {
+        console.error("Crypto scan error:", err.message);
+      }
+    }, 8000);
+  }, 4000);
+
+  console.log("[INFO] Both scanners started — sports + crypto run independently, every 8s");
 })();
