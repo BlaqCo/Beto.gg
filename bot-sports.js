@@ -18,12 +18,12 @@ import { fetchSportsMoneylines, verifyCandidates, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 35;      // flat $35 per bet
-const BET_MIN       = 35;
+const BET_SIZE      = 10;      // flat $10 per bet
+const BET_MIN       = 10;
 const FAV_MIN       = 0.60;    // wait for the favorite to climb to 60¢ before entering
 const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 10;
+const MAX_CONC      = 6;
 const ENTRIES_SCAN  = 2;
 const MAX_ENTRIES_PER_MARKET = 2; // hard cap — never enter the same market more than this, ever
 // book quality: require two-sided quotes, spread ≤ 6¢ (checked at entry)
