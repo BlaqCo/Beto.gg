@@ -18,12 +18,12 @@ import { fetchSportsMoneylines, verifyCandidates, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 15;      // flat $15 per bet
-const BET_MIN       = 15;
+const BET_SIZE      = 5;       // flat $5 per bet (testing)
+const BET_MIN       = 5;
 const FAV_MIN       = 0.60;    // wait for the favorite to climb to 60¢ before entering
 const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 8;
+const MAX_CONC      = 5;
 const ENTRIES_SCAN  = 2;
 const MAX_ENTRIES_PER_MARKET = 2; // hard cap — never enter the same market more than this, ever
 // book quality: require two-sided quotes, spread ≤ 6¢ (checked at entry)
@@ -129,7 +129,7 @@ export async function runScanCycle() {
   }
   console.log(`💰 ${DRY_RUN ? "Paper" : "Buying power"}: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
 
-  // ── Entry candidates: LIVE games OR games starting within the next 24h ──
+  // ── Entry candidates: LIVE games prioritized over next-24h pre-game ──
   const now = Date.now();
   const NEXT_DAY_MS = 24 * 60 * 60 * 1000;
   const pool = markets
@@ -143,14 +143,18 @@ export async function runScanCycle() {
     })
     // and not yet resolved/closed
     .filter(m => !m.endIso || new Date(m.endIso).getTime() > now)
-    .sort((a, b) => b.px - a.px);
+    // tag each candidate as live or pre-game for sorting/logging
+    .map(m => ({ ...m, isLive: new Date(m.gameStartIso).getTime() <= now }))
+    // LIVE games first (isLive=true sorts before false), then by price within each tier
+    .sort((a, b) => (b.isLive - a.isLive) || (b.px - a.px));
 
   let candidates = [];
   if (pool.length) {
-    console.log(`🏆 ${pool.length} favorites (live or next-24h) ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
+    const liveCount = pool.filter(m => m.isLive).length;
+    console.log(`🏆 ${pool.length} favorites (${liveCount} live, ${pool.length - liveCount} next-24h) ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
     candidates = await verifyCandidates(pool.slice(0, 8));
     if (candidates.length) {
-      console.log(`📗 ${candidates.length} with live two-sided books: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 28)}`).join(" · ")}`);
+      console.log(`📗 ${candidates.length} with live two-sided books: ${candidates.slice(0, 3).map(c => `${c.isLive ? "🔴" : "⏳"}${cents(c.ask)} ${c.question.slice(0, 26)}`).join(" · ")}`);
     } else {
       console.log("[INFO] Books too thin/wide on top live favorites this scan");
     }
