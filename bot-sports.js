@@ -18,16 +18,24 @@ import { fetchSportsMoneylines, verifyCandidates, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 10;      // flat $10 per bet
-const BET_MIN       = 10;
+const BET_SIZE      = 15;      // flat $15 per bet
+const BET_MIN       = 15;
 const FAV_MIN       = 0.60;    // wait for the favorite to climb to 60¢ before entering
 const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 6;
+const MAX_CONC      = 8;
 const ENTRIES_SCAN  = 2;
 const MAX_ENTRIES_PER_MARKET = 2; // hard cap — never enter the same market more than this, ever
 // book quality: require two-sided quotes, spread ≤ 6¢ (checked at entry)
 // HOLD-TO-CLOSE: no TP/SL. Positions are only closed by market settlement.
+
+// ── Circuit breaker: session loss limit ──────────────────────────
+// If realized P&L for this boot session drops below -LOSS_LIMIT, the bot
+// stops placing NEW entries (existing open positions still hold to close
+// and still settle normally — this only blocks fresh risk). Resets when
+// the process restarts. Override via env var if you want a different cap.
+const SESSION_LOSS_LIMIT = parseFloat(process.env.SESSION_LOSS_LIMIT || "100"); // dollars
+let _sessionStartPnl = null; // captured on first scan of this boot
 
 // ── Helpers ─────────────────────────────────────────────────────
 const shares = b => b.betSize / b.entryPrice;
@@ -167,72 +175,85 @@ export async function runScanCycle() {
     }
   }
 
+  // ── Circuit breaker: pause new entries if session realized P&L breaches limit ──
+  // Existing open positions are untouched — they still hold to close/settle
+  // normally. This only blocks placing FRESH bets once losses pile up.
+  const currentPnl = parseFloat(stats.pnl || 0);
+  if (_sessionStartPnl === null) _sessionStartPnl = currentPnl; // baseline on first scan this boot
+  const sessionPnl = currentPnl - _sessionStartPnl;
+  const breakerTripped = sessionPnl <= -SESSION_LOSS_LIMIT;
+  if (breakerTripped) {
+    console.log(`  🛑 CIRCUIT BREAKER: session P&L $${sessionPnl.toFixed(2)} ≤ -$${SESSION_LOSS_LIMIT} limit — new entries paused (open positions still hold/settle normally)`);
+  }
+
   let betsPlaced = 0;
   let attempts = 0;
   const MAX_ATTEMPTS = 3; // hard cap on order attempts per scan (incl. failures)
-  for (const m of candidates) {
-    if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
-    if (getAllActiveBets().length >= MAX_CONC) break;
-    if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
-    if (hasActiveBet(m.slug)) continue;
-    if (countBetsForMarket(m.slug) >= MAX_ENTRIES_PER_MARKET) {
-      console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already entered ${MAX_ENTRIES_PER_MARKET}x (local)`);
-      continue;
-    }
-    if (!DRY_RUN) {
-      if (ownedSlugs === null) continue; // couldn't verify positions this scan — don't risk a dupe
-      if (ownedSlugs.has(m.slug)) {
-        console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already hold this position on Polymarket`);
+  if (!breakerTripped) {
+    for (const m of candidates) {
+      if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
+      if (getAllActiveBets().length >= MAX_CONC) break;
+      if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
+      if (hasActiveBet(m.slug)) continue;
+      if (countBetsForMarket(m.slug) >= MAX_ENTRIES_PER_MARKET) {
+        console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already entered ${MAX_ENTRIES_PER_MARKET}x (local)`);
         continue;
       }
-    }
-
-    let entryPrice = m.ask;
-    let betSize = BET_SIZE;
-    let orderId = `dry_${Date.now()}`;
-
-    if (!DRY_RUN) {
-      attempts++;
-      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
-      if (!r.filled) {
-        console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
-        continue;
+      if (!DRY_RUN) {
+        if (ownedSlugs === null) continue; // couldn't verify positions this scan — don't risk a dupe
+        if (ownedSlugs.has(m.slug)) {
+          console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already hold this position on Polymarket`);
+          continue;
+        }
       }
-      entryPrice = r.fillPrice;
-      betSize    = +r.cost.toFixed(2);
-      orderId    = r.orderId;
-      balance   -= betSize;
-    } else {
-      balance -= betSize;
+
+      let entryPrice = m.ask;
+      let betSize = BET_SIZE;
+      let orderId = `dry_${Date.now()}`;
+
+      if (!DRY_RUN) {
+        attempts++;
+        const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
+        if (!r.filled) {
+          console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
+          continue;
+        }
+        entryPrice = r.fillPrice;
+        betSize    = +r.cost.toFixed(2);
+        orderId    = r.orderId;
+        balance   -= betSize;
+      } else {
+        balance -= betSize;
+      }
+
+      const league = m.league || "SPORT";
+      const game = [m.question, m.subtitle].filter(Boolean).join(" — ");
+      recordBet({
+        market: { conditionId: m.slug, question: `[${league}] ${game}`, endDateIso: m.endIso },
+        side: "YES",
+        betSize,
+        edge: 0,
+        trueProbability: entryPrice,
+        impliedProbability: entryPrice,
+        orderId,
+        entryPrice,
+        strategy: "SPORTS_ML",
+        reasoning: `⚽ ${league} LIVE moneyline favorite @ ${cents(entryPrice)} | ${game} | flat $${betSize} | hold to close${DRY_RUN ? "" : " | LIVE FOK fill"}`,
+        entryBtcPrice: null,
+        entryCoin: league,
+        sharpShooter: false,
+        valueBet: false,
+        strike: null,
+        direction: m.question.slice(0, 30),
+      });
+
+      betsPlaced++;
+      const payout = (betSize / entryPrice).toFixed(2);
+      console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
     }
-
-    const league = m.league || "SPORT";
-    const game = [m.question, m.subtitle].filter(Boolean).join(" — ");
-    recordBet({
-      market: { conditionId: m.slug, question: `[${league}] ${game}`, endDateIso: m.endIso },
-      side: "YES",
-      betSize,
-      edge: 0,
-      trueProbability: entryPrice,
-      impliedProbability: entryPrice,
-      orderId,
-      entryPrice,
-      strategy: "SPORTS_ML",
-      reasoning: `⚽ ${league} LIVE moneyline favorite @ ${cents(entryPrice)} | ${game} | flat $${betSize} | hold to close${DRY_RUN ? "" : " | LIVE FOK fill"}`,
-      entryBtcPrice: null,
-      entryCoin: league,
-      sharpShooter: false,
-      valueBet: false,
-      strike: null,
-      direction: m.question.slice(0, 30),
-    });
-
-    betsPlaced++;
-    const payout = (betSize / entryPrice).toFixed(2);
-    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
   }
 
   const s = getStats();
-  console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
+  console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl}${breakerTripped ? " | 🛑 BREAKER ACTIVE" : ""} ──`);
   return { signals: null, exits, betsPlaced };
 }
