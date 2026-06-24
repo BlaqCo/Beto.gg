@@ -129,37 +129,45 @@ export async function runScanCycle() {
   }
   console.log(`💰 ${DRY_RUN ? "Paper" : "Buying power"}: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
 
-  // ── Entry candidates: LIVE games prioritized over next-24h pre-game ──
+  // ── Entry candidates: LIVE games prioritized, then next 48h pre-game ──
   const now = Date.now();
-  const NEXT_DAY_MS = 24 * 60 * 60 * 1000;
+  const LOOKAHEAD_MS = 48 * 60 * 60 * 1000; // 48h window — catches early AM next day and beyond
   const pool = markets
     .map(m => ({ ...m, px: m.ask ?? m.est }))
     .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
-    // game must have either already started (live) or start within the next 24h
+    // game must have already started OR start within the next 48h
     .filter(m => {
       if (!m.gameStartIso) return false;
       const start = new Date(m.gameStartIso).getTime();
-      return start <= now || (start - now) <= NEXT_DAY_MS;
+      return start <= now || (start - now) <= LOOKAHEAD_MS;
     })
-    // and not yet resolved/closed
+    // not yet resolved/closed
     .filter(m => !m.endIso || new Date(m.endIso).getTime() > now)
-    // tag each candidate as live or pre-game for sorting/logging
-    .map(m => ({ ...m, isLive: new Date(m.gameStartIso).getTime() <= now }))
-    // LIVE games first (isLive=true sorts before false), then by price within each tier
-    .sort((a, b) => (b.isLive - a.isLive) || (b.px - a.px));
+    // tag as live or pre-game, include hours until start for logging
+    .map(m => {
+      const start = new Date(m.gameStartIso).getTime();
+      const isLive = start <= now;
+      const hoursUntil = isLive ? 0 : Math.round((start - now) / 3_600_000 * 10) / 10;
+      return { ...m, isLive, hoursUntil };
+    })
+    // LIVE first, then soonest-starting pre-game, then by price within each tier
+    .sort((a, b) => (b.isLive - a.isLive) || (a.hoursUntil - b.hoursUntil) || (b.px - a.px));
 
   let candidates = [];
   if (pool.length) {
     const liveCount = pool.filter(m => m.isLive).length;
-    console.log(`🏆 ${pool.length} favorites (${liveCount} live, ${pool.length - liveCount} next-24h) ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
-    candidates = await verifyCandidates(pool.slice(0, 8));
+    const preCount = pool.length - liveCount;
+    console.log(`🏆 ${pool.length} favorites (${liveCount} 🔴 live, ${preCount} ⏳ pre-game up to 48h) ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
+    candidates = await verifyCandidates(pool.slice(0, 16));
     if (candidates.length) {
-      console.log(`📗 ${candidates.length} with live two-sided books: ${candidates.slice(0, 3).map(c => `${c.isLive ? "🔴" : "⏳"}${cents(c.ask)} ${c.question.slice(0, 26)}`).join(" · ")}`);
+      console.log(`📗 ${candidates.length} verified: ${candidates.slice(0, 3).map(c =>
+        `${c.isLive ? "🔴" : `⏳${c.hoursUntil}h`} ${cents(c.ask)} ${c.question.slice(0, 22)}`
+      ).join(" · ")}`);
     } else {
-      console.log("[INFO] Books too thin/wide on top live favorites this scan");
+      console.log("[INFO] Books too thin/wide on all candidates this scan");
     }
   } else {
-    console.log(`[INFO] No favorites in range (live or next-24h) right now`);
+    console.log(`[INFO] No favorites in 60-70¢ range (live or next-48h) right now`);
   }
 
   // ── Ground-truth dedup: real Polymarket positions (LIVE only) ──
