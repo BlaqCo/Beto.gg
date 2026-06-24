@@ -86,137 +86,138 @@ const TTL = 20_000;
 const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
 const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
 
-// One-time raw shape logger — fires once after deploy so we can see V2 field names
-let _rawShapeLogged = false;
-
-// Moneyline detection: title/question/marketType all used by different API versions
-const MONEYLINE = /moneyline|will .+ win|match winner|game winner|series winner/i;
-const FULL_GAME = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
+// Sub-period exclusion filter
+const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
 
-  // ── V2 migration fix ──────────────────────────────────────────────────────
-  // The old `sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE` filter was a V1
-  // param that silently returns [] after the June 2026 migration. We now fetch
-  // broadly and filter client-side, trying multiple endpoint shapes in order
-  // until one returns data.
-  let raw = [];
-  const endpoints = [
-    // 1) V1 sports category (most likely to work post-migration)
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=sports`,
-    // 2) V1 without the broken sportsMarketTypes param (plain active markets)
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200`,
-    // 3) V2 path if they versioned the route
-    `${GATEWAY}/v2/markets?active=true&closed=false&limit=200`,
-  ];
+  // ── V2 fix: sportsMarketTypeV2 filter + pagination + bestBidQuote/bestAskQuote ──
+  // Diagnostic (previous deploy) revealed:
+  //   - endpoint works: returns 200 markets correctly
+  //   - field is `sportsMarketTypeV2` not `sportsMarketTypes` (V1 param)
+  //   - bid/ask fields are `bestBidQuote` / `bestAskQuote` not `bestBid`/`bestAsk`
+  //   - first 200 results are futures/championship markets; moneylines may be
+  //     on later pages. Paginate up to 600 total, filter by sportsMarketTypeV2.
 
-  for (const url of endpoints) {
+  const MONEYLINE_TYPES = new Set([
+    "SPORTS_MARKET_TYPE_MONEYLINE",      // V1 value
+    "moneyline",                          // possible V2 shorthand
+    "MONEYLINE",
+  ]);
+
+  let raw = [];
+  const BASE = `${GATEWAY}/v1/markets?active=true&closed=false&category=sports&limit=100`;
+
+  // Fetch up to 3 pages (300 markets) to get past futures to game markets
+  for (let page = 0; page < 3; page++) {
     try {
+      const url = `${BASE}&offset=${page * 100}`;
       const { data } = await axios.get(url, { timeout: 10_000 });
-      // Log raw response shape ONCE so we can diagnose V2 field changes
-      if (!_rawShapeLogged) {
-        _rawShapeLogged = true;
-        const arr = data?.markets || data?.data || data?.results || (Array.isArray(data) ? data : []);
-        console.log(`🔍 [sports API] endpoint: ${url}`);
-        console.log(`🔍 [sports API] root keys: ${Object.keys(data || {}).join(", ")}`);
-        console.log(`🔍 [sports API] array length: ${arr.length}`);
-        if (arr[0]) console.log(`🔍 [sports API] first market keys: ${Object.keys(arr[0]).join(", ")}`);
-        if (arr[0]) console.log(`🔍 [sports API] first market sample: ${JSON.stringify(arr[0]).slice(0, 600)}`);
-      }
-      const arr = data?.markets || data?.data || data?.results || (Array.isArray(data) ? data : []);
-      if (arr.length > 0) { raw = arr; break; }
+      const arr = data?.markets || [];
+      if (arr.length === 0) break;
+      raw.push(...arr);
+      if (arr.length < 100) break; // last page
     } catch (e) {
-      console.log(`🔍 [sports API] ${url} failed: ${e.message}`);
+      console.log(`⚠️ [sports API] page ${page} failed: ${e.message}`);
+      break;
     }
   }
 
   if (raw.length === 0) {
-    console.log("⚠️ [sports API] all endpoints returned empty — API may have changed");
+    console.log("⚠️ [sports API] all pages empty — API may have changed");
     _cache = []; _cacheTime = Date.now();
     return [];
   }
 
   const parseArr = v => { try { const a = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(a) ? a : []; } catch { return []; } };
 
-  // Client-side sports/moneyline filter
-  // Accepts: marketType field, category field, tag-based sport detection,
-  // or question text matching known moneyline patterns
-  const isSportsMoneyline = m => {
-    const q = (m.question || m.title || "").toLowerCase();
-    const cat = (m.category || "").toLowerCase();
-    const mtype = (m.marketType || m.market_type || m.type || "").toLowerCase();
-    // Exclude sub-period markets regardless
-    if (FULL_GAME.test(q)) return false;
-    // Accept explicit marketType field
+  // Filter: sportsMarketTypeV2 = moneyline, exclude sub-period questions
+  const isMoneyline = m => {
+    // Primary: use the V2 type field directly
+    const v2type = (m.sportsMarketTypeV2 || "").toUpperCase();
+    if (v2type && MONEYLINE_TYPES.has(v2type)) return true;
+    // Fallback: V1 sportsMarketType field
+    const v1type = (m.sportsMarketType || "").toUpperCase();
+    if (v1type && MONEYLINE_TYPES.has(v1type)) return true;
+    // Fallback: marketType field
+    const mtype = (m.marketType || "").toLowerCase();
     if (mtype.includes("moneyline")) return true;
-    // Accept sports category
-    if (cat === "sports" || cat.includes("sport")) {
-      // Within sports, prefer moneyline-shaped questions
-      return MONEYLINE.test(q) || /vs\.?|at |@ /.test(q);
-    }
-    // Accept tag-based sport detection
-    const tags = Array.isArray(m.tags) ? m.tags : [];
-    const hasSportTag = tags.some(t => t?.sport?.name || t?.league?.name || t?.category === "sports");
-    if (hasSportTag) return MONEYLINE.test(q) || /vs\.?|at |@ /.test(q);
     return false;
   };
 
   const out = [];
   for (const m of raw) {
-    // Accept id or slug as the unique key (V2 may use id instead of slug)
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
     if (m.active === false || m.closed === true || m.resolved === true) continue;
-    if (!isSportsMoneyline(m)) continue;
+    if (!isMoneyline(m)) continue;
 
     const q = m.question || m.title || "";
+    if (SUB_PERIOD.test(q)) continue;
 
-    // Price — try every known field name V1 and V2 use
+    // Price extraction — V2 uses bestBidQuote/bestAskQuote objects
     let est = null;
+    // V2 quote objects: { price: "0.65", size: "100" }
+    const bidQ = m.bestBidQuote ?? m.bestBid;
+    const askQ = m.bestAskQuote ?? m.bestAsk;
+    const bid = num(typeof bidQ === "object" ? bidQ?.price : bidQ);
+    const ask = num(typeof askQ === "object" ? askQ?.price : askQ);
+
+    // est from marketSides (long side)
     const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
     const longSide = sides.find(s => s.long === true);
     if (longSide) est = num(longSide.price);
+    // est from outcomePrices
     if (est == null) {
       const outcomes = parseArr(m.outcomes);
-      const prices = parseArr(m.outcomePrices || m.outcome_prices).map(Number);
+      const prices = parseArr(m.outcomePrices).map(Number);
       if (prices.length) {
         let yi = outcomes.findIndex(o => /yes/i.test(String(o)));
         if (yi < 0) yi = 0;
         est = num(prices[yi]);
       }
     }
-    if (est == null) est = num(m.lastTradePrice ?? m.last_trade_price ?? m.price);
+    if (est == null) est = ask ?? bid ?? num(m.lastTradePrice);
 
-    // League from tags or category
+    // League from tags
     let league = null;
     const tags = Array.isArray(m.tags) ? m.tags : [];
     for (const t of tags) {
       league = t?.league?.abbreviation || t?.league?.name || league;
       if (!league && t?.sport?.name) league = t.sport.name;
     }
-    if (!league) league = m.category || m.sport || null;
+    if (!league) league = m.category || null;
 
-    // Game start time — V2 may rename this field
-    const gameStart = m.gameStartTime || m.game_start_time || m.startTime || m.start_time || null;
+    const gameStart = m.gameStartTime || m.game_start_time || m.startTime || null;
 
     out.push({
       slug,
       question: q,
       subtitle: m.subtitle || null,
       league: league ? String(league).toUpperCase().slice(0, 12) : "SPORT",
-      ask: num(m.bestAsk ?? m.best_ask),
-      bid: num(m.bestBid ?? m.best_bid),
-      est,
-      tick: num(m.orderPriceMinTickSize ?? m.tick_size) || 0.01,
-      minQty: num(m.minimumTradeQty ?? m.min_qty) || 1,
+      ask, bid, est,
+      tick: num(m.orderPriceMinTickSize) || 0.01,
+      minQty: num(m.minimumTradeQty) || 1,
       gameStartIso: gameStart,
-      endIso: m.endDate || m.end_date || m.endTime || null,
+      endIso: m.endDate || null,
       category: m.category || "",
+      sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
     });
   }
 
-  console.log(`📊 [sports API] raw: ${raw.length} markets → ${out.length} sports moneylines after filter`);
+  console.log(`📊 [sports API] scanned ${raw.length} sports mkts → ${out.length} moneylines`);
+  if (out.length === 0 && raw.length > 0) {
+    // Log type distribution to help diagnose further
+    const types = {};
+    raw.forEach(m => {
+      const t = m.sportsMarketTypeV2 || m.sportsMarketType || m.marketType || "UNKNOWN";
+      types[t] = (types[t] || 0) + 1;
+    });
+    console.log("🔍 [sports API] market type breakdown:", JSON.stringify(types));
+    console.log("🔍 [sports API] sample sportsMarketTypeV2 values:",
+      [...new Set(raw.slice(0,20).map(m => m.sportsMarketTypeV2))].join(", "));
+  }
 
   _cache = out; _cacheTime = Date.now();
   return out;
