@@ -83,7 +83,6 @@ async function signedRequest(method, path, body) {
 // ── Public: sports moneyline markets ────────────────────────────
 let _cache = null, _cacheTime = 0;
 const TTL = 20_000;
-const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
 const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
 
 // Sub-period exclusion filter
