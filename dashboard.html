@@ -327,9 +327,9 @@ async function refresh(){
       badge.className='badge '+(isDry?'badge-dry':'badge-live');
 
       // Balance
-      const bp=parseFloat(s.buyingPower??s.liveBalance??s.dryBalance??0);
-      document.getElementById('balance').textContent='$'+bp.toFixed(2);
-      document.getElementById('bal-sub').textContent=isDry?'paper balance':'buying power';
+      const bp=isDry?parseFloat(s.dryBalance??0):parseFloat(s.liveBalance??s.buyingPower??0);
+      const balEl=document.getElementById('balance');balEl.textContent='$'+bp.toFixed(2);balEl.className='s-val '+(isDry?'c-yellow':'c-green');
+      document.getElementById('bal-sub').textContent=isDry?'paper balance':'polymarket balance';
 
       // P/L
       const pnl=parseFloat(sp.totalPnl??sp.pnl??0);
