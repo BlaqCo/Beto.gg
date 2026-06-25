@@ -100,10 +100,15 @@ export async function fetchSportsMoneylines() {
   //     on later pages. Paginate up to 600 total, filter by sportsMarketTypeV2.
 
   const MONEYLINE_TYPES = new Set([
-    "SPORTS_MARKET_TYPE_MONEYLINE",      // V1 value
-    "moneyline",                          // possible V2 shorthand
+    "SPORTS_MARKET_TYPE_MONEYLINE",
+    "moneyline",
     "MONEYLINE",
   ]);
+
+  // Game market patterns — used to accept UNSPECIFIED markets that are
+  // actually game moneylines (e.g. "Will Yankees beat Red Sox on June 25?")
+  const GAME_PAT = /vs\.?|at|will .+ (beat|defeat|win)|winner|moneyline|ml/i;
+  const NOT_FUTURE = /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|award|season wins|division|playoff/i;
 
   let raw = [];
   const BASE = `${GATEWAY}/v1/markets?active=true&closed=false&category=sports&limit=100`;
@@ -131,17 +136,20 @@ export async function fetchSportsMoneylines() {
 
   const parseArr = v => { try { const a = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(a) ? a : []; } catch { return []; } };
 
-  // Filter: sportsMarketTypeV2 = moneyline, exclude sub-period questions
+  // Filter: accept explicit moneyline types OR UNSPECIFIED game markets
   const isMoneyline = m => {
-    // Primary: use the V2 type field directly
+    const q = m.question || m.title || "";
+    // Explicit moneyline type — always accept
     const v2type = (m.sportsMarketTypeV2 || "").toUpperCase();
-    if (v2type && MONEYLINE_TYPES.has(v2type)) return true;
-    // Fallback: V1 sportsMarketType field
+    if (MONEYLINE_TYPES.has(v2type)) return true;
     const v1type = (m.sportsMarketType || "").toUpperCase();
-    if (v1type && MONEYLINE_TYPES.has(v1type)) return true;
-    // Fallback: marketType field
+    if (MONEYLINE_TYPES.has(v1type)) return true;
     const mtype = (m.marketType || "").toLowerCase();
     if (mtype.includes("moneyline")) return true;
+    // UNSPECIFIED: accept if question looks like a game (not a season future)
+    if (v2type === "SPORTS_MARKET_TYPE_UNSPECIFIED" || v2type === "") {
+      if (GAME_PAT.test(q) && !NOT_FUTURE.test(q)) return true;
+    }
     return false;
   };
 
