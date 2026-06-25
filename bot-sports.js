@@ -1,7 +1,7 @@
 /**
  * bot-sports.js — BETO.GG Sports v4.2 (polymarket.us native)
  *
- * Strategy: BUY YES on moneyline favorites 60-70¢ (live or starting within 24h)
+ * Strategy: BUY YES on moneyline favorites 60-70¢ (live or starting within 12h)
  *           Flat $10 bets. HOLD TO RESOLUTION — no TP/SL, settlement only.
  * DRY:  paper fills at estimated price (no BBO required)
  * LIVE: FOK limit entries via signed REST
@@ -23,7 +23,7 @@ const FAV_MAX       = 0.70;    // skip heavy favorites / near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 8;       // max concurrent open positions
 const ENTRIES_SCAN  = 5;       // max new entries per scan cycle — snipe mode
-const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead — catch esports/tennis posted early
+const NEXT_DAY_MS   = 12 * 60 * 60 * 1000; // 12h max — live games + earliest upcoming only
 
 // ── Helpers ──────────────────────────────────────────────────────
 const shares    = b  => b.betSize / b.entryPrice;
@@ -142,7 +142,7 @@ export async function runScanCycle() {
       if (!m.gameStartIso) {
         if (!m.endIso) return false;
         const end = new Date(m.endIso).getTime();
-        return end > now && (end - now) <= NEXT_DAY_MS;
+        return end > now && (end - now) <= NEXT_DAY_MS; // 12h cap
       }
       const start = new Date(m.gameStartIso).getTime();
       return start <= now || (start - now) <= NEXT_DAY_MS;
@@ -160,7 +160,7 @@ export async function runScanCycle() {
     });
 
   if (!pool.length) {
-    console.log(`[INFO] No favorites in 60-70¢ range (live or next-24h) right now`);
+    console.log(`[INFO] No favorites in 60-70¢ range (live or next-12h) right now`);
     const s = getStats();
     console.log(`── +0 entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
     return { signals: null, exits, betsPlaced: 0 };
