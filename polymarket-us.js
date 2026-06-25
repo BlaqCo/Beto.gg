@@ -82,27 +82,38 @@ export async function fetchSportsMoneylines() {
   // sportsMarketTypeV2 values — some are MONEYLINE, some FUTURE, some UNSPECIFIED.
   // So we DON'T filter by type. Instead we filter by question text + game start time.
   let raw = [];
+
+  // Parallel fetch across 9 endpoints — MLB/Tennis/Esports live markets
+  // can appear anywhere in the paginated list. Fetch 1800 markets in parallel.
   const urls = [
-    // Try direct moneyline param first
+    // Direct moneyline filter
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE`,
-    // Then broad sweep — all active markets paginated
+    // Category sports (World Cup, MLB tagged as sports)
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=sports&offset=0`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=sports&offset=200`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=sports&offset=400`,
+    // Broad sweep — catches tennis/esports with other categories
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=0`,
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=200`,
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=400`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=600`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=800`,
   ];
 
-  for (const url of urls) {
-    try {
-      const { data } = await axios.get(url, { timeout: 12_000 });
-      const arr = data?.markets || [];
-      if (arr.length > 0) {
-        const seen = new Set(raw.map(m => m.slug || m.id));
-        arr.forEach(m => { if (!seen.has(m.slug || m.id)) raw.push(m); });
-      }
-    } catch (e) {
-      console.log(`⚠️ [sports API] fetch failed: ${e.message}`);
+  const results = await Promise.allSettled(
+    urls.map(url => axios.get(url, { timeout: 12_000 }))
+  );
+
+  const seenKeys = new Set();
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    const arr = r.value?.data?.markets || [];
+    for (const m of arr) {
+      const key = m.slug || m.id;
+      if (key && !seenKeys.has(key)) { seenKeys.add(key); raw.push(m); }
     }
   }
+  console.log(`📡 [sports API] ${raw.length} unique markets from ${urls.length} endpoints`);
 
   if (raw.length === 0) {
     console.log("⚠️ [sports API] all endpoints empty");
