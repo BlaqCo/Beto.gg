@@ -1,16 +1,5 @@
 /**
  * polymarket-us.js — polymarket.us integration (no SDK; raw signed REST)
- *
- * PUBLIC:  https://gateway.polymarket.us  (no auth)
- * TRADING: https://api.polymarket.us     (Ed25519-signed headers)
- *
- * Signing per https://docs.polymarket.us/api-reference/authentication:
- *   message  = `${timestampMs}${METHOD}${path}`
- *   signature = base64( ed25519_sign(message) )  using first 32 bytes of
- *               base64-decoded Secret Key as the private seed.
- * Headers: X-PM-Access-Key, X-PM-Timestamp, X-PM-Signature
- *
- * Env: POLYMARKET_API_KEY = Key ID (uuid) | POLYMARKET_PRIVATE_KEY = Secret Key (base64)
  */
 
 import axios from "axios";
@@ -29,28 +18,19 @@ function getCreds() {
   if (_creds) return _creds;
   let keyId  = clean(process.env.POLYMARKET_API_KEY);
   let secret = clean(process.env.POLYMARKET_PRIVATE_KEY);
-
   if (!keyId || !secret || keyId.startsWith("your_")) {
-    throw new Error("Set POLYMARKET_API_KEY (Key ID) and POLYMARKET_PRIVATE_KEY (Secret Key)");
+    throw new Error("Set POLYMARKET_API_KEY and POLYMARKET_PRIVATE_KEY");
   }
-  // Auto-fix swapped values
   if (looksB64(keyId) && looksUuid(secret)) {
-    console.log("⚠️ Credentials appear swapped (Key ID ↔ Secret) — auto-correcting");
+    console.log("⚠️ Credentials swapped — auto-correcting");
     [keyId, secret] = [secret, keyId];
   }
-  console.log(`🔑 Key ID: ${keyId.length} chars ${looksUuid(keyId) ? "(uuid ✓)" : "(⚠️ not uuid-shaped)"} | Secret: ${secret.length} chars ${looksB64(secret) ? "(base64 ✓)" : "(⚠️ not base64 — re-copy from polymarket.us/developer)"}`);
-
+  console.log(`🔑 Key ID: ${keyId.length} chars ${looksUuid(keyId) ? "(uuid ✓)" : "(⚠️ not uuid)"} | Secret: ${secret.length} chars ${looksB64(secret) ? "(base64 ✓)" : "(⚠️ not base64)"}`);
   const raw = Buffer.from(secret, "base64");
-  if (raw.length !== 32 && raw.length !== 64) {
-    throw new Error(`Secret decodes to ${raw.length} bytes; expected 32 or 64 — re-copy the Secret Key`);
-  }
+  if (raw.length !== 32 && raw.length !== 64) throw new Error(`Secret decodes to ${raw.length} bytes; expected 32 or 64`);
   const seed = raw.subarray(0, 32);
-  // Wrap seed in PKCS8 DER for Node's Ed25519 key import
-  const der = Buffer.concat([
-    Buffer.from("302e020100300506032b657004220420", "hex"), seed,
-  ]);
+  const der = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]);
   const privateKey = crypto.createPrivateKey({ key: der, format: "der", type: "pkcs8" });
-
   _creds = { keyId, privateKey };
   return _creds;
 }
@@ -85,82 +65,86 @@ let _cache = null, _cacheTime = 0;
 const TTL = 20_000;
 const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
 
-// Sub-period exclusion filter
+// Sub-period markets to always exclude regardless of type
 const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
+
+// Season-long future patterns — exclude these even if they have a game start time
+const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|nba finals|wcf|ecf|alcs|nlcs|mvp|cy young|award|division winner|win the|make the playoffs|season total|over\/under \d+ wins)\b/i;
+
+// Game moneyline patterns — question contains two teams separated by "vs" or "at"
+const GAME_VS = /\bvs\.?\b|\bat\b/i;
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
 
-  // ── V2 fix: sportsMarketTypeV2 filter + pagination + bestBidQuote/bestAskQuote ──
-  // Diagnostic (previous deploy) revealed:
-  //   - endpoint works: returns 200 markets correctly
-  //   - field is `sportsMarketTypeV2` not `sportsMarketTypes` (V1 param)
-  //   - bid/ask fields are `bestBidQuote` / `bestAskQuote` not `bestBid`/`bestAsk`
-  //   - first 200 results are futures/championship markets; moneylines may be
-  //     on later pages. Paginate up to 600 total, filter by sportsMarketTypeV2.
-
-  const MONEYLINE_TYPES = new Set([
-    "SPORTS_MARKET_TYPE_MONEYLINE",
-    "moneyline",
-    "MONEYLINE",
-  ]);
-
-  // Game market patterns — used to accept UNSPECIFIED markets that are
-  // actually game moneylines (e.g. "Will Yankees beat Red Sox on June 25?")
-  const GAME_PAT = /vs\.?|at|will .+ (beat|defeat|win)|winner|moneyline|ml/i;
-  const NOT_FUTURE = /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|award|season wins|division|playoff/i;
-
+  // Fetch from multiple endpoints and deduplicate.
+  // Key insight: Polymarket.us tags live game markets inconsistently across
+  // sportsMarketTypeV2 values — some are MONEYLINE, some FUTURE, some UNSPECIFIED.
+  // So we DON'T filter by type. Instead we filter by question text + game start time.
   let raw = [];
-
-  // Strategy: the category=sports filter only returns futures on Polymarket.us.
-  // Live game moneylines appear to use sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE
-  // as a direct query param — try that first, then fall back to broader fetches.
-  const fetches = [
-    // 1) Direct moneyline filter (V1 param still works for filtering even if list was broken)
+  const urls = [
+    // Try direct moneyline param first
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE`,
-    // 2) No category filter — all active markets, paginated
+    // Then broad sweep — all active markets paginated
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=0`,
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=200`,
     `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=400`,
   ];
 
-  for (const url of fetches) {
+  for (const url of urls) {
     try {
       const { data } = await axios.get(url, { timeout: 12_000 });
       const arr = data?.markets || [];
       if (arr.length > 0) {
-        // Add any markets not already in raw (dedup by slug/id)
         const seen = new Set(raw.map(m => m.slug || m.id));
         arr.forEach(m => { if (!seen.has(m.slug || m.id)) raw.push(m); });
       }
     } catch (e) {
-      console.log(`⚠️ [sports API] ${url.slice(0,60)}... failed: ${e.message}`);
+      console.log(`⚠️ [sports API] fetch failed: ${e.message}`);
     }
   }
 
   if (raw.length === 0) {
-    console.log("⚠️ [sports API] all pages empty — API may have changed");
+    console.log("⚠️ [sports API] all endpoints empty");
     _cache = []; _cacheTime = Date.now();
     return [];
   }
 
   const parseArr = v => { try { const a = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(a) ? a : []; } catch { return []; } };
 
-  // Filter: accept explicit moneyline types OR UNSPECIFIED game markets
-  const isMoneyline = m => {
-    const q = m.question || m.title || "";
-    // Explicit moneyline type — always accept
-    const v2type = (m.sportsMarketTypeV2 || "").toUpperCase();
-    if (MONEYLINE_TYPES.has(v2type)) return true;
-    const v1type = (m.sportsMarketType || "").toUpperCase();
-    if (MONEYLINE_TYPES.has(v1type)) return true;
-    const mtype = (m.marketType || "").toLowerCase();
-    if (mtype.includes("moneyline")) return true;
-    // UNSPECIFIED: accept if question looks like a game (not a season future)
-    if (v2type === "SPORTS_MARKET_TYPE_UNSPECIFIED" || v2type === "") {
-      if (GAME_PAT.test(q) && !NOT_FUTURE.test(q)) return true;
-    }
-    return false;
+  // ── Game market detection ────────────────────────────────────
+  // Accept a market if it looks like a head-to-head game, not a season future.
+  // We do NOT rely on sportsMarketTypeV2 because Polymarket tags it inconsistently.
+  const isGameMarket = m => {
+    const q = (m.question || m.title || "").trim();
+    if (!q) return false;
+
+    // Must be a sports category market
+    const cat = (m.category || "").toLowerCase();
+    const tags = Array.isArray(m.tags) ? m.tags : [];
+    const hasSportTag = tags.some(t => t?.sport?.name || t?.league?.name);
+    if (cat !== "sports" && !hasSportTag) return false;
+
+    // Exclude sub-period markets
+    if (SUB_PERIOD.test(q)) return false;
+
+    // Exclude season-long futures
+    if (SEASON_FUTURE.test(q)) return false;
+
+    // Must have a game start time (futures often don't, or it's far out)
+    const gameStart = m.gameStartTime || m.game_start_time || m.startTime;
+    if (!gameStart) return false;
+
+    // Game start must be within 48 hours from now (live or upcoming)
+    const startMs = new Date(gameStart).getTime();
+    const now = Date.now();
+    const hoursOut = (startMs - now) / 3_600_000;
+    if (hoursOut > 48 || hoursOut < -6) return false; // exclude games ended >6h ago
+
+    // Question must contain "vs" or "at" pattern (two teams)
+    if (!GAME_VS.test(q)) return false;
+
+    return true;
   };
 
   const out = [];
@@ -168,24 +152,20 @@ export async function fetchSportsMoneylines() {
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
     if (m.active === false || m.closed === true || m.resolved === true) continue;
-    if (!isMoneyline(m)) continue;
+    if (!isGameMarket(m)) continue;
 
     const q = m.question || m.title || "";
-    if (SUB_PERIOD.test(q)) continue;
 
     // Price extraction — V2 uses bestBidQuote/bestAskQuote objects
-    let est = null;
-    // V2 quote objects: { price: "0.65", size: "100" }
     const bidQ = m.bestBidQuote ?? m.bestBid;
     const askQ = m.bestAskQuote ?? m.bestAsk;
     const bid = num(typeof bidQ === "object" ? bidQ?.price : bidQ);
     const ask = num(typeof askQ === "object" ? askQ?.price : askQ);
 
-    // est from marketSides (long side)
+    let est = null;
     const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
     const longSide = sides.find(s => s.long === true);
     if (longSide) est = num(longSide.price);
-    // est from outcomePrices
     if (est == null) {
       const outcomes = parseArr(m.outcomes);
       const prices = parseArr(m.outcomePrices).map(Number);
@@ -197,7 +177,6 @@ export async function fetchSportsMoneylines() {
     }
     if (est == null) est = ask ?? bid ?? num(m.lastTradePrice);
 
-    // League from tags
     let league = null;
     const tags = Array.isArray(m.tags) ? m.tags : [];
     for (const t of tags) {
@@ -207,10 +186,13 @@ export async function fetchSportsMoneylines() {
     if (!league) league = m.category || null;
 
     const gameStart = m.gameStartTime || m.game_start_time || m.startTime || null;
+    const now = Date.now();
+    const startMs = gameStart ? new Date(gameStart).getTime() : now;
+    const isLive = startMs <= now;
+    const hoursUntil = isLive ? 0 : Math.round((startMs - now) / 3_600_000 * 10) / 10;
 
     out.push({
-      slug,
-      question: q,
+      slug, question: q,
       subtitle: m.subtitle || null,
       league: league ? String(league).toUpperCase().slice(0, 12) : "SPORT",
       ask, bid, est,
@@ -219,36 +201,26 @@ export async function fetchSportsMoneylines() {
       gameStartIso: gameStart,
       endIso: m.endDate || null,
       category: m.category || "",
+      isLive,
+      hoursUntil,
       sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
     });
   }
 
-  console.log(`📊 [sports API] scanned ${raw.length} total mkts → ${out.length} moneylines`);
-  if (out.length === 0 && raw.length > 0) {
-    const types = {};
-    raw.forEach(m => {
-      const t = m.sportsMarketTypeV2 || m.sportsMarketType || m.marketType || "UNKNOWN";
-      types[t] = (types[t] || 0) + 1;
-    });
-    console.log("🔍 [sports API] type breakdown:", JSON.stringify(types));
-    // Log sample of non-future markets so we can see what game markets look like
-    const nonFuture = raw.filter(m => !String(m.sportsMarketTypeV2||"").includes("FUTURE")).slice(0,3);
-    if (nonFuture.length) console.log("🔍 [sports API] non-future samples:", JSON.stringify(nonFuture.map(m => ({
-      slug: m.slug, q: (m.question||"").slice(0,60),
-      v2type: m.sportsMarketTypeV2, v1type: m.sportsMarketType,
-      mtype: m.marketType, cat: m.category, active: m.active
-    }))));
+  // Sort: live first, then soonest pre-game
+  out.sort((a, b) => (b.isLive - a.isLive) || (a.hoursUntil - b.hoursUntil));
+
+  console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${out.filter(x=>x.isLive).length} live, ${out.filter(x=>!x.isLive).length} upcoming)`);
+
+  // Log first few found so we can verify
+  if (out.length > 0) {
+    out.slice(0, 3).forEach(m => console.log(`  ✓ ${m.isLive ? "🔴 LIVE" : `⏳ ${m.hoursUntil}h`} | ${m.league} | ${m.question.slice(0,55)} | est ${m.est ? Math.round(m.est*100)+"¢" : "?"}`));
   }
 
   _cache = out; _cacheTime = Date.now();
   return out;
 }
 
-/**
- * Verify candidate markets with real top-of-book quotes.
- * Input: array of {slug,...}; returns same objects with live bid/ask attached,
- * keeping only two-sided books with spread <= maxSpread.
- */
 export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
   const checks = await Promise.all(cands.map(async c => {
     const bbo = await getBBO(c.slug);
@@ -282,8 +254,6 @@ export async function getSettlement(slug) {
   } catch { return null; }
 }
 
-// ── Authenticated ───────────────────────────────────────────────
-// Money values may arrive as 70, "70.00", or {value:"70.00",currency:"USD"}
 const money = x => {
   if (x == null) return null;
   if (typeof x === "object") return money(x.value ?? x.amount ?? x.units);
@@ -294,19 +264,10 @@ const money = x => {
 let _balShapeLogged = false;
 export async function getBuyingPower() {
   const b = await signedRequest("GET", "/v1/account/balances");
-
-  // balances may come back as an ARRAY of accounts:
-  //   { "balances": [ { "currentBalance": 70, "buyingPower": 70, ... } ] }
-  // — unwrap to the first entry before reading fields.
   let root = b?.balances ?? b ?? {};
   if (Array.isArray(root)) root = root[0] || {};
-
-  const buyingPower =
-    money(root.buyingPower) ?? money(root.buying_power) ?? null;
-  const currentBalance =
-    money(root.currentBalance) ?? money(root.current_balance) ??
-    money(root.cashBalance) ?? null;
-
+  const buyingPower = money(root.buyingPower) ?? money(root.buying_power) ?? null;
+  const currentBalance = money(root.currentBalance) ?? money(root.current_balance) ?? money(root.cashBalance) ?? null;
   if ((buyingPower == null || buyingPower === 0) && !_balShapeLogged) {
     _balShapeLogged = true;
     console.log("🔍 balances raw shape:", JSON.stringify(b).slice(0, 300));
@@ -314,12 +275,10 @@ export async function getBuyingPower() {
   return { buyingPower: buyingPower ?? 0, currentBalance: currentBalance ?? buyingPower ?? 0 };
 }
 
-/** Live BUY: fill-or-kill limit at ask + 1 tick. Whole contracts. */
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
   const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
   const qty = Math.floor(sizeUsd / limit);
   if (qty < 1) return { filled: false, error: `size $${sizeUsd} < 1 contract @ ${limit.toFixed(2)}` };
-
   try {
     const order = await signedRequest("POST", "/v1/orders", {
       marketSlug: slug,
@@ -329,7 +288,6 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
       quantity: qty,
       tif: "TIME_IN_FORCE_FILL_OR_KILL",
     });
-
     let state = order?.state, id = order?.id;
     if (state === "ORDER_STATE_PENDING_NEW" && id) {
       await new Promise(r => setTimeout(r, 1200));
@@ -344,7 +302,6 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
   }
 }
 
-/** Live full exit at market (TP/SL/manual). */
 export async function closePositionLive(slug) {
   try {
     await signedRequest("POST", "/v1/order/close-position", { marketSlug: slug });
@@ -354,16 +311,6 @@ export async function closePositionLive(slug) {
   }
 }
 
-/**
- * Ground-truth check against the REAL Polymarket account: returns a map of
- * { [marketSlug]: { qtyBought, netPosition } } for every market ever traded
- * on this account. Used to prevent duplicate entries into a market that the
- * account already holds, regardless of local state/persistence — survives
- * restarts, redeploys, anything, because it's read directly from Polymarket.
- *
- * Returns null on error so callers can fail safe (don't block trading on a
- * transient API hiccup, but log it).
- */
 export async function getOpenPositions() {
   try {
     const data = await signedRequest("GET", "/v1/portfolio/positions");
@@ -382,7 +329,6 @@ export async function getOpenPositions() {
   }
 }
 
-// ── Preflight ───────────────────────────────────────────────────
 export async function preflightUS() {
   const msgs = [];
   let keyId;
@@ -397,9 +343,9 @@ export async function preflightUS() {
     }
   } catch (e) {
     msgs.push("❌ Auth/balance check failed: " + e.message);
-    msgs.push(`🔎 Sending Key ID: ${keyId.slice(0, 13)}… (${keyId.length} chars, ${looksUuid(keyId) ? "uuid ✓" : "⚠️ NOT uuid"}) — compare to polymarket.us/developer`);
+    msgs.push(`🔎 Sending Key ID: ${keyId.slice(0, 13)}… (${keyId.length} chars, ${looksUuid(keyId) ? "uuid ✓" : "⚠️ NOT uuid"})`);
     if (/not found/i.test(e.message)) {
-      msgs.push("👉 Key doesn't exist server-side: revoked, truncated copy, or different account. Create a fresh key (sign in with Apple, same as the app), use the COPY buttons for both values, update both Railway vars.");
+      msgs.push("👉 Key doesn't exist server-side — generate new API keys at polymarket.us/developer");
     }
     return { ok: false, messages: msgs };
   }
