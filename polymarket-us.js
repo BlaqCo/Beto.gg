@@ -235,6 +235,29 @@ export async function fetchSportsMoneylines() {
 
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${out.filter(x=>x.isLive).length} live, ${out.filter(x=>!x.isLive).length} upcoming)`);
 
+  // DEBUG: log 3 upcoming markets with their raw price fields so we can fix extraction
+  const upcoming = out.filter(x => !x.isLive && x.est == null).slice(0, 3);
+  if (upcoming.length === 0) {
+    // Also check raw markets that passed isGameMarket but have null prices
+    const nullPriceRaw = raw.filter(m => {
+      if (!isGameMarket(m)) return false;
+      const q = m.question || m.title || "";
+      return !/world cup|ecuador|germany|curacao|tunisia|netherlands/i.test(q);
+    }).slice(0, 3);
+    if (nullPriceRaw.length) {
+      console.log("🔍 Sample non-WC game markets raw price fields:");
+      nullPriceRaw.forEach(m => console.log(JSON.stringify({
+        q: (m.question||"").slice(0,60),
+        bestBid: m.bestBid, bestAsk: m.bestAsk,
+        bestBidQuote: m.bestBidQuote, bestAskQuote: m.bestAskQuote,
+        outcomePrices: m.outcomePrices,
+        outcomes: m.outcomes,
+        lastTradePrice: m.lastTradePrice,
+        marketSides: m.marketSides,
+      })));
+    }
+  }
+
   // One-time: log rejected markets that look like they should be game markets
   // so we can see exactly why tennis is getting filtered
   if (out.length < 30) {
