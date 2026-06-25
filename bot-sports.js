@@ -22,8 +22,8 @@ const FAV_MIN       = 0.60;    // wait for the favorite to reach 60¢
 const FAV_MAX       = 0.70;    // skip heavy favorites / near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 8;       // max concurrent open positions
-const ENTRIES_SCAN  = 2;       // max new entries per scan cycle
-const NEXT_DAY_MS   = 24 * 60 * 60 * 1000; // 24h lookahead for pre-game
+const ENTRIES_SCAN  = 5;       // max new entries per scan cycle — snipe mode
+const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead — catch esports/tennis posted early
 
 // ── Helpers ──────────────────────────────────────────────────────
 const shares    = b  => b.betSize / b.entryPrice;
@@ -138,20 +138,25 @@ export async function runScanCycle() {
     .map(m => ({ ...m, px: m.ask ?? m.est }))
     .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
     .filter(m => {
-      if (!m.gameStartIso) return false;
+      // If no gameStartIso (some esports/tennis markets), use endDate as proxy
+      if (!m.gameStartIso) {
+        if (!m.endIso) return false;
+        const end = new Date(m.endIso).getTime();
+        return end > now && (end - now) <= NEXT_DAY_MS;
+      }
       const start = new Date(m.gameStartIso).getTime();
       return start <= now || (start - now) <= NEXT_DAY_MS;
     })
     .filter(m => !m.endIso || new Date(m.endIso).getTime() > now)
-    // Live games first, then soonest pre-game, then highest price
+    // Sort: 1) live first 2) soonest start 3) highest price (strongest edge)
     .sort((a, b) => {
-      const aLive = new Date(a.gameStartIso).getTime() <= now ? 1 : 0;
-      const bLive = new Date(b.gameStartIso).getTime() <= now ? 1 : 0;
-      if (bLive !== aLive) return bLive - aLive;
-      const aStart = new Date(a.gameStartIso).getTime();
-      const bStart = new Date(b.gameStartIso).getTime();
-      if (aStart !== bStart) return aStart - bStart;
-      return b.px - a.px;
+      const aStart = a.gameStartIso ? new Date(a.gameStartIso).getTime() : now + 999_999_999;
+      const bStart = b.gameStartIso ? new Date(b.gameStartIso).getTime() : now + 999_999_999;
+      const aLive = aStart <= now ? 1 : 0;
+      const bLive = bStart <= now ? 1 : 0;
+      if (bLive !== aLive) return bLive - aLive;       // live > pre-game
+      if (aStart !== bStart) return aStart - bStart;    // soonest first
+      return b.px - a.px;                               // highest price = clearest edge
     });
 
   if (!pool.length) {
@@ -208,7 +213,7 @@ export async function runScanCycle() {
   // ── Entry loop ─────────────────────────────────────────────────
   let betsPlaced = 0;
   let attempts   = 0;
-  const MAX_ATTEMPTS = 3;
+  const MAX_ATTEMPTS = 5;
 
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
