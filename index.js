@@ -381,7 +381,7 @@ async function loadBots() {
     } catch (err) {
       console.error("Sports scan error:", err.message);
     }
-  }, 8000);
+  }, 3000); // 3s scan — fastest snipe
 
   console.log("[INFO] Sports scanner started — crypto disabled (CA)");
 })();
