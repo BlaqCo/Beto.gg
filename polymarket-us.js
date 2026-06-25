@@ -111,20 +111,30 @@ export async function fetchSportsMoneylines() {
   const NOT_FUTURE = /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|award|season wins|division|playoff/i;
 
   let raw = [];
-  const BASE = `${GATEWAY}/v1/markets?active=true&closed=false&category=sports&limit=100`;
 
-  // Fetch up to 3 pages (300 markets) to get past futures to game markets
-  for (let page = 0; page < 3; page++) {
+  // Strategy: the category=sports filter only returns futures on Polymarket.us.
+  // Live game moneylines appear to use sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE
+  // as a direct query param — try that first, then fall back to broader fetches.
+  const fetches = [
+    // 1) Direct moneyline filter (V1 param still works for filtering even if list was broken)
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE`,
+    // 2) No category filter — all active markets, paginated
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=0`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=200`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=400`,
+  ];
+
+  for (const url of fetches) {
     try {
-      const url = `${BASE}&offset=${page * 100}`;
-      const { data } = await axios.get(url, { timeout: 10_000 });
+      const { data } = await axios.get(url, { timeout: 12_000 });
       const arr = data?.markets || [];
-      if (arr.length === 0) break;
-      raw.push(...arr);
-      if (arr.length < 100) break; // last page
+      if (arr.length > 0) {
+        // Add any markets not already in raw (dedup by slug/id)
+        const seen = new Set(raw.map(m => m.slug || m.id));
+        arr.forEach(m => { if (!seen.has(m.slug || m.id)) raw.push(m); });
+      }
     } catch (e) {
-      console.log(`⚠️ [sports API] page ${page} failed: ${e.message}`);
-      break;
+      console.log(`⚠️ [sports API] ${url.slice(0,60)}... failed: ${e.message}`);
     }
   }
 
@@ -213,17 +223,21 @@ export async function fetchSportsMoneylines() {
     });
   }
 
-  console.log(`📊 [sports API] scanned ${raw.length} sports mkts → ${out.length} moneylines`);
+  console.log(`📊 [sports API] scanned ${raw.length} total mkts → ${out.length} moneylines`);
   if (out.length === 0 && raw.length > 0) {
-    // Log type distribution to help diagnose further
     const types = {};
     raw.forEach(m => {
       const t = m.sportsMarketTypeV2 || m.sportsMarketType || m.marketType || "UNKNOWN";
       types[t] = (types[t] || 0) + 1;
     });
-    console.log("🔍 [sports API] market type breakdown:", JSON.stringify(types));
-    console.log("🔍 [sports API] sample sportsMarketTypeV2 values:",
-      [...new Set(raw.slice(0,20).map(m => m.sportsMarketTypeV2))].join(", "));
+    console.log("🔍 [sports API] type breakdown:", JSON.stringify(types));
+    // Log sample of non-future markets so we can see what game markets look like
+    const nonFuture = raw.filter(m => !String(m.sportsMarketTypeV2||"").includes("FUTURE")).slice(0,3);
+    if (nonFuture.length) console.log("🔍 [sports API] non-future samples:", JSON.stringify(nonFuture.map(m => ({
+      slug: m.slug, q: (m.question||"").slice(0,60),
+      v2type: m.sportsMarketTypeV2, v1type: m.sportsMarketType,
+      mtype: m.marketType, cat: m.category, active: m.active
+    }))));
   }
 
   _cache = out; _cacheTime = Date.now();
