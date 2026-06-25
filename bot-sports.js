@@ -158,13 +158,25 @@ export async function runScanCycle() {
     const liveCount = pool.filter(m => m.isLive).length;
     const preCount = pool.length - liveCount;
     console.log(`🏆 ${pool.length} favorites — ANY EDGE (${liveCount} 🔴 live, ${preCount} ⏳ pre-game) | prices ${pool.map(m=>cents(m.px)).slice(0,5).join(" ")} Verifying books…`);
-    candidates = await verifyCandidates(pool.slice(0, 16));
-    if (candidates.length) {
-      console.log(`📗 ${candidates.length} verified: ${candidates.slice(0, 3).map(c =>
-        `${c.isLive ? "🔴" : `⏳${c.hoursUntil}h`} ${cents(c.ask)} ${c.question.slice(0, 22)}`
+    if (DRY_RUN) {
+      // Dry run: skip BBO verification — paper fill at estimated price
+      candidates = pool.slice(0, 16).map(m => ({
+        ...m,
+        ask: m.ask ?? m.est ?? 0.55,
+        bid: m.bid ?? (m.est ? m.est - 0.02 : 0.53),
+      }));
+      console.log(`📗 ${candidates.length} dry-run candidates: ${candidates.slice(0, 3).map(c =>
+        `${c.isLive ? "🔴" : `⏳${c.hoursUntil}h`} ${cents(c.ask ?? c.est)} ${c.question.slice(0, 22)}`
       ).join(" · ")}`);
     } else {
-      console.log("[INFO] Books too thin/wide on all candidates this scan");
+      candidates = await verifyCandidates(pool.slice(0, 16));
+      if (candidates.length) {
+        console.log(`📗 ${candidates.length} verified: ${candidates.slice(0, 3).map(c =>
+          `${c.isLive ? "🔴" : `⏳${c.hoursUntil}h`} ${cents(c.ask)} ${c.question.slice(0, 22)}`
+        ).join(" · ")}`);
+      } else {
+        console.log("[INFO] Books too thin/wide on all candidates this scan");
+      }
     }
   } else {
     console.log(`[INFO] No game markets with a clear favorite (>50¢) right now`);
