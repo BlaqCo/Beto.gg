@@ -71,8 +71,8 @@ const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inni
 // Season-long future patterns — exclude these even if they have a game start time
 const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|nba finals|wcf|ecf|alcs|nlcs|mvp|cy young|award|division winner|win the|make the playoffs|season total|over\/under \d+ wins)\b/i;
 
-// Game moneyline patterns — question contains two teams separated by "vs" or "at"
-const GAME_VS = /\bvs\.?\b|\bat\b/i;
+// Game moneyline patterns — "vs/at" for team sports, "beat/defeat/over" for tennis/boxing
+const GAME_VS = /\bvs\.?\b|\bat\b|\bbeat\b|\bdefeat\b|\bover\b|\bwill .+ win .+ match|\bwill .+ (beat|defeat)/i;
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
@@ -119,11 +119,14 @@ export async function fetchSportsMoneylines() {
     const q = (m.question || m.title || "").trim();
     if (!q) return false;
 
-    // Must be a sports category market
+    // Accept if category=sports OR has sport/league tags OR is a known sports slug pattern
     const cat = (m.category || "").toLowerCase();
     const tags = Array.isArray(m.tags) ? m.tags : [];
     const hasSportTag = tags.some(t => t?.sport?.name || t?.league?.name);
-    if (cat !== "sports" && !hasSportTag) return false;
+    const isSportsCat = cat === "sports" || cat.includes("sport") || cat.includes("tennis") || cat.includes("soccer") || cat.includes("baseball") || cat.includes("basketball") || cat.includes("football") || cat.includes("esport");
+    // Also accept if question looks like a sports matchup even without category
+    const looksLikeSports = /\bwill .+(beat|defeat|win|vs)|(nba|nfl|mlb|nhl|mls|tennis|wimbledon|french open|us open|atp|wta|world cup|champions league|premier league|la liga|bundesliga|series a)\b/i.test(q);
+    if (!isSportsCat && !hasSportTag && !looksLikeSports) return false;
 
     // Exclude sub-period markets
     if (SUB_PERIOD.test(q)) return false;
@@ -131,17 +134,26 @@ export async function fetchSportsMoneylines() {
     // Exclude season-long futures
     if (SEASON_FUTURE.test(q)) return false;
 
-    // Must have a game start time (futures often don't, or it's far out)
+    // Game start time check — if present, must be within 48h
+    // If absent, fall back to endDate check (some markets like tennis don't set gameStartTime)
     const gameStart = m.gameStartTime || m.game_start_time || m.startTime;
-    if (!gameStart) return false;
-
-    // Game start must be within 48 hours from now (live or upcoming)
-    const startMs = new Date(gameStart).getTime();
     const now = Date.now();
-    const hoursOut = (startMs - now) / 3_600_000;
-    if (hoursOut > 48 || hoursOut < -6) return false; // exclude games ended >6h ago
+    if (gameStart) {
+      const startMs = new Date(gameStart).getTime();
+      const hoursOut = (startMs - now) / 3_600_000;
+      if (hoursOut > 48 || hoursOut < -6) return false;
+    } else {
+      // No gameStartTime — use endDate: must end within 7 days (active near-term market)
+      const endDate = m.endDate || m.endTime;
+      if (!endDate) return false;
+      const endMs = new Date(endDate).getTime();
+      const daysToEnd = (endMs - now) / (3_600_000 * 24);
+      if (daysToEnd > 7 || endMs < now) return false;
+    }
 
-    // Question must contain "vs" or "at" pattern (two teams)
+    // Question must look like a head-to-head matchup
+    // Team sports: "X vs Y" or "X at Y"
+    // Tennis/boxing: "Will X beat Y" or "Will X defeat Y"
     if (!GAME_VS.test(q)) return false;
 
     return true;
@@ -211,6 +223,26 @@ export async function fetchSportsMoneylines() {
   out.sort((a, b) => (b.isLive - a.isLive) || (a.hoursUntil - b.hoursUntil));
 
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${out.filter(x=>x.isLive).length} live, ${out.filter(x=>!x.isLive).length} upcoming)`);
+
+  // One-time: log rejected markets that look like they should be game markets
+  // so we can see exactly why tennis is getting filtered
+  if (out.length < 30) {
+    const rejected = raw.filter(m => {
+      const q = (m.question || m.title || "").toLowerCase();
+      return (q.includes("beat") || q.includes("vs") || q.includes("defeat") || q.includes("tennis") || q.includes("wimbledon")) && !out.find(o => o.slug === (m.slug || m.id));
+    }).slice(0, 3);
+    if (rejected.length) {
+      console.log("🔍 [sports API] sample REJECTED markets:");
+      rejected.forEach(m => console.log(JSON.stringify({
+        q: (m.question||"").slice(0,80),
+        cat: m.category,
+        v2type: m.sportsMarketTypeV2,
+        gameStart: m.gameStartTime,
+        hasTags: Array.isArray(m.tags) && m.tags.length > 0,
+        tagSample: (m.tags||[]).slice(0,1).map(t => ({sport: t?.sport?.name, league: t?.league?.name}))
+      })));
+    }
+  }
 
   // Log first few found so we can verify
   if (out.length > 0) {
