@@ -20,8 +20,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 5;       // flat $5 per bet (testing)
 const BET_MIN       = 5;
-const FAV_MIN       = 0.60;    // wait for the favorite to climb to 60¢ before entering
-const FAV_MAX       = 0.70;    // skip heavy favorites/near-decided games
+const FAV_MIN       = 0.58;    // favorites from 58¢
+const FAV_MAX       = 0.72;    // up to 72¢ — any sport
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 5;
 const ENTRIES_SCAN  = 2;
@@ -167,7 +167,7 @@ export async function runScanCycle() {
       console.log("[INFO] Books too thin/wide on all candidates this scan");
     }
   } else {
-    console.log(`[INFO] No favorites in 60-70¢ range (live or next-48h) right now`);
+    console.log(`[INFO] No favorites in 58-72¢ range (live or pre-game) right now`);
   }
 
   // ── Ground-truth dedup: real Polymarket positions (LIVE only) ──
