@@ -212,24 +212,26 @@ export async function runScanCycle() {
 
   let betsPlaced = 0;
   let attempts = 0;
-  const MAX_ATTEMPTS = 3; // hard cap on order attempts per scan (incl. failures)
+  const MAX_ATTEMPTS = 3;
+  console.log(`🔎 Entry loop: ${candidates.length} candidates | balance $${balance.toFixed(2)} | active ${getAllActiveBets().length}/${MAX_CONC} | breaker ${breakerTripped}`);
   if (!breakerTripped) {
     for (const m of candidates) {
-      if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
-      if (getAllActiveBets().length >= MAX_CONC) break;
-      if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
-      if (hasActiveBet(m.slug)) continue;
+      if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) { console.log(`  ⏹ Hit scan limit (bets:${betsPlaced} attempts:${attempts})`); break; }
+      if (getAllActiveBets().length >= MAX_CONC) { console.log(`  ⏹ Max concurrent slots full (${MAX_CONC})`); break; }
+      if (balance < BET_MIN) { console.log(`  ⏸ Balance $${balance.toFixed(2)} below BET_MIN $${BET_MIN}`); break; }
+      if (hasActiveBet(m.slug)) { console.log(`  ⏭ Already active: ${m.slug.slice(0,30)}`); continue; }
       if (countBetsForMarket(m.slug) >= MAX_ENTRIES_PER_MARKET) {
-        console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already entered ${MAX_ENTRIES_PER_MARKET}x (local)`);
+        console.log(`  ⏭ Max entries for ${m.slug.slice(0, 24)}`);
         continue;
       }
       if (!DRY_RUN) {
-        if (ownedSlugs === null) continue; // couldn't verify positions this scan — don't risk a dupe
+        if (ownedSlugs === null) { console.log(`  ⏭ No position data — skipping`); continue; }
         if (ownedSlugs.has(m.slug)) {
-          console.log(`  ⏭ Skipping ${m.slug.slice(0, 24)} — already hold this position on Polymarket`);
+          console.log(`  ⏭ Already on Polymarket: ${m.slug.slice(0, 24)}`);
           continue;
         }
       }
+      console.log(`  🎯 Attempting entry: ${m.question.slice(0,50)} @ ${cents(m.ask ?? m.est)}`);
 
       let entryPrice = m.ask;
       let betSize = BET_SIZE;
