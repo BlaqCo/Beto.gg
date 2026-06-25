@@ -35,7 +35,7 @@ function pushLog(type, args) {
     else if (msg.includes("❌") || msg.includes("🔴 LOSS")) t = "err";
   }
   uiLog.unshift({ ts: new Date().toISOString(), type: t, msg: msg.slice(0, 200) });
-  if (uiLog.length > 200) uiLog.pop();
+  if (uiLog.length > 500) uiLog.pop();
 }
 console.log = (...a) => { pushLog("info", a); _log(...a); };
 console.error = (...a) => { pushLog("err", a); _err(...a); };
