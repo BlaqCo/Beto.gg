@@ -20,8 +20,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 5;       // flat $5 per bet (testing)
 const BET_MIN       = 5;
-const FAV_MIN       = 0.58;    // favorites from 58¢
-const FAV_MAX       = 0.72;    // up to 72¢ — any sport
+const FAV_MIN       = 0.51;    // ANY favorite — just needs to be >50¢ (favored team)
+const FAV_MAX       = 0.99;    // no ceiling — bet any favorite regardless of edge
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 5;
 const ENTRIES_SCAN  = 2;
@@ -134,7 +134,7 @@ export async function runScanCycle() {
   const LOOKAHEAD_MS = 48 * 60 * 60 * 1000; // 48h window — catches early AM next day and beyond
   const pool = markets
     .map(m => ({ ...m, px: m.ask ?? m.est }))
-    .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
+    .filter(m => m.px && m.px > 0.50)   // ANY favorite — just needs to be the favored side
     // game must have already started OR start within the next 48h
     .filter(m => {
       if (!m.gameStartIso) return false;
@@ -157,7 +157,7 @@ export async function runScanCycle() {
   if (pool.length) {
     const liveCount = pool.filter(m => m.isLive).length;
     const preCount = pool.length - liveCount;
-    console.log(`🏆 ${pool.length} favorites (${liveCount} 🔴 live, ${preCount} ⏳ pre-game up to 48h) ${cents(FAV_MIN)}-${cents(FAV_MAX)} (est). Verifying top books…`);
+    console.log(`🏆 ${pool.length} favorites — ANY EDGE (${liveCount} 🔴 live, ${preCount} ⏳ pre-game) | prices ${pool.map(m=>cents(m.px)).slice(0,5).join(" ")} Verifying books…`);
     candidates = await verifyCandidates(pool.slice(0, 16));
     if (candidates.length) {
       console.log(`📗 ${candidates.length} verified: ${candidates.slice(0, 3).map(c =>
@@ -167,7 +167,7 @@ export async function runScanCycle() {
       console.log("[INFO] Books too thin/wide on all candidates this scan");
     }
   } else {
-    console.log(`[INFO] No favorites in 58-72¢ range (live or pre-game) right now`);
+    console.log(`[INFO] No game markets with a clear favorite (>50¢) right now`);
   }
 
   // ── Ground-truth dedup: real Polymarket positions (LIVE only) ──
