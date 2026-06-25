@@ -71,8 +71,9 @@ const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inni
 // Season-long future patterns — exclude these even if they have a game start time
 const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|nba finals|wcf|ecf|alcs|nlcs|mvp|cy young|award|division winner|win the|make the playoffs|season total|over\/under \d+ wins)\b/i;
 
-// Game moneyline patterns — "vs/at" for team sports, "beat/defeat/over" for tennis/boxing
-const GAME_VS = /\bvs\.?\b|\bat\b|\bbeat\b|\bdefeat\b|\bover\b|\bwill .+ win .+ match|\bwill .+ (beat|defeat)/i;
+// Game moneyline patterns — covers all Polymarket question formats
+// "X vs Y", "X at Y", "Will X beat/defeat Y", "Will X win against Y", "Will X win over Y"
+const GAME_VS = /\bvs\.?\b|\bat\b|\bbeat\b|\bdefeat\b|\bwill .+ win (against|over|the match)|\bwill .+ (beat|defeat)/i;
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
