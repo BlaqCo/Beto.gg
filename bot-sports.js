@@ -214,6 +214,26 @@ export async function fetchSportsMoneylines() {
 
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${out.filter(x=>x.isLive).length} live, ${out.filter(x=>!x.isLive).length} upcoming)`);
 
+  // One-time: log rejected markets that look like they should be game markets
+  // so we can see exactly why tennis is getting filtered
+  if (out.length < 30) {
+    const rejected = raw.filter(m => {
+      const q = (m.question || m.title || "").toLowerCase();
+      return (q.includes("beat") || q.includes("vs") || q.includes("defeat") || q.includes("tennis") || q.includes("wimbledon")) && !out.find(o => o.slug === (m.slug || m.id));
+    }).slice(0, 3);
+    if (rejected.length) {
+      console.log("🔍 [sports API] sample REJECTED markets:");
+      rejected.forEach(m => console.log(JSON.stringify({
+        q: (m.question||"").slice(0,80),
+        cat: m.category,
+        v2type: m.sportsMarketTypeV2,
+        gameStart: m.gameStartTime,
+        hasTags: Array.isArray(m.tags) && m.tags.length > 0,
+        tagSample: (m.tags||[]).slice(0,1).map(t => ({sport: t?.sport?.name, league: t?.league?.name}))
+      })));
+    }
+  }
+
   // Log first few found so we can verify
   if (out.length > 0) {
     out.slice(0, 3).forEach(m => console.log(`  ✓ ${m.isLive ? "🔴 LIVE" : `⏳ ${m.hoursUntil}h`} | ${m.league} | ${m.question.slice(0,55)} | est ${m.est ? Math.round(m.est*100)+"¢" : "?"}`));
