@@ -325,6 +325,7 @@ app.post("/settings", (req, res) => {
 });
 
 // ── Dashboard page + view switch + health ───────────────────────
+app.get("/landing", (req, res) => res.sendFile(path.join(__dirname, "landing.html")));
 app.get("/dashboard", (req, res) => res.sendFile(path.join(__dirname, "dashboard.html")));
 
 app.get("/api/status", (req, res) => {
@@ -365,18 +366,15 @@ async function loadBots() {
   } catch (err) {
     console.error("Sports bot load error:", err.message);
   }
-  try {
-    cryptoBot = await import("./bot.js");
-    console.log("[INFO] Loaded bot.js (crypto)");
-  } catch (err) {
-    console.error("Crypto bot load error:", err.message);
-  }
+  // Crypto bot disabled — not legal in California
+  console.log("[INFO] Crypto bot disabled (CA regulations)");
 }
 
 (async () => {
+  await state.ready;
   await loadBots();
 
-  // Sports scanner — every 8s
+  // Sports scanner only — every 8s
   setInterval(async () => {
     try {
       if (sportsBot?.runScanCycle) await sportsBot.runScanCycle();
@@ -385,19 +383,5 @@ async function loadBots() {
     }
   }, 8000);
 
-  // Crypto scanner — every 8s, offset by 4s so the two don't fire in lockstep
-  setTimeout(() => {
-    setInterval(async () => {
-      try {
-        if (cryptoBot?.runScanCycle) {
-          const r = await cryptoBot.runScanCycle();
-          if (r?.signals) lastSignals = r.signals;
-        }
-      } catch (err) {
-        console.error("Crypto scan error:", err.message);
-      }
-    }, 8000);
-  }, 4000);
-
-  console.log("[INFO] Both scanners started — sports + crypto run independently, every 8s");
+  console.log("[INFO] Sports scanner started — crypto disabled (CA)");
 })();
