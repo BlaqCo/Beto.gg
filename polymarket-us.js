@@ -79,24 +79,38 @@ export async function fetchSportsMoneylines() {
 
   // Fetch strategy: explicit sport-category endpoints + broad offsets
   // Targets: MLB, Tennis, Esports, Soccer, NBA, NFL, WNBA + broad sweep
+  // Polymarket.us API uses sportLeague tag filtering, not category= strings.
+  // Correct approach: fetch by sportsMarketType + broad offsets to get everything.
+  // The tag league names found on polymarket.us: MLB, WNBA, Tennis (ATP/WTA/ITF),
+  // Esports (CS2/Valorant/LoL), Soccer (World Cup/MLS), NBA, NFL
+  const BASE = `${GATEWAY}/v1/markets?active=true&closed=false&limit=200`;
   const urls = [
-    // Sport-specific category fetches
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=mlb`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=tennis`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=esports`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=soccer`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=nba`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=nfl`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=wnba`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=sports`,
-    // Direct moneyline param
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE`,
-    // Broad sweep for anything not caught above
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=0`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=200`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=400`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=600`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=800`,
+    // Moneyline markets directly (most reliable for game winners)
+    `${BASE}&sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE`,
+    // Sports category (World Cup, MLB, WNBA etc all tagged as sports on .us)
+    `${BASE}&category=sports`,
+    `${BASE}&category=sports&offset=200`,
+    `${BASE}&category=sports&offset=400`,
+    // Baseball specifically
+    `${BASE}&category=Baseball`,
+    `${BASE}&category=baseball`,
+    // Basketball (NBA + WNBA)
+    `${BASE}&category=Basketball`,
+    `${BASE}&category=basketball`,
+    // Tennis
+    `${BASE}&category=Tennis`,
+    `${BASE}&category=tennis`,
+    // Esports
+    `${BASE}&category=Esports`,
+    `${BASE}&category=esports`,
+    // Broad sweep — catches everything else (soccer, NFL, etc)
+    `${BASE}&offset=0`,
+    `${BASE}&offset=200`,
+    `${BASE}&offset=400`,
+    `${BASE}&offset=600`,
+    `${BASE}&offset=800`,
+    `${BASE}&offset=1000`,
+    `${BASE}&offset=1200`,
   ];
 
   const results = await Promise.allSettled(
@@ -105,9 +119,18 @@ export async function fetchSportsMoneylines() {
 
   const seenKeys = new Set();
   let raw = [];
-  for (const r of results) {
-    if (r.status !== "fulfilled") continue;
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status !== "fulfilled") {
+      console.log(`  ⚠️ endpoint ${i} failed: ${r.reason?.message || "unknown"}`);
+      continue;
+    }
     const arr = r.value?.data?.markets || [];
+    if (i < 8 && arr.length > 0) {
+      // Log sport-specific endpoint results
+      const cat = urls[i].match(/category=([^&]+)/)?.[1] || urls[i].match(/offset=([^&]+)/)?.[1] || i;
+      console.log(`  📋 ${cat}: ${arr.length} markets`);
+    }
     for (const m of arr) {
       const key = m.slug || m.id;
       if (key && !seenKeys.has(key)) { seenKeys.add(key); raw.push(m); }
