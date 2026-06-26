@@ -362,7 +362,9 @@ app.get("/api/positions", async (req, res) => {
     }
     try {
       const { getOpenPositionsEnriched } = await import("./polymarket-us.js");
-      const positions = await getOpenPositionsEnriched();
+      // Pass local state bets so we can fill in missing avgPrice/question/category
+      const stateBets = state.getAllBets ? state.getAllBets() : [];
+      const positions = await getOpenPositionsEnriched(stateBets);
       _posCache = { data: positions, ts: Date.now() };
       return res.json(positions);
     } catch (e) {
@@ -459,15 +461,20 @@ async function loadBots() {
           return db > da ? 1 : -1;
         });
         console.log(`📋 BET HISTORY — ${sorted.length} trades loaded`);
-        sorted.forEach(t => {
-          const q   = (t.question || t.title || t.marketQuestion || t.marketSlug || "Unknown").slice(0, 50);
-          const amt = parseFloat(t.size ?? t.amount ?? t.betSize ?? 0).toFixed(2);
-          const pl  = parseFloat(t.profitLoss ?? t.profit_loss ?? t.pnl ?? 0).toFixed(2);
-          const won = parseFloat(pl) > 0;
-          const lost= parseFloat(pl) < 0;
-          const result = won ? "✅ WIN" : lost ? "❌ LOSS" : "⏳ OPEN";
-          const ts  = (t.createdAt || t.created_at || "").slice(0, 10) || "—";
-          console.log(`  ${result} | ${ts} | $${amt} | P/L $${pl} | ${q}`);
+        sorted.forEach(a => {
+          if (a._type === "resolution") {
+            const won = a.won;
+            const pl  = (a.realizedPnl ?? 0).toFixed(2);
+            const result = won ? "✅ WIN" : "❌ LOSS";
+            const ts  = (a.createTime || "").slice(0, 10) || "—";
+            console.log(`  ${result} | ${ts} | P/L $${pl} | ${a.question || a.marketSlug}`);
+          } else if (a._type === "trade") {
+            const pl  = (a.realizedPnl ?? 0).toFixed(2);
+            const cost = (a.costBasis ?? 0).toFixed(2);
+            const result = parseFloat(pl) > 0 ? "✅ WIN" : parseFloat(pl) < 0 ? "❌ LOSS" : "🔄 TRADE";
+            const ts  = (a.createTime || "").slice(0, 10) || "—";
+            console.log(`  ${result} | ${ts} | $${cost} @ ${a.price ? Math.round(a.price*100)+"¢" : "—"} | P/L $${pl} | ${a.question || a.marketSlug}`);
+          }
         });
         // Cache for /api/history so first dashboard poll is instant
         _histCache = { data: trades, ts: Date.now() };
@@ -481,15 +488,17 @@ async function loadBots() {
     // Also load open positions on boot
     try {
       const { getOpenPositionsEnriched } = await import("./polymarket-us.js");
-      const positions = await getOpenPositionsEnriched();
+      const stateBets = state.getAllBets ? state.getAllBets() : [];
+      const positions = await getOpenPositionsEnriched(stateBets);
       if (positions.length) {
         console.log(`📊 OPEN POSITIONS — ${positions.length} active`);
         positions.forEach(p => {
           const q    = (p.question || p.slug || "Unknown").slice(0, 50);
-          const cost = (p.costBasis || 0).toFixed(2);
+          const cost = p.costBasis != null ? "$" + p.costBasis.toFixed(2) : "—";
           const bid  = p.currentBid ? Math.round(p.currentBid * 100) + "¢" : "—";
           const pnl  = p.openPnl != null ? (p.openPnl >= 0 ? "+" : "") + p.openPnl.toFixed(2) : "—";
-          console.log(`  🔴 LIVE | $${cost} | now ${bid} | P/L $${pnl} | ${q}`);
+          const prob = p.avgPrice  ? Math.round(p.avgPrice * 100) + "%" : "—";
+          console.log(`  🔴 LIVE | ${cost} @ ${prob} | now ${bid} | P/L $${pnl} | ${q}`);
         });
         _posCache = { data: positions, ts: Date.now() };
       }
