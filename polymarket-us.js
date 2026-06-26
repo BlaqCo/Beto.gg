@@ -544,7 +544,9 @@ export async function getOpenPositionsEnriched(stateBets = []) {
     // Log full raw shape of first position to diagnose qty/price scaling
     const slugs = Object.keys(raw);
     if (slugs.length > 0) {
-      console.log(`\uD83D\uDD0D POSITIONS RAW: ${JSON.stringify(raw[slugs[0]])}`);
+      console.log(`🔍 POSITIONS RAW SAMPLE: ${JSON.stringify(raw[slugs[0]]).slice(0,400)}`);
+      console.log(`🔍 API slugs: ${slugs.slice(0,5).join(" | ")}`);
+      console.log(`🔍 State IDs: ${stateBets.slice(0,5).map(b=>b.marketConditionId).join(" | ")}`);
     }
 
     const out = [];
@@ -569,11 +571,18 @@ export async function getOpenPositionsEnriched(stateBets = []) {
       let placedAt   = null;
 
       // Cross-ref state bets for entry price, question, category
-      const stateBet = stateBets.find(b =>
-        b.marketConditionId === slug ||
-        b.marketConditionId === slug + "-yes" ||
-        slug === b.marketConditionId + "-yes"
-      );
+      // Match state bet to API position slug
+      // API slug e.g. "aec-ufc-javrey-kaaofl-2026-06-27"
+      // State marketConditionId = m.slug from scan (should be identical)
+      // Also try partial matches in case of "-yes" suffix variants
+      const stateBet = stateBets.find(b => {
+        const id = b.marketConditionId || "";
+        return id === slug ||
+               id === slug + "-yes" ||
+               slug === id + "-yes" ||
+               slug.startsWith(id.replace(/-yes$/, "")) ||
+               id.startsWith(slug.replace(/-yes$/, ""));
+      });
       if (stateBet) {
         if (!question)   question   = (stateBet.marketQuestion || "").replace(/^\[.*?\]\s*/, "") || null;
         if (!category)   category   = stateBet.entryCoin || "";
