@@ -357,7 +357,7 @@ let _posCache = { data: null, ts: 0 };
 app.get("/api/positions", async (req, res) => {
   if (!DRY_RUN) {
     // Cache 10s so dashboard's 3s poll doesn't hammer signed API
-    if (_posCache.data && Date.now() - _posCache.ts < 10_000) {
+    if (_posCache.data && Date.now() - _posCache.ts < 5_000) {
       return res.json(_posCache.data);
     }
     try {
@@ -398,7 +398,7 @@ app.get("/api/positions", async (req, res) => {
 let _histCache = { data: null, ts: 0 };
 app.get("/api/history", async (req, res) => {
   if (!DRY_RUN) {
-    if (_histCache.data && Date.now() - _histCache.ts < 30_000) {
+    if (_histCache.data && Date.now() - _histCache.ts < 60_000) {
       return res.json(_histCache.data);
     }
     try {
@@ -441,14 +441,71 @@ async function loadBots() {
   await state.ready;
   await loadBots();
 
-  // Sports scanner only — every 8s
+  // ── Load bet history into log on boot (LIVE mode only) ──────────
+  // Fetches /v1/portfolio/trades and pushes each trade into the UI log
+  // so the System Log panel shows your full bet history immediately.
+  if (!DRY_RUN) {
+    try {
+      const { getTradeHistory } = await import("./polymarket-us.js");
+      const trades = await getTradeHistory({ limit: 500 });
+      if (trades.length) {
+        // Log raw shape of first trade so we know field names
+        console.log(`📋 Trade history shape: ${JSON.stringify(trades[0]).slice(0, 300)}`);
+
+        // Log a summary line per trade, newest first
+        const sorted = [...trades].sort((a, b) => {
+          const da = a.createdAt || a.created_at || "";
+          const db = b.createdAt || b.created_at || "";
+          return db > da ? 1 : -1;
+        });
+        console.log(`📋 BET HISTORY — ${sorted.length} trades loaded`);
+        sorted.forEach(t => {
+          const q   = (t.question || t.title || t.marketQuestion || t.marketSlug || "Unknown").slice(0, 50);
+          const amt = parseFloat(t.size ?? t.amount ?? t.betSize ?? 0).toFixed(2);
+          const pl  = parseFloat(t.profitLoss ?? t.profit_loss ?? t.pnl ?? 0).toFixed(2);
+          const won = parseFloat(pl) > 0;
+          const lost= parseFloat(pl) < 0;
+          const result = won ? "✅ WIN" : lost ? "❌ LOSS" : "⏳ OPEN";
+          const ts  = (t.createdAt || t.created_at || "").slice(0, 10) || "—";
+          console.log(`  ${result} | ${ts} | $${amt} | P/L $${pl} | ${q}`);
+        });
+        // Cache for /api/history so first dashboard poll is instant
+        _histCache = { data: trades, ts: Date.now() };
+      } else {
+        console.log("📋 No trade history found on Polymarket account");
+      }
+    } catch (err) {
+      console.error("⚠️ Boot trade history load failed:", err.message);
+    }
+
+    // Also load open positions on boot
+    try {
+      const { getOpenPositionsEnriched } = await import("./polymarket-us.js");
+      const positions = await getOpenPositionsEnriched();
+      if (positions.length) {
+        console.log(`📊 OPEN POSITIONS — ${positions.length} active`);
+        positions.forEach(p => {
+          const q    = (p.question || p.slug || "Unknown").slice(0, 50);
+          const cost = (p.costBasis || 0).toFixed(2);
+          const bid  = p.currentBid ? Math.round(p.currentBid * 100) + "¢" : "—";
+          const pnl  = p.openPnl != null ? (p.openPnl >= 0 ? "+" : "") + p.openPnl.toFixed(2) : "—";
+          console.log(`  🔴 LIVE | $${cost} | now ${bid} | P/L $${pnl} | ${q}`);
+        });
+        _posCache = { data: positions, ts: Date.now() };
+      }
+    } catch (err) {
+      console.error("⚠️ Boot positions load failed:", err.message);
+    }
+  }
+
+  // Sports scanner — 3s interval
   setInterval(async () => {
     try {
       if (sportsBot?.runScanCycle) await sportsBot.runScanCycle();
     } catch (err) {
       console.error("Sports scan error:", err.message);
     }
-  }, 3000); // 3s scan — fastest snipe
+  }, 3000);
 
   console.log("[INFO] Sports scanner started — crypto disabled (CA)");
 })();
