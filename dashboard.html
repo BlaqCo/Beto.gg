@@ -320,36 +320,23 @@ function renderPositions(list){
     return;
   }
   $('trades-body').innerHTML=list.map(p=>{
-    // Question: clean up slug fallback into readable form
-    const rawQ = p.question || p.slug || 'Unknown';
-    const isSlug = !p.question || p.question === p.slug;
-    // Turn slug like "aec-ufc-javrey-kaaofl-2026-06-27" → "UFC · Javrey vs Kaaofl"
-    const q = isSlug
-      ? rawQ.replace(/^[a-z]+-/,'').replace(/-\d{4}-\d{2}-\d{2}.*$/,'').replace(/-/g,' ').toUpperCase().slice(0,50)
-      : cleanQ(rawQ).slice(0,50);
+    const rawQ=p.question||p.slug||'Unknown';
+    const q=cleanQ(rawQ).slice(0,50)||rawQ.replace(/^[a-z]+-/,'').replace(/-\d{4}.*/,'').replace(/-/g,' ').slice(0,50);
+    const tag=(p.category||sport(rawQ)).toUpperCase().slice(0,6)||'SPORT';
 
-    const tag = (p.category||p.entryCoin||sport(rawQ)).toUpperCase().slice(0,6)||'SPORT';
+    // All pre-computed in getOpenPositionsEnriched
+    const bet    =parseFloat(p.costBasis??0);   // $ wagered
+    const prob   =parseFloat(p.avgPrice??0);    // entry probability (0-1)
+    const payout =parseFloat(p.payout??p.qty??0); // $ win at settlement = qty×$1
+    const curBid =parseFloat(p.currentBid??0);  // live price
+    const openPnl=parseFloat(p.openPnl??0);     // live P/L
 
-    // Financials — use every possible field
-    const bet    = parseFloat(p.costBasis??p.betSize??0);
-    const qty    = parseFloat(p.qty??0);
-    const prob   = parseFloat(p.avgPrice??p.entryPrice??0);
-    const curBid = parseFloat(p.currentBid??0);
-    const curVal = parseFloat(p.currentVal??0);
-
-    // P/L: prefer pre-computed openPnl, else calculate from currentVal - costBasis
-    let openPnl = p.openPnl != null ? parseFloat(p.openPnl) : null;
-    if (openPnl == null && curVal > 0 && bet > 0) openPnl = curVal - bet;
-    openPnl = openPnl ?? 0;
-
-    // Payout if YES wins = qty × $1 (each contract pays $1)
-    const payout = qty > 0 ? qty.toFixed(2) : (prob > 0 && bet > 0 ? (bet/prob).toFixed(2) : null);
-
-    const probStr = prob   ? Math.round(prob*100)+'%'   : '—';
-    const bidStr  = curBid ? Math.round(curBid*100)+'¢' : '—';
-    const betStr  = bet    ? fmt$(bet)                   : '—';
-    const pnlColor = pnlCls(openPnl);
-    const ts = (p.placedAt||p.createdAt||'').slice(11,16)||'—';
+    const betStr =bet  ?'$'+bet.toFixed(2):'—';
+    const probStr=prob ?Math.round(prob*100)+'%':'—';
+    const payStr =payout?'$'+payout.toFixed(2):'—';
+    const bidStr =curBid?Math.round(curBid*100)+'¢':'—';
+    const pnlColor=pnlCls(openPnl);
+    const ts=(p.placedAt||p.updateTime||'').slice(11,16)||'—';
 
     return `<div class="bet-card">
       <div class="bc-top">
@@ -360,7 +347,7 @@ function renderPositions(list){
         <span class="bc-tag">${tag}</span>
         <span class="bc-pill">bet <strong>${betStr}</strong></span>
         <span class="bc-pill">@ <strong>${probStr}</strong></span>
-        <span class="bc-pill">win→<strong class="c-blue">${payout?'$'+payout:'—'}</strong></span>
+        <span class="bc-pill">win→<strong class="c-blue">${payStr}</strong></span>
         <span class="bc-spacer"></span>
         <span class="bc-pill">now ${bidStr}</span>
         <span class="bc-time">${ts}</span>
