@@ -8,15 +8,9 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 :root{
-  --bg:#030805;
-  --green:#39ff8f;
-  --green2:rgba(57,255,143,0.55);
-  --dim:rgba(57,255,143,0.25);
-  --faint:rgba(57,255,143,0.08);
-  --border:rgba(57,255,143,0.18);
-  --red:#ff3d6e;
-  --yellow:#ffd200;
-  --blue:#7dd3ff;
+  --bg:#030805;--green:#39ff8f;--dim:rgba(57,255,143,0.25);
+  --border:rgba(57,255,143,0.18);--red:#ff3d6e;--yellow:#ffd200;--blue:#7dd3ff;
+  --faint:rgba(57,255,143,0.06);
 }
 html,body{min-height:100%;background:var(--bg);color:var(--green);font-family:'Share Tech Mono',monospace;}
 body::before{content:'';position:fixed;inset:0;z-index:999;pointer-events:none;
@@ -25,281 +19,245 @@ body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background-image:linear-gradient(rgba(57,255,143,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(57,255,143,0.025) 1px,transparent 1px);
   background-size:40px 40px;}
 #topglow{position:fixed;top:-15%;left:50%;transform:translateX(-50%);width:80vw;height:50vh;
-  background:radial-gradient(ellipse,rgba(57,255,143,0.06),transparent 70%);
-  pointer-events:none;z-index:0;}
+  background:radial-gradient(ellipse,rgba(57,255,143,0.06),transparent 70%);pointer-events:none;z-index:0;}
 
-.wrap{position:relative;z-index:1;max-width:820px;margin:0 auto;padding:20px 14px 0;
-  display:flex;flex-direction:column;gap:0;min-height:100vh;}
+.wrap{position:relative;z-index:1;max-width:820px;margin:0 auto;padding:16px 12px 32px;
+  display:flex;flex-direction:column;gap:0;}
 
-/* ── HEADER ── */
-header{display:flex;align-items:center;gap:14px;
-  padding-bottom:16px;border-bottom:1px solid var(--border);margin-bottom:14px;}
-.logo-mark{font-family:'Orbitron';font-size:clamp(16px,5vw,24px);font-weight:900;
-  letter-spacing:5px;line-height:1;color:var(--green);
-  text-shadow:0 0 20px rgba(57,255,143,0.5),0 0 50px rgba(57,255,143,0.2);}
-.logo-mark span{opacity:0.4;}
-.logo-sub{font-size:7.5px;letter-spacing:3px;color:var(--dim);margin-top:5px;}
-.hdr-right{margin-left:auto;text-align:right;font-size:8.5px;letter-spacing:1px;color:var(--dim);line-height:2;flex-shrink:0;}
+/* HEADER */
+header{display:flex;align-items:center;gap:12px;padding-bottom:14px;
+  border-bottom:1px solid var(--border);margin-bottom:12px;}
+.logo-mark{font-family:'Orbitron';font-size:clamp(15px,5vw,22px);font-weight:900;
+  letter-spacing:4px;color:var(--green);text-shadow:0 0 20px rgba(57,255,143,0.5);}
+.logo-mark span{opacity:0.35;}
+.logo-sub{font-size:7px;letter-spacing:3px;color:var(--dim);margin-top:4px;}
+.hdr-right{margin-left:auto;text-align:right;font-size:8px;letter-spacing:1px;color:var(--dim);line-height:1.9;flex-shrink:0;}
 .status-inline{display:flex;align-items:center;gap:5px;justify-content:flex-end;}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--green);
-  box-shadow:0 0 8px var(--green);animation:blink 1.3s ease-in-out infinite;}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.3s ease-in-out infinite;}
 .dot.off{background:var(--red);box-shadow:0 0 8px var(--red);animation:none;}
-.badge{font-size:7.5px;letter-spacing:2px;padding:3px 9px;margin-top:2px;display:inline-block;}
+.badge{font-size:7px;letter-spacing:2px;padding:3px 8px;margin-top:2px;display:inline-block;}
 .badge-live{background:rgba(57,255,143,0.08);color:var(--green);border:1px solid rgba(57,255,143,0.3);}
 .badge-dry{background:rgba(255,210,0,0.06);color:var(--yellow);border:1px solid rgba(255,210,0,0.25);}
-
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
 @keyframes scanline{0%{transform:translateY(0)}100%{transform:translateY(28px)}}
 #beto-scan{animation:scanline 1.8s linear infinite;}
 
-/* ── MODE SWITCHER ── */
-.mode-bar{display:flex;gap:0;margin-bottom:14px;border:1px solid var(--border);}
-.mode-btn{
-  flex:1;padding:10px 6px;text-align:center;cursor:pointer;
-  font-family:'Orbitron';font-size:8px;letter-spacing:2.5px;
-  background:transparent;border:none;color:var(--dim);
-  transition:all .15s;position:relative;user-select:none;}
+/* MODE BAR */
+.mode-bar{display:flex;margin-bottom:12px;border:1px solid var(--border);}
+.mode-btn{flex:1;padding:9px 4px;text-align:center;cursor:pointer;
+  font-family:'Orbitron';font-size:7.5px;letter-spacing:2px;
+  background:transparent;border:none;color:var(--dim);transition:all .15s;user-select:none;}
 .mode-btn+.mode-btn{border-left:1px solid var(--border);}
-.mode-btn.active{background:rgba(57,255,143,0.08);color:var(--green);
-  text-shadow:0 0 12px rgba(57,255,143,0.5);}
-.mode-btn.locked{cursor:not-allowed;color:rgba(57,255,143,0.15);}
-.mode-btn.locked:hover{color:rgba(57,255,143,0.15);}
-.lock-icon{font-size:9px;margin-right:4px;opacity:0.4;}
-.mode-btn:not(.locked):hover:not(.active){background:rgba(57,255,143,0.04);color:var(--green2);}
-
-/* toast for locked */
-.toast{position:fixed;bottom:32px;left:50%;transform:translateX(-50%) translateY(60px);
+.mode-btn.active{background:rgba(57,255,143,0.08);color:var(--green);text-shadow:0 0 12px rgba(57,255,143,0.4);}
+.mode-btn.locked{cursor:not-allowed;color:rgba(57,255,143,0.12);}
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(60px);
   background:#0a1a0e;border:1px solid rgba(255,61,110,0.35);color:var(--red);
   font-size:9px;letter-spacing:2px;padding:10px 20px;z-index:9999;
-  transition:transform .22s ease,opacity .22s ease;opacity:0;pointer-events:none;white-space:nowrap;}
+  transition:transform .22s,opacity .22s;opacity:0;pointer-events:none;white-space:nowrap;}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
 
-/* ── BIG STATS GRID ── */
+/* STAT BOXES */
 .stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-bottom:0;}
-.stat-box{border:1px solid var(--border);padding:14px 10px;text-align:center;background:rgba(0,0,0,0.45);}
+.stat-box{border:1px solid var(--border);padding:12px 8px;text-align:center;background:rgba(0,0,0,0.45);}
 .stat-box+.stat-box{border-left:none;}
-.stat-row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-bottom:14px;}
+.stat-row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-bottom:12px;}
 .stat-row2 .stat-box{border-top:none;}
 .stat-row2 .stat-box+.stat-box{border-left:none;}
-.s-lbl{font-size:7px;letter-spacing:2.5px;color:var(--dim);margin-bottom:8px;text-transform:uppercase;}
-.s-val{font-family:'Orbitron';font-size:clamp(15px,4vw,24px);font-weight:900;line-height:1;}
-.s-sub{font-size:7.5px;color:var(--dim);margin-top:5px;}
-.c-green{color:var(--green);text-shadow:0 0 14px rgba(57,255,143,0.5);}
-.c-blue{color:var(--blue);text-shadow:0 0 14px rgba(125,211,255,0.4);}
-.c-red{color:var(--red);text-shadow:0 0 12px rgba(255,61,110,0.4);}
+.s-lbl{font-size:6.5px;letter-spacing:2px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;}
+.s-val{font-family:'Orbitron';font-size:clamp(14px,3.8vw,22px);font-weight:900;line-height:1;}
+.s-sub{font-size:7px;color:var(--dim);margin-top:4px;}
+.c-green{color:var(--green);text-shadow:0 0 12px rgba(57,255,143,0.45);}
+.c-blue{color:var(--blue);text-shadow:0 0 12px rgba(125,211,255,0.35);}
+.c-red{color:var(--red);text-shadow:0 0 10px rgba(255,61,110,0.4);}
 .c-neutral{color:#c8e8d8;}
 .c-yellow{color:var(--yellow);}
 
-/* ── PANEL HEADER ── */
+/* PANEL */
 .panel-hd{display:flex;align-items:center;justify-content:space-between;
   background:rgba(57,255,143,0.04);border:1px solid var(--border);
-  padding:8px 14px;border-bottom:none;}
-.p-title{font-family:'Orbitron';font-size:8px;letter-spacing:3px;color:var(--green);opacity:0.7;}
-.p-meta{font-size:8px;color:var(--dim);}
+  padding:7px 12px;border-bottom:none;}
+.p-title{font-family:'Orbitron';font-size:7.5px;letter-spacing:3px;color:var(--green);opacity:0.7;}
+.p-meta{font-size:7.5px;color:var(--dim);}
 .dots{display:flex;gap:5px;}
-.d{width:9px;height:9px;border-radius:50%;}
-.d-r{background:#ff5f57;opacity:.7;}
-.d-y{background:#ffbd2e;opacity:.7;}
-.d-g{background:#28c940;opacity:.7;}
+.d{width:8px;height:8px;border-radius:50%;}
+.d-r{background:#ff5f57;opacity:.7;} .d-y{background:#ffbd2e;opacity:.7;} .d-g{background:#28c940;opacity:.7;}
 
-/* ── TRADES TABLE ── */
-.trades-wrap{border:1px solid var(--border);border-top:none;
-  background:rgba(0,0,0,0.5);margin-bottom:14px;min-height:58px;}
-.trade-row{display:grid;grid-template-columns:1fr 44px 40px 50px 50px 40px;
-  padding:9px 14px;border-bottom:1px solid rgba(57,255,143,0.06);
-  gap:6px;align-items:center;}
-.trade-row:last-child{border-bottom:none;}
-.tr-q{font-size:9px;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tr-meta{font-size:7.5px;color:var(--dim);margin-top:2px;}
-.league-tag{font-size:6.5px;letter-spacing:1px;padding:1px 5px;
-  background:rgba(57,255,143,0.07);border:1px solid rgba(57,255,143,0.18);
-  color:var(--green);opacity:0.7;margin-right:4px;}
-.tr-num{font-family:'Orbitron';font-size:11px;text-align:right;}
-.empty-tr{text-align:center;padding:20px;color:var(--dim);font-size:8.5px;letter-spacing:2px;}
+/* PANEL BODY */
+.panel-body{border:1px solid var(--border);border-top:none;
+  background:rgba(0,0,0,0.5);margin-bottom:12px;}
+.empty-row{text-align:center;padding:18px;color:var(--dim);font-size:8px;letter-spacing:2px;}
 
-/* ── BET HISTORY LOG ── */
-.hist-wrap{border:1px solid var(--border);border-top:none;
-  background:rgba(0,0,0,0.45);margin-bottom:14px;max-height:240px;overflow-y:auto;}
-.hist-wrap::-webkit-scrollbar{width:3px;}
-.hist-wrap::-webkit-scrollbar-thumb{background:rgba(57,255,143,0.15);}
-.hist-row{display:grid;grid-template-columns:1fr 40px 40px 44px 50px 52px;
-  padding:7px 14px;border-bottom:1px solid rgba(57,255,143,0.05);
-  gap:6px;align-items:center;font-size:8.5px;}
-.hist-row:last-child{border-bottom:none;}
-.hist-q{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.hist-result{font-family:'Orbitron';font-size:9px;text-align:right;}
-.hist-date{font-size:7px;color:rgba(57,255,143,0.2);text-align:right;}
+/* BET CARD — used for both active positions and history */
+/* Two-line design: top line = question | right = key number */
+/*                  bottom line = meta details spread across */
+.bet-card{
+  padding:10px 12px;
+  border-bottom:1px solid rgba(57,255,143,0.07);
+}
+.bet-card:last-child{border-bottom:none;}
 
-/* ── LOG ── */
+/* Line 1: question text + win-if amount */
+.bc-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:5px;}
+.bc-q{font-size:9px;color:var(--green);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bc-win{font-family:'Orbitron';font-size:11px;flex-shrink:0;text-align:right;}
+
+/* Line 2: sport tag | bet | @ prob | payout label | p/l | time */
+.bc-meta{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:hidden;}
+.bc-tag{font-size:6px;letter-spacing:1px;padding:1px 5px;
+  background:rgba(57,255,143,0.06);border:1px solid rgba(57,255,143,0.15);
+  color:var(--green);opacity:0.6;flex-shrink:0;}
+.bc-pill{font-size:7.5px;color:var(--dim);flex-shrink:0;white-space:nowrap;}
+.bc-pill strong{color:var(--green);font-style:normal;}
+.bc-spacer{flex:1;}
+.bc-pnl{font-family:'Orbitron';font-size:9px;flex-shrink:0;}
+.bc-time{font-size:6.5px;color:rgba(57,255,143,0.2);flex-shrink:0;}
+
+/* History result badge */
+.bc-result{font-family:'Orbitron';font-size:8px;padding:1px 6px;flex-shrink:0;
+  border:1px solid currentColor;}
+.bc-win-badge{color:var(--green);}
+.bc-loss-badge{color:var(--red);}
+.bc-exp-badge{color:var(--dim);}
+
+/* LOG */
 .log-wrap{border:1px solid var(--border);border-top:none;
-  background:rgba(0,0,0,0.55);height:280px;overflow-y:auto;
-  padding:10px 12px;margin-bottom:0;flex:1;}
+  background:rgba(0,0,0,0.55);height:260px;overflow-y:auto;padding:8px 10px;margin-bottom:0;}
 .log-wrap::-webkit-scrollbar{width:3px;}
-.log-wrap::-webkit-scrollbar-thumb{background:rgba(57,255,143,0.15);}
-.ll{display:flex;gap:8px;line-height:2.1;}
-.lt{color:rgba(57,255,143,0.2);flex-shrink:0;font-size:8px;padding-top:1px;}
-.lok{font-size:9px;color:var(--green);}
-.lerr{font-size:9px;color:var(--red);}
-.lwarn{font-size:9px;color:var(--yellow);}
-.linfo{font-size:9px;color:var(--dim);}
+.log-wrap::-webkit-scrollbar-thumb{background:rgba(57,255,143,0.12);}
+.ll{display:flex;gap:8px;line-height:2;}
+.lt{color:rgba(57,255,143,0.18);flex-shrink:0;font-size:7.5px;padding-top:1px;}
+.lok{font-size:8.5px;color:var(--green);}
+.lerr{font-size:8.5px;color:var(--red);}
+.lwarn{font-size:8.5px;color:var(--yellow);}
+.linfo{font-size:8.5px;color:var(--dim);}
 
-/* ── FOOTER ── */
-footer{position:relative;z-index:1;border-top:1px solid var(--border);
-  padding:20px 14px 32px;text-align:center;margin-top:14px;}
+/* FOOTER */
+footer{border-top:1px solid var(--border);padding:18px 12px 28px;text-align:center;margin-top:12px;}
 .x-link{display:inline-flex;align-items:center;gap:8px;text-decoration:none;
-  color:var(--dim);font-size:9px;letter-spacing:3px;
-  border:1px solid var(--border);padding:9px 20px;}
-.x-link:active{color:var(--green);}
-.f-sub{margin-top:8px;font-size:7px;letter-spacing:2px;color:rgba(57,255,143,0.12);}
+  color:var(--dim);font-size:8.5px;letter-spacing:3px;border:1px solid var(--border);padding:8px 18px;}
+.f-sub{margin-top:7px;font-size:6.5px;letter-spacing:2px;color:rgba(57,255,143,0.1);}
 </style>
 </head>
 <body>
 <div id="topglow"></div>
 <div class="wrap">
 
-  <!-- HEADER -->
-  <header>
-    <svg width="56" height="56" viewBox="0 0 320 320"
-      style="flex-shrink:0;filter:drop-shadow(0 0 8px rgba(57,255,143,0.4))">
-      <defs>
-        <linearGradient id="fb" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#39ff8f" stop-opacity="0.85"/>
-          <stop offset="100%" stop-color="#1a9955" stop-opacity="0.95"/>
-        </linearGradient>
-        <linearGradient id="fe" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#39ff8f" stop-opacity="0.95"/>
-          <stop offset="100%" stop-color="#00dd77" stop-opacity="0.7"/>
-        </linearGradient>
-        <filter id="fg" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="3" result="b"/>
-          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-        <clipPath id="fc"><rect x="142" y="132" width="36" height="28" rx="4"/></clipPath>
-      </defs>
-      <polygon points="160,85 218,140 205,215 115,215 102,140" fill="url(#fb)"/>
-      <polygon points="160,85 218,140 205,215 115,215 102,140" fill="none" stroke="#39ff8f" stroke-width="1.5" stroke-opacity="0.45"/>
-      <polygon points="130,95 90,45 155,75" fill="url(#fb)"/>
-      <polygon points="190,95 230,45 165,75" fill="url(#fb)"/>
-      <polygon points="132,170 188,170 180,215 140,215" fill="#050e08" fill-opacity="0.65"/>
-      <polygon points="160,174 167,180 160,186 153,180" fill="#39ff8f" opacity="0.9" filter="url(#fg)"/>
-      <rect x="114" y="132" width="32" height="24" rx="5" fill="#050e08" stroke="#39ff8f" stroke-width="1.2" stroke-opacity="0.45"/>
-      <ellipse cx="130" cy="144" rx="8" ry="9" fill="#39ff8f" opacity="0.55"/>
-      <ellipse cx="130" cy="144" rx="4" ry="5" fill="#010a04"/>
-      <rect x="142" y="132" width="36" height="28" rx="5" fill="#050e08" stroke="#39ff8f" stroke-width="1.5" stroke-opacity="0.9" filter="url(#fg)"/>
-      <rect id="beto-scan" x="142" y="132" width="36" height="3" fill="#39ff8f" opacity="0.38" clip-path="url(#fc)"/>
-      <ellipse cx="160" cy="146" rx="10" ry="10" fill="none" stroke="#39ff8f" stroke-width="1.2" stroke-opacity="0.7" filter="url(#fg)"/>
-      <ellipse cx="160" cy="146" rx="4" ry="4" fill="#39ff8f" opacity="0.9" filter="url(#fg)"/>
-    </svg>
-    <div>
-      <div class="logo-mark">BETO<span>.</span>GG</div>
-      <div class="logo-sub">AUTOMATED PREDICTION MARKETS</div>
-    </div>
-    <div class="hdr-right">
-      <div class="status-inline">
-        <div class="dot" id="sdot"></div>
-        <span id="stxt">CONNECTING</span>
-      </div>
-      <div id="hdr-time">—</div>
-      <div id="mbadge" class="badge badge-dry">◎ DRY RUN</div>
-    </div>
-  </header>
+<!-- HEADER -->
+<header>
+  <svg width="50" height="50" viewBox="0 0 320 320" style="flex-shrink:0;filter:drop-shadow(0 0 7px rgba(57,255,143,0.4))">
+    <defs>
+      <linearGradient id="fb" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#39ff8f" stop-opacity="0.85"/>
+        <stop offset="100%" stop-color="#1a9955" stop-opacity="0.95"/>
+      </linearGradient>
+      <filter id="fg" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="3" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <clipPath id="fc"><rect x="142" y="132" width="36" height="28" rx="4"/></clipPath>
+    </defs>
+    <polygon points="160,85 218,140 205,215 115,215 102,140" fill="url(#fb)"/>
+    <polygon points="160,85 218,140 205,215 115,215 102,140" fill="none" stroke="#39ff8f" stroke-width="1.5" stroke-opacity="0.45"/>
+    <polygon points="130,95 90,45 155,75" fill="url(#fb)"/>
+    <polygon points="190,95 230,45 165,75" fill="url(#fb)"/>
+    <polygon points="132,170 188,170 180,215 140,215" fill="#050e08" fill-opacity="0.65"/>
+    <polygon points="160,174 167,180 160,186 153,180" fill="#39ff8f" opacity="0.9" filter="url(#fg)"/>
+    <rect x="142" y="132" width="36" height="28" rx="5" fill="#050e08" stroke="#39ff8f" stroke-width="1.5" stroke-opacity="0.9" filter="url(#fg)"/>
+    <rect id="beto-scan" x="142" y="132" width="36" height="3" fill="#39ff8f" opacity="0.38" clip-path="url(#fc)"/>
+    <ellipse cx="160" cy="146" rx="10" ry="10" fill="none" stroke="#39ff8f" stroke-width="1.2" stroke-opacity="0.7" filter="url(#fg)"/>
+    <ellipse cx="160" cy="146" rx="4" ry="4" fill="#39ff8f" opacity="0.9" filter="url(#fg)"/>
+  </svg>
+  <div>
+    <div class="logo-mark">BETO<span>.</span>GG</div>
+    <div class="logo-sub">AUTOMATED PREDICTION MARKETS</div>
+  </div>
+  <div class="hdr-right">
+    <div class="status-inline"><div class="dot" id="sdot"></div><span id="stxt">CONNECTING</span></div>
+    <div id="hdr-time">—</div>
+    <div id="mbadge" class="badge badge-dry">◎ DRY RUN</div>
+  </div>
+</header>
 
-  <!-- MODE SWITCHER -->
-  <div class="mode-bar">
-    <div class="mode-btn active" id="btn-sports" onclick="setMode('SPORTS')">⚽ SPORTS</div>
-    <div class="mode-btn locked" id="btn-crypto" onclick="clickCrypto()"><span class="lock-icon">🔒</span>CRYPTO</div>
-    <div class="mode-btn locked" id="btn-both" onclick="clickCrypto()"><span class="lock-icon">🔒</span>BOTH</div>
-  </div>
-
-  <!-- TOP STATS ROW -->
-  <div class="stat-grid">
-    <div class="stat-box">
-      <div class="s-lbl">Balance</div>
-      <div class="s-val c-blue" id="balance">$—</div>
-      <div class="s-sub" id="bal-sub">buying power</div>
-    </div>
-    <div class="stat-box">
-      <div class="s-lbl">Total P/L</div>
-      <div class="s-val c-neutral" id="pnl">+$0.00</div>
-      <div class="s-sub" id="pnl-sub">settled</div>
-    </div>
-    <div class="stat-box">
-      <div class="s-lbl">Live P/L</div>
-      <div class="s-val c-neutral" id="live-pnl">$0.00</div>
-      <div class="s-sub" id="live-pnl-sub">open positions</div>
-    </div>
-  </div>
-
-  <!-- BOTTOM STATS ROW -->
-  <div class="stat-row2">
-    <div class="stat-box">
-      <div class="s-lbl">Record</div>
-      <div class="s-val c-green" id="record">—W / —L</div>
-      <div class="s-sub" id="rec-sub">all time</div>
-    </div>
-    <div class="stat-box">
-      <div class="s-lbl">Total Bets</div>
-      <div class="s-val c-neutral" id="total-bets">0</div>
-      <div class="s-sub" id="active-sub">0 active</div>
-    </div>
-    <div class="stat-box">
-      <div class="s-lbl">Total Wagered</div>
-      <div class="s-val c-yellow" id="wagered">$0.00</div>
-      <div class="s-sub" id="wagered-sub">all time</div>
-    </div>
-  </div>
-
-  <!-- ACTIVE POSITIONS -->
-  <div class="panel-hd">
-    <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
-    <span class="p-title">ACTIVE POSITIONS</span>
-    <span class="p-meta" id="trades-meta">0 open</span>
-  </div>
-  <div class="trades-wrap">
-    <div class="trade-row" style="background:rgba(57,255,143,0.03);border-bottom:1px solid var(--border)">
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim)">MARKET</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">BET</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">PROB</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">PAYOUT</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">P/L</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">TIME</div>
-    </div>
-    <div id="trades-body"><div class="empty-tr">> NO ACTIVE POSITIONS_</div></div>
-  </div>
-
-  <!-- BET HISTORY -->
-  <div class="panel-hd">
-    <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
-    <span class="p-title">BET HISTORY</span>
-    <span class="p-meta" id="hist-meta">all time</span>
-  </div>
-  <div class="hist-wrap">
-    <div class="hist-row" style="background:rgba(57,255,143,0.03);border-bottom:1px solid var(--border)">
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim)">MARKET</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">BET</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">PROB</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">RESULT</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">P/L</div>
-      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">DATE</div>
-    </div>
-    <div id="hist-body"><div class="empty-tr">> NO HISTORY YET_</div></div>
-  </div>
-
-  <!-- SYSTEM LOG -->
-  <div class="panel-hd" style="margin-top:14px">
-    <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
-    <span class="p-title">SYSTEM LOG</span>
-    <span class="p-meta" id="log-meta">—</span>
-  </div>
-  <div class="log-wrap" id="log-body">
-    <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">> BETO.GG INITIALIZING...</span></div>
-  </div>
-
+<!-- MODE SWITCHER -->
+<div class="mode-bar">
+  <div class="mode-btn active" id="btn-sports" onclick="setMode('SPORTS')">⚽ SPORTS</div>
+  <div class="mode-btn locked" onclick="clickCrypto()">🔒 CRYPTO</div>
+  <div class="mode-btn locked" onclick="clickCrypto()">🔒 BOTH</div>
 </div>
+
+<!-- STATS ROW 1 -->
+<div class="stat-grid">
+  <div class="stat-box">
+    <div class="s-lbl">Balance</div>
+    <div class="s-val c-blue" id="balance">$—</div>
+    <div class="s-sub" id="bal-sub">buying power</div>
+  </div>
+  <div class="stat-box">
+    <div class="s-lbl">Total P/L</div>
+    <div class="s-val c-neutral" id="pnl">+$0.00</div>
+    <div class="s-sub" id="pnl-sub">settled</div>
+  </div>
+  <div class="stat-box">
+    <div class="s-lbl">Live P/L</div>
+    <div class="s-val c-neutral" id="live-pnl">$0.00</div>
+    <div class="s-sub" id="live-pnl-sub">0 open</div>
+  </div>
+</div>
+
+<!-- STATS ROW 2 -->
+<div class="stat-row2">
+  <div class="stat-box">
+    <div class="s-lbl">Record</div>
+    <div class="s-val c-green" id="record">—W/—L</div>
+    <div class="s-sub" id="rec-sub">all time</div>
+  </div>
+  <div class="stat-box">
+    <div class="s-lbl">Total Bets</div>
+    <div class="s-val c-neutral" id="total-bets">0</div>
+    <div class="s-sub" id="active-sub">0 active</div>
+  </div>
+  <div class="stat-box">
+    <div class="s-lbl">Wagered</div>
+    <div class="s-val c-yellow" id="wagered">$0.00</div>
+    <div class="s-sub" id="wagered-sub">all time</div>
+  </div>
+</div>
+
+<!-- ACTIVE POSITIONS -->
+<div class="panel-hd">
+  <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
+  <span class="p-title">ACTIVE POSITIONS</span>
+  <span class="p-meta" id="trades-meta">0 open</span>
+</div>
+<div class="panel-body" id="trades-body">
+  <div class="empty-row">> NO ACTIVE POSITIONS_</div>
+</div>
+
+<!-- BET HISTORY -->
+<div class="panel-hd">
+  <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
+  <span class="p-title">BET HISTORY</span>
+  <span class="p-meta" id="hist-meta">all time</span>
+</div>
+<div class="panel-body" id="hist-body" style="max-height:320px;overflow-y:auto;">
+  <div class="empty-row">> NO HISTORY YET_</div>
+</div>
+
+<!-- SYSTEM LOG -->
+<div class="panel-hd" style="margin-top:12px">
+  <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
+  <span class="p-title">SYSTEM LOG</span>
+  <span class="p-meta" id="log-meta">—</span>
+</div>
+<div class="log-wrap" id="log-body">
+  <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">> BETO.GG INITIALIZING...</span></div>
+</div>
+
+</div><!-- /wrap -->
 
 <footer>
   <a class="x-link" href="https://x.com/0xblaq?s=11" target="_blank" rel="noopener">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
       <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
     </svg>
     BUILT BY 0XBLAQ
@@ -307,155 +265,168 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);
   <div class="f-sub">BETO.GG // AUTOMATED PREDICTION MARKETS</div>
 </footer>
 
-<!-- LOCKED TOAST -->
 <div class="toast" id="toast">🔒 NOT LIVE IN CALIFORNIA YET</div>
 
 <script>
 'use strict';
 
-// ── Clock ────────────────────────────────────────────────────────
+// Clock
 function tick(){
   document.getElementById('hdr-time').textContent=
     new Date().toISOString().replace('T',' ').slice(0,19)+' UTC';
 }
 tick(); setInterval(tick,1000);
 
-// ── Mode switcher ────────────────────────────────────────────────
-let currentMode='SPORTS';
+// Mode
 function setMode(m){
-  currentMode=m;
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('btn-'+m.toLowerCase()).classList.add('active');
 }
-let _toastTimer=null;
+let _tt=null;
 function clickCrypto(){
   const t=document.getElementById('toast');
   t.classList.add('show');
-  clearTimeout(_toastTimer);
-  _toastTimer=setTimeout(()=>t.classList.remove('show'),2800);
+  clearTimeout(_tt);
+  _tt=setTimeout(()=>t.classList.remove('show'),2800);
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
+// Helpers
 const $=id=>document.getElementById(id);
-const sign=(n,digits=2)=>(n>=0?'+':'')+n.toFixed(digits);
-const dollar=(n,digits=2)=>'$'+Math.abs(parseFloat(n)||0).toFixed(digits);
-const pnlCls=n=>parseFloat(n)>0?'c-green':parseFloat(n)<0?'c-red':'c-neutral';
+const pnlCls=n=>n>0?'c-green':n<0?'c-red':'c-neutral';
+const fmt$=n=>'$'+Math.abs(parseFloat(n)||0).toFixed(2);
+const fmtPnl=n=>{const v=parseFloat(n)||0;return(v>=0?'+':'')+fmt$(v);};
 
-// ── Render active positions ──────────────────────────────────────
-// Renders /api/positions (enriched real Polymarket positions)
-function renderPositions(positions,isDry){
-  if(!positions||!positions.length){
-    $('trades-body').innerHTML='<div class="empty-tr">> NO ACTIVE POSITIONS_</div>';
+// Detect sport from question text
+function sport(q){
+  const s=(q||'').toLowerCase();
+  if(/yankees|astros|red sox|dodgers|cubs|mets|braves|padres|mariners|pirates|reds|orioles|rays|twins|royals|rangers|angels|athletics|tigers|nationals|cardinals|phillies|brewers|guardians|diamondbacks|white sox/.test(s))return'MLB';
+  if(/celtics|lakers|warriors|heat|nuggets|bucks|suns|nets|knicks|raptors|76ers|bulls|pistons|hawks|pacers|hornets|magic|wizards|cavs|thunder|blazers|jazz|spurs|rockets|grizzlies|pelicans|kings|wolves|clippers|mavs/.test(s))return'NBA';
+  if(/wnba|sky\b|aces\b|liberty|fever|dream\b|sparks|storm\b|sun\b|lynx|wings\b|mercury|mystics|valkyries|firebirds/.test(s))return'WNBA';
+  if(/world cup|fc |united|real madrid|barcelona|arsenal|chelsea|liverpool|man city|tottenham|juventus|ac milan|inter |roma|atletico|dortmund|bayern|psg/.test(s))return'SOCCER';
+  if(/atp|wta|wimbledon|french open|us open|djokovic|alcaraz|sinner|medvedev|zverev|nadal|federer|murray|osaka|swiatek/.test(s))return'TENNIS';
+  return'SPORT';
+}
+
+// Strip [TAG] prefix bots add to question
+const cleanQ=q=>(q||'').replace(/^\[.*?\]\s*/,'');
+
+// ── ACTIVE POSITIONS ─────────────────────────────────────────────
+// Data from /api/positions — enriched position objects
+// Fields: slug, question, category, qty, avgPrice, currentBid, costBasis, currentVal, openPnl, placedAt
+function renderPositions(list){
+  $('trades-meta').textContent=list.length+' open';
+  if(!list.length){
+    $('trades-body').innerHTML='<div class="empty-row">> NO ACTIVE POSITIONS_</div>';
     return;
   }
-  $('trades-body').innerHTML=positions.map(p=>{
-    const cost=parseFloat(p.costBasis??p.betSize??0);
-    const price=parseFloat(p.avgPrice??p.entryPrice??0);
-    const payout=price>0?(cost/price).toFixed(2):'—';
-    const op=parseFloat(p.openPnl??0);
-    const opc=pnlCls(op);
-    const oSign=op>=0?'+':'';
-    const rawQ=p.question||'Unknown';
-    const q=rawQ.replace(/^\[.*?\]\s*/,'').slice(0,44);
-    const cat=(p.category||p.entryCoin||detectSport(rawQ)).toUpperCase().slice(0,6);
-    const bidPct=p.currentBid?Math.round(p.currentBid*100)+'¢':'—';
-    const ts=(p.placedAt||p.createdAt||p.created_at||p.ts||'').slice(11,16)||'—';
-    const probPct=price?Math.round(price*100)+'%':'—';
-    return `<div class="trade-row">
-      <div>
-        <div class="tr-q">> ${q}</div>
-        <div class="tr-meta"><span class="league-tag">${cat}</span> now ${bidPct}</div>
+  $('trades-body').innerHTML=list.map(p=>{
+    const q       = cleanQ(p.question||p.slug||'Unknown market');
+    const tag     = (p.category||p.entryCoin||sport(q)).toUpperCase().slice(0,6);
+    const bet     = parseFloat(p.costBasis??p.betSize??0);          // $ wagered
+    const prob    = parseFloat(p.avgPrice??p.entryPrice??0);         // entry probability 0-1
+    const payout  = prob>0 ? (bet/prob).toFixed(2) : null;          // $ if YES wins
+    const curBid  = parseFloat(p.currentBid??0);                    // live market price
+    const openPnl = parseFloat(p.openPnl??0);                       // live $ gain/loss
+    const ts      = (p.placedAt||p.createdAt||'').slice(11,16)||'—';
+
+    const probStr  = prob  ? Math.round(prob*100)+'%'   : '—';
+    const bidStr   = curBid? Math.round(curBid*100)+'¢' : '—';
+    const pnlColor = pnlCls(openPnl);
+
+    return `<div class="bet-card">
+      <div class="bc-top">
+        <div class="bc-q">> ${q}</div>
+        <div class="bc-win ${pnlColor}">${fmtPnl(openPnl)}</div>
       </div>
-      <div class="tr-num c-yellow">$${cost.toFixed(2)}</div>
-      <div class="tr-num c-neutral">${probPct}</div>
-      <div class="tr-num c-blue">$${payout==='—'?'—':payout}</div>
-      <div class="tr-num ${opc}">${oSign}$${Math.abs(op).toFixed(2)}</div>
-      <div class="tr-num" style="font-size:7px;color:var(--dim)">${ts}</div>
+      <div class="bc-meta">
+        <span class="bc-tag">${tag}</span>
+        <span class="bc-pill">bet <strong>${fmt$(bet)}</strong></span>
+        <span class="bc-pill">@ <strong>${probStr}</strong></span>
+        <span class="bc-pill">win→<strong class="c-blue">${payout?'$'+payout:'—'}</strong></span>
+        <span class="bc-spacer"></span>
+        <span class="bc-pill">now ${bidStr}</span>
+        <span class="bc-time">${ts}</span>
+      </div>
     </div>`;
   }).join('');
 }
 
-function detectSport(q){
-  q=(q||'').toLowerCase();
-  if(/yankees|astros|red sox|dodgers|cubs|mets|braves|padres|mariners|pirates|reds|orioles|rays|twins|royals|rangers|angels|athletics|tigers|nationals|cardinals|phillies|brewers|guardians|diamondbacks/.test(q))return'MLB';
-  if(/celtics|lakers|warriors|heat|nuggets|bucks|suns|nets|knicks|raptors|76ers|bulls|pistons|hawks|pacers|hornets|magic|wizards|cavs|thunder|blazers|jazz|spurs|rockets|grizzlies|pelicans|kings|wolves|clippers|mavs/.test(q))return'NBA';
-  if(/wnba|sky|aces|liberty|fever|dream|sparks|storm|sun|lynx|wings|mercury|mystics|valkyries|firebirds/.test(q))return'WNBA';
-  if(/world cup|soccer|fc |united|real |barcelona|arsenal|chelsea|liverpool|city|tottenham|juventus|milan|inter|roma|atletico|dortmund|bayern|psg/.test(q))return'SOCCER';
-  if(/vs|beat|match|open|atp|wta|wimbledon|djokovic|alcaraz|sinner|nadal|federer|murray/.test(q))return'TENNIS';
-  return'SPORT';
-}
-
-// ── Render bet history ───────────────────────────────────────────
-// Handles both real Polymarket trade objects (LIVE) and state.js bets (DRY)
+// ── BET HISTORY ──────────────────────────────────────────────────
+// Data from /api/history
+// LIVE mode: Polymarket trade objects (raw API shape varies — we handle both)
+// DRY mode:  state.js closed bet objects
 function renderHistory(data, isDry){
   if(!data||!data.length){
-    $('hist-body').innerHTML='<div class="empty-tr">> NO HISTORY YET_</div>';
+    $('hist-body').innerHTML='<div class="empty-row">> NO HISTORY YET_</div>';
     $('hist-meta').textContent='0 settled';
     return;
   }
 
-  // Normalise to a common shape regardless of source
+  // Normalise to common shape
   const rows=data.map(t=>{
-    // LIVE: Polymarket trade object
-    // fields vary but typically: marketSlug, question, size, profitLoss, outcome, createdAt
-    const isLiveTrade = !isDry && (t.marketSlug||t.market_slug||t.slug);
-    if(isLiveTrade){
-      const pl=parseFloat(t.profitLoss??t.profit_loss??t.pnl??0);
-      const won=pl>0||(t.outcome||'').toLowerCase()==='won';
-      const lost=pl<0||(t.outcome||'').toLowerCase()==='lost';
-      const q=(t.question||t.marketQuestion||t.title||t.marketSlug||'Unknown').replace(/^\[.*?\]\s*/,'').slice(0,42);
-      const cost=parseFloat(t.size??t.amount??t.betSize??0);
-      const price=parseFloat(t.price??t.avgPrice??t.entryPrice??t.fillPrice??0)||null;
-      const ts=(t.createdAt||t.created_at||t.closedAt||t.placedAt||'').slice(0,10)||'—';
-      const sport=detectSport(q);
-      return {q,cost,price,ts,sport,pl,won,lost,isExp:false};
+    if(!isDry){
+      // Real Polymarket trade object
+      // Common fields across API versions: marketSlug, question, size/amount, price/avgPrice, profitLoss, outcome, createdAt
+      const q   = cleanQ(t.question||t.title||t.marketQuestion||t.marketSlug||'Unknown');
+      const bet = parseFloat(t.size??t.amount??t.betSize??0);
+      const prob= parseFloat(t.price??t.avgPrice??t.fillPrice??t.entryPrice??0)||null;
+      const pl  = parseFloat(t.profitLoss??t.profit_loss??t.pnl??0);
+      const won = pl>0 || (t.outcome||'').toLowerCase()==='won';
+      const lost= pl<0 || (t.outcome||'').toLowerCase()==='lost';
+      const ts  = (t.createdAt||t.created_at||t.placedAt||'').slice(0,10)||'—';
+      return {q,bet,prob,pl,won,lost,isExp:false,ts,tag:sport(q)};
+    } else {
+      // state.js closed bet
+      const q    = cleanQ(t.marketQuestion||'Unknown');
+      const bet  = parseFloat(t.betSize||0);
+      const prob = parseFloat(t.entryPrice||t.impliedProbability||0)||null;
+      const pl   = parseFloat(t.pnl||0);
+      const won  = t.status==='won';
+      const lost = t.status==='lost';
+      const isExp= t.status==='expired';
+      const ts   = (t.closedAt||t.placedAt||'').slice(0,10)||'—';
+      const tag  = (t.entryCoin||sport(q)).toUpperCase().slice(0,6);
+      return {q,bet,prob,pl,won,lost,isExp,ts,tag};
     }
-    // DRY: state.js bet object
-    const pnl=parseFloat(t.pnl||0);
-    const won=t.status==='won';
-    const isExp=t.status==='expired';
-    const q=(t.marketQuestion||'Unknown').replace(/^\[.*?\]\s*/,'').slice(0,42);
-    const cost=parseFloat(t.betSize||0);
-    const price=parseFloat(t.entryPrice||t.impliedProbability||0)||null;
-    const ts=(t.closedAt||t.placedAt||'').slice(0,10)||'—';
-    const sport=(t.entryCoin||detectSport(q)).toUpperCase().slice(0,6);
-    return {q,cost,price,ts,sport,pl:pnl,won,lost:t.status==='lost',isExp};
-  });
+  }).sort((a,b)=>b.ts>a.ts?1:-1);
 
-  // Newest first
-  rows.sort((a,b)=>b.ts>a.ts?1:-1);
   $('hist-meta').textContent=rows.length+' settled';
-
   $('hist-body').innerHTML=rows.map(r=>{
-    const pnlCl=r.isExp?'c-neutral':r.won?'c-green':r.lost?'c-red':'c-neutral';
-    const result=r.isExp?'EXP':r.won?'WIN':r.lost?'LOSS':'—';
-    const entryProb=r.price?Math.round(r.price*100)+'%':'—';
-    const potPayout=r.price&&r.cost?(r.cost/r.price).toFixed(2):'—';
-    return `<div class="hist-row">
-      <div>
-        <div class="hist-q"><span class="league-tag">${r.sport}</span>${r.q}</div>
-        <div style="font-size:7px;color:var(--dim);margin-top:1px">win→$${potPayout}</div>
+    const probStr  = r.prob ? Math.round(r.prob*100)+'%' : '—';
+    const payout   = r.prob&&r.bet ? (r.bet/r.prob).toFixed(2) : null;
+    const result   = r.isExp?'EXP':r.won?'WIN':r.lost?'LOSS':'—';
+    const resCls   = r.isExp?'bc-exp-badge':r.won?'bc-win-badge':'bc-loss-badge';
+    const pnlStr   = r.isExp?'—':(r.pl>=0?'+':'')+fmt$(r.pl);
+    const pnlColor = r.isExp?'c-neutral':pnlCls(r.pl);
+
+    return `<div class="bet-card">
+      <div class="bc-top">
+        <div class="bc-q">> ${r.q}</div>
+        <div class="bc-result ${resCls}">${result}</div>
       </div>
-      <div class="hist-result c-yellow">$${r.cost.toFixed(2)}</div>
-      <div class="hist-result c-neutral">${entryProb}</div>
-      <div class="hist-result ${pnlCl}">${result}</div>
-      <div class="hist-result ${pnlCl}">${r.isExp?'—':(r.pl>=0?'+':'')+'$'+Math.abs(r.pl).toFixed(2)}</div>
-      <div class="hist-date">${r.ts}</div>
+      <div class="bc-meta">
+        <span class="bc-tag">${r.tag}</span>
+        <span class="bc-pill">bet <strong>${fmt$(r.bet)}</strong></span>
+        <span class="bc-pill">@ <strong>${probStr}</strong></span>
+        <span class="bc-pill">win→<strong class="c-blue">${payout?'$'+payout:'—'}</strong></span>
+        <span class="bc-spacer"></span>
+        <span class="bc-pnl ${pnlColor}">${pnlStr}</span>
+        <span class="bc-time">${r.ts}</span>
+      </div>
     </div>`;
   }).join('');
 }
 
-// ── Render log ───────────────────────────────────────────────────
+// ── SYSTEM LOG ───────────────────────────────────────────────────
 function renderLog(logs){
   const el=$('log-body');
   if(!logs||!logs.length){
     el.innerHTML='<div class="ll"><span class="lt">[—]</span><span class="linfo">> AWAITING DATA_</span></div>';
     return;
   }
-  const items=[...logs].reverse();
-  el.innerHTML=items.map(l=>{
+  el.innerHTML=[...logs].reverse().map(l=>{
     const ts=(l.ts||'').slice(11,19)||'--:--:--';
-    const msg='> '+(l.msg||'').slice(0,120);
+    const msg='> '+(l.msg||'').slice(0,130);
     const cls='l'+(l.type||'info');
     return `<div class="ll"><span class="lt">[${ts}]</span><span class="${cls}">${msg}</span></div>`;
   }).join('');
@@ -463,7 +434,7 @@ function renderLog(logs){
   el.scrollTop=el.scrollHeight;
 }
 
-// ── Main poll ────────────────────────────────────────────────────
+// ── MAIN POLL ────────────────────────────────────────────────────
 async function refresh(){
   try{
     const [rootR,logR,posR,histR]=await Promise.allSettled([
@@ -488,60 +459,47 @@ async function refresh(){
       badge.className='badge '+(isDry?'badge-dry':'badge-live');
 
       // Balance
-      const bp=isDry
-        ? parseFloat(s.dryBalance??0)
-        : parseFloat(s.liveBalance??s.buyingPower??0);
+      const bp=isDry?parseFloat(s.dryBalance??0):parseFloat(s.liveBalance??s.buyingPower??0);
       const balEl=$('balance');
       balEl.textContent='$'+bp.toFixed(2);
       balEl.className='s-val '+(isDry?'c-yellow':'c-blue');
       $('bal-sub').textContent=isDry?'paper balance':'polymarket';
 
-      // Settled P/L (realized closed bets)
+      // Positions from /api/positions
+      const positions=posR.status==='fulfilled'?(posR.value||[]):[];
+
+      // Settled P/L from state
       const realPnl=parseFloat(sp.pnl??0);
       const pnlEl=$('pnl');
-      pnlEl.textContent=(realPnl>=0?'+':'')+'$'+Math.abs(realPnl).toFixed(2);
+      pnlEl.textContent=fmtPnl(realPnl);
       pnlEl.className='s-val '+pnlCls(realPnl);
-      $('pnl-sub').textContent='settled';
 
-      // Live open P/L — summed from /api/positions
-      const positions=posR.status==='fulfilled'?(posR.value||[]):[];
-      const liveOpenPnl=positions.reduce((sum,p)=>sum+(p.openPnl??0),0);
+      // Live P/L summed from positions
+      const liveSum=positions.reduce((a,p)=>a+parseFloat(p.openPnl??0),0);
       const lpEl=$('live-pnl');
-      lpEl.textContent=(liveOpenPnl>=0?'+':'')+'$'+Math.abs(liveOpenPnl).toFixed(2);
-      lpEl.className='s-val '+pnlCls(liveOpenPnl);
+      lpEl.textContent=fmtPnl(liveSum);
+      lpEl.className='s-val '+pnlCls(liveSum);
       $('live-pnl-sub').textContent=positions.length+' open';
-      $('trades-meta').textContent=positions.length+' open';
 
-      // History from /api/history
+      // History
       const hist=histR.status==='fulfilled'?(histR.value||[]):[];
 
-      // W/L + wagered — computed from real history (LIVE) or state stats (DRY)
-      if(!isDry && hist.length>0){
-        // LIVE: count from trade history
-        // Polymarket trade objects: {outcome, profitLoss, size, marketSlug, ...}
-        const settled=hist.filter(t=>t.outcome||t.profitLoss!=null);
-        const wins=settled.filter(t=>{
-          const pl=parseFloat(t.profitLoss??t.profit_loss??0);
-          return pl>0||(t.outcome==='won'||t.outcome==='WON');
-        }).length;
-        const losses=settled.filter(t=>{
-          const pl=parseFloat(t.profitLoss??t.profit_loss??0);
-          return pl<0||(t.outcome==='lost'||t.outcome==='LOST');
-        }).length;
-        const totalWag=hist.reduce((s,t)=>s+parseFloat(t.size??t.amount??0),0);
-        $('record').textContent=wins+'W / '+losses+'L';
-        const tot=wins+losses;
+      // W/L + totals — use real Polymarket history in LIVE mode
+      if(!isDry&&hist.length>0){
+        const wins =hist.filter(t=>parseFloat(t.profitLoss??t.profit_loss??0)>0||(t.outcome||'').toLowerCase()==='won').length;
+        const losses=hist.filter(t=>parseFloat(t.profitLoss??t.profit_loss??0)<0||(t.outcome||'').toLowerCase()==='lost').length;
+        const wag  =hist.reduce((a,t)=>a+parseFloat(t.size??t.amount??0),0);
+        const tot  =wins+losses;
+        $('record').textContent=wins+'W/'+losses+'L';
         $('rec-sub').textContent=(tot>0?Math.round(wins/tot*100):0)+'% win rate';
         $('total-bets').textContent=hist.length;
         $('active-sub').textContent=positions.length+' active';
-        $('wagered').textContent='$'+totalWag.toFixed(2);
+        $('wagered').textContent='$'+wag.toFixed(2);
         $('wagered-sub').textContent='across '+hist.length+' bets';
       } else {
-        // DRY or no history: use state stats
         const w=parseInt(sp.wins||0),l=parseInt(sp.losses||0);
-        $('record').textContent=w+'W / '+l+'L';
-        const wr=w+l>0?Math.round(w/(w+l)*100):0;
-        $('rec-sub').textContent=wr+'% win rate';
+        $('record').textContent=w+'W/'+l+'L';
+        $('rec-sub').textContent=(w+l>0?Math.round(w/(w+l)*100):0)+'% win rate';
         const tot=parseInt(sp.totalBets||0);
         $('total-bets').textContent=tot;
         $('active-sub').textContent=(sp.activeBets||0)+' active';
@@ -549,14 +507,12 @@ async function refresh(){
         $('wagered-sub').textContent='across '+tot+' bets';
       }
 
-      // Render panels
-      renderPositions(positions,isDry);
-      renderHistory(hist,isDry);
+      // Render panels (pass isDry so renderHistory knows which field names to use)
+      renderPositions(positions);
+      renderHistory(hist, isDry);
     }
 
-    if(logR.status==='fulfilled'){
-      renderLog((logR.value||[]).slice(0,100));
-    }
+    if(logR.status==='fulfilled') renderLog((logR.value||[]).slice(0,100));
 
   }catch(e){
     $('sdot').className='dot off';
