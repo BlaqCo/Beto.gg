@@ -350,6 +350,73 @@ app.post("/api/mode", async (req, res) => {
   res.json({ mode: currentMode });
 });
 
+// ── /api/positions — real open positions from Polymarket ───────────
+// In DRY mode: falls back to state.js active bets.
+// In LIVE mode: pulls directly from /v1/portfolio/positions + live BBO.
+let _posCache = { data: null, ts: 0 };
+app.get("/api/positions", async (req, res) => {
+  if (!DRY_RUN) {
+    // Cache 10s so dashboard's 3s poll doesn't hammer signed API
+    if (_posCache.data && Date.now() - _posCache.ts < 10_000) {
+      return res.json(_posCache.data);
+    }
+    try {
+      const { getOpenPositionsEnriched } = await import("./polymarket-us.js");
+      const positions = await getOpenPositionsEnriched();
+      _posCache = { data: positions, ts: Date.now() };
+      return res.json(positions);
+    } catch (e) {
+      console.error("⚠️ /api/positions error:", e.message);
+    }
+  }
+  // DRY fallback: return state.js active bets shaped like position objects
+  const bets = (state.getAllBets ? state.getAllBets() : [])
+    .filter(b => b.status === "open" && b.strategy === "SPORTS_ML");
+  const marks = sportsBot?.getSportsMarks?.() || new Map();
+  const out = bets.map(b => {
+    const mk = marks.get(b.marketConditionId);
+    return {
+      slug:        b.marketConditionId,
+      question:    (b.marketQuestion || "").replace(/^\[.*?\]\s*/, ""),
+      category:    b.entryCoin || "",
+      qty:         b.betSize / (b.entryPrice || 1),
+      avgPrice:    b.entryPrice,
+      currentBid:  mk?.price ?? b.entryPrice,
+      costBasis:   +b.betSize.toFixed(2),
+      currentVal:  mk ? +(mk.price * b.betSize / (b.entryPrice || 1)).toFixed(2) : null,
+      openPnl:     mk?.pnl ?? null,
+      side:        "YES",
+      placedAt:    b.placedAt,
+    };
+  });
+  res.json(out);
+});
+
+// ── /api/history — real trade history from Polymarket ───────────
+// In DRY mode: returns closed bets from state.js.
+// In LIVE mode: pulls from /v1/portfolio/trades (all fills ever).
+let _histCache = { data: null, ts: 0 };
+app.get("/api/history", async (req, res) => {
+  if (!DRY_RUN) {
+    if (_histCache.data && Date.now() - _histCache.ts < 30_000) {
+      return res.json(_histCache.data);
+    }
+    try {
+      const { getTradeHistory } = await import("./polymarket-us.js");
+      const trades = await getTradeHistory({ limit: 500 });
+      _histCache = { data: trades, ts: Date.now() };
+      return res.json(trades);
+    } catch (e) {
+      console.error("⚠️ /api/history error:", e.message);
+    }
+  }
+  // DRY fallback: return closed bets from state.js
+  const closed = (state.getAllBets ? state.getAllBets() : [])
+    .filter(b => b.status && b.status !== "open" && b.strategy === "SPORTS_ML")
+    .sort((a, b) => (b.closedAt || "") > (a.closedAt || "") ? 1 : -1);
+  res.json(closed);
+});
+
 app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
 
 app.use(express.static("public")); // after routes so JSON endpoints win
