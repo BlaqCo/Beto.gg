@@ -138,11 +138,12 @@ export async function runScanCycle() {
     .map(m => ({ ...m, px: m.ask ?? m.est }))
     .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
     .filter(m => {
-      // If no gameStartIso (some esports/tennis markets), use endDate as proxy
+      // If no gameStartIso, use endDate as proxy with 72h window
+      // MLB/WNBA/Tennis often lack gameStartTime but have endDate
       if (!m.gameStartIso) {
-        if (!m.endIso) return false;
+        if (!m.endIso) return true; // no time info — trust the fetch filter
         const end = new Date(m.endIso).getTime();
-        return end > now && (end - now) <= NEXT_DAY_MS; // 12h cap
+        return end > now && (end - now) <= 72 * 3_600_000;
       }
       const start = new Date(m.gameStartIso).getTime();
       return start <= now || (start - now) <= NEXT_DAY_MS;
