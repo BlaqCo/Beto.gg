@@ -469,6 +469,149 @@ export async function getOpenPositions() {
 //   { type, trade: { marketSlug, price:{value,currency}, qtyDecimal, costBasis:{value}, realizedPnl:{value}, createTime, state }, positionResolution: { ... } }
 export async function getTradeHistory({ limit = 500 } = {}) {
   try {
+    // ── Step 1: get proxy wallet address from account ──────────────
+    // The Data API needs the proxy wallet, not the API key
+    let proxyWallet = null;
+    try {
+      const acct = await signedRequest("GET", "/v1/account");
+      proxyWallet = acct?.proxyWallet || acct?.proxy_wallet ||
+                    acct?.walletAddress || acct?.address || null;
+      if (proxyWallet) {
+        console.log(`📋 Proxy wallet: ${proxyWallet}`);
+      } else {
+        console.log(`📋 Account response keys: ${JSON.stringify(Object.keys(acct || {}))}`);
+        console.log(`📋 Account sample: ${JSON.stringify(acct).slice(0, 300)}`);
+      }
+    } catch (e) {
+      console.error("⚠️ Could not fetch account:", e.message);
+    }
+
+    const activities = [];
+
+    // ── Step 2: fetch from Polymarket Data API (public, no auth needed) ──
+    // GET https://data-api.polymarket.com/activity?user={proxyWallet}
+    // Returns all trades/redeems for this wallet address
+    if (proxyWallet) {
+      try {
+        let offset = 0;
+        const pageSize = 200;
+        while (activities.length < limit) {
+          const url = `https://data-api.polymarket.com/activity?user=${proxyWallet}&limit=${pageSize}&offset=${offset}&sortDirection=DESC`;
+          const resp = await fetch(url, { headers: { "Accept": "application/json" } });
+          if (!resp.ok) {
+            console.error(`⚠️ Data API ${resp.status}: ${await resp.text().catch(()=>"")}`);
+            break;
+          }
+          const page = await resp.json();
+          const items = Array.isArray(page) ? page : (page.data || page.activities || []);
+          if (!items.length) break;
+          activities.push(...items);
+          if (items.length < pageSize) break;
+          offset += pageSize;
+        }
+        console.log(`📋 Data API: ${activities.length} activities fetched for ${proxyWallet.slice(0,10)}...`);
+        if (activities.length > 0) {
+          console.log(`📋 Activity sample: ${JSON.stringify(activities[0]).slice(0, 400)}`);
+        }
+      } catch (e) {
+        console.error("⚠️ Data API fetch failed:", e.message);
+      }
+    }
+
+    // ── Step 3: fall back to portfolio/activities if Data API empty ──
+    if (!activities.length) {
+      console.log("📋 Falling back to /v1/portfolio/activities...");
+      let cursor = null;
+      let page = 0;
+      while (page < 10) {
+        const qs = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
+        if (cursor) qs.set("cursor", cursor);
+        const data = await signedRequest("GET", `/v1/portfolio/activities?${qs}`);
+        if (page === 0) {
+          console.log(`📋 Portfolio activities sample: ${JSON.stringify((data?.activities||[])[0] || {}).slice(0,400)}`);
+        }
+        const acts = data?.activities || [];
+        activities.push(...acts);
+        if (!data?.nextCursor || !acts.length || data?.eof) break;
+        cursor = data.nextCursor;
+        page++;
+        if (activities.length >= limit) break;
+      }
+    }
+
+    // ── Step 4: normalise to common shape ────────────────────────────
+    // Data API shape: { side, price, size, timestamp, title, conditionId, outcome }
+    // Portfolio activities: { type, trade: {...}, positionResolution: {...} }
+    return activities.map(a => {
+      // Data API format
+      if (a.side !== undefined && a.timestamp !== undefined) {
+        const side  = (a.side || "").toUpperCase();  // BUY or SELL
+        const price = parseFloat(a.price ?? 0);
+        const size  = parseFloat(a.size ?? 0);
+        const cost  = side === "BUY" ? +(price * size).toFixed(4) : 0;
+        // A SELL near $1 = WIN (settlement payout)
+        // A SELL at current price = cash-out
+        const isSell    = side === "SELL";
+        const proceeds  = isSell ? +(price * size).toFixed(4) : 0;
+        const ts = a.timestamp
+          ? new Date(a.timestamp * 1000).toISOString()
+          : (a.createTime || "");
+        return {
+          _type:       isSell ? "sell" : "buy",
+          marketSlug:  a.conditionId || a.slug || "",
+          question:    a.title || a.market || "",
+          price,
+          qty:         size,
+          costBasis:   cost,
+          proceeds,
+          realizedPnl: isSell ? +(proceeds).toFixed(4) : 0, // gross proceeds on sell
+          createTime:  ts,
+          side:        a.side,
+          outcome:     a.outcome || "",
+          won:         isSell && price >= 0.95, // settled WIN if sold at ~$1
+        };
+      }
+
+      // Portfolio activities format (fallback)
+      if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
+        const t = a.trade;
+        const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+        return {
+          _type:       "trade",
+          marketSlug:  t.marketSlug || "",
+          question:    t.marketTitle || t.marketSlug || "",
+          price:       amtVal(t.price),
+          qty:         parseFloat(t.qtyDecimal ?? 0),
+          costBasis:   amtVal(t.costBasis) ?? amtVal(t.cost),
+          realizedPnl: amtVal(t.realizedPnl) ?? 0,
+          createTime:  t.createTime || "",
+          side:        "BUY",
+          won:         false,
+        };
+      }
+      if (a.type === "ACTIVITY_TYPE_POSITION_RESOLUTION" && a.positionResolution) {
+        const r   = a.positionResolution;
+        const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+        const before = amtVal(r.beforePosition?.realized) ?? 0;
+        const after  = amtVal(r.afterPosition?.realized)  ?? 0;
+        const pl = after - before;
+        return {
+          _type:       "resolution",
+          marketSlug:  r.marketSlug || "",
+          question:    r.afterPosition?.marketMetadata?.title || r.marketSlug || "",
+          realizedPnl: pl,
+          createTime:  r.updateTime || "",
+          won:         pl > 0 || r.side === "POSITION_RESOLUTION_SIDE_LONG",
+        };
+      }
+      return null;
+    }).filter(Boolean);
+  } catch (err) {
+    console.error("⚠️ getTradeHistory failed:", err.message);
+    return [];
+  }
+} = {}) {
+  try {
     const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
     const allActivities = [];
     let cursor = null;
