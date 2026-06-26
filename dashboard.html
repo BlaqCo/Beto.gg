@@ -321,20 +321,24 @@ function renderPositions(list){
   }
   $('trades-body').innerHTML=list.map(p=>{
     const rawQ=p.question||p.slug||'Unknown';
-    const q=cleanQ(rawQ).slice(0,50)||rawQ.replace(/^[a-z]+-/,'').replace(/-\d{4}.*/,'').replace(/-/g,' ').slice(0,50);
+    const q=cleanQ(rawQ).slice(0,50)||rawQ.slice(0,50);
     const tag=(p.category||sport(rawQ)).toUpperCase().slice(0,6)||'SPORT';
 
-    // All pre-computed in getOpenPositionsEnriched
-    const bet    =parseFloat(p.costBasis??0);   // $ wagered
-    const prob   =parseFloat(p.avgPrice??0);    // entry probability (0-1)
-    const payout =parseFloat(p.payout??p.qty??0); // $ win at settlement = qty×$1
-    const curBid =parseFloat(p.currentBid??0);  // live price
-    const openPnl=parseFloat(p.openPnl??0);     // live P/L
+    // costBasis = $ wagered (from API cost field)
+    const bet=parseFloat(p.costBasis??0);
+    // avgPrice = entry probability from state.js bet (0.67 = 67%)
+    const prob=parseFloat(p.avgPrice??0);
+    // payout = costBasis / entryPrice = $ if YES wins (from server)
+    const payout=p.payout!=null?parseFloat(p.payout):null;
+    // currentBid = live market price (0-1)
+    const curBid=parseFloat(p.currentBid??0);
+    // openPnl = (currentBid - entryPrice) × payout
+    const openPnl=parseFloat(p.openPnl??0);
 
-    const betStr =bet  ?'$'+bet.toFixed(2):'—';
-    const probStr=prob ?Math.round(prob*100)+'%':'—';
-    const payStr =payout?'$'+payout.toFixed(2):'—';
-    const bidStr =curBid?Math.round(curBid*100)+'¢':'—';
+    const betStr =bet  ?'$'+bet.toFixed(2)               :'—';
+    const probStr=prob ?Math.round(prob*100)+'%'          :'—';
+    const payStr =payout!=null?'$'+payout.toFixed(2)      :'—';
+    const bidStr =curBid?Math.round(curBid*100)+'¢'       :'—';
     const pnlColor=pnlCls(openPnl);
     const ts=(p.placedAt||p.updateTime||'').slice(11,16)||'—';
 
