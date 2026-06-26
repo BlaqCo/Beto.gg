@@ -541,104 +541,89 @@ export async function getOpenPositionsEnriched(stateBets = []) {
     const data = await signedRequest("GET", "/v1/portfolio/positions");
     const raw = data?.positions || {};
 
-    // Log raw shape of first position so we can verify field names
+    // Log full raw shape of first position to diagnose qty/price scaling
     const slugs = Object.keys(raw);
     if (slugs.length > 0) {
-      const sample = raw[slugs[0]];
-      console.log(`🔍 Position fields: ${JSON.stringify(Object.keys(sample))}`);
-      console.log(`🔍 Position sample: ${JSON.stringify(sample).slice(0, 400)}`);
+      console.log(`\uD83D\uDD0D POSITIONS RAW: ${JSON.stringify(raw[slugs[0]])}`);
     }
 
     const out = [];
     for (const [slug, p] of Object.entries(raw)) {
+      const qtyRaw = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
+      if (qtyRaw <= 0) continue;
 
-      // ── qty: number of contracts held ─────────────────────────────
-      // qtyBoughtDecimal preferred (decimal string), fall back to int fields
-      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
-      if (qty <= 0) continue;
-
-      // ── costBasis: total $ paid for this position ──────────────────
-      // API: cost: { value: "0.67", currency: "USD" }
-      const costBasis = amtVal(p?.cost);
-
-      // ── cashValue: what the API calls "unrealized PnL" ─────────────
-      // Per docs: cashValue = "Unrealized PnL for the position"
-      // BUT on Polymarket this is actually the CURRENT MARKET VALUE
-      // (i.e. currentBid × qty), NOT the P/L itself.
-      // Real openPnl = cashValue - costBasis
-      const cashValue = amtVal(p?.cashValue);
+      // Dollar amounts from API — always reliable regardless of qty scaling
+      const costBasis = amtVal(p?.cost);       // total $ paid
+      const cashValue = amtVal(p?.cashValue);  // current market value in $
       const realized  = amtVal(p?.realized);
 
-      // ── avgPrice: entry probability (derived from cost / qty) ──────
-      // Each contract pays $1 at settlement, so avgPrice = cost per contract
-      // e.g. cost=$0.67, qty=1 → avgPrice=0.67 (67%)
-      const avgPrice = (costBasis != null && qty > 0)
-        ? +(costBasis / qty).toFixed(4)
-        : null;
+      // P/L from API dollar fields
+      const apiOpenPnl = (cashValue != null && costBasis != null)
+        ? +(cashValue - costBasis).toFixed(2) : null;
 
-      // ── question / category ────────────────────────────────────────
+      // Market metadata
       const meta = p?.marketMetadata || {};
-      let question = meta.title || null;
-      let category = "";
+      let question   = meta.title || null;
+      let category   = "";
+      let entryPrice = null;
+      let placedAt   = null;
 
-      // Cross-ref state bets for question/category if API doesn't provide them
+      // Cross-ref state bets for entry price, question, category
       const stateBet = stateBets.find(b =>
         b.marketConditionId === slug ||
         b.marketConditionId === slug + "-yes" ||
         slug === b.marketConditionId + "-yes"
       );
       if (stateBet) {
-        if (!question) question = (stateBet.marketQuestion || "").replace(/^\[.*?\]\s*/, "") || null;
-        if (!category) category = stateBet.entryCoin || "";
+        if (!question)   question   = (stateBet.marketQuestion || "").replace(/^\[.*?\]\s*/, "") || null;
+        if (!category)   category   = stateBet.entryCoin || "";
+        if (!entryPrice) entryPrice = stateBet.entryPrice || null;
+        if (!placedAt)   placedAt   = stateBet.placedAt || null;
       }
 
-      // ── live price from BBO ────────────────────────────────────────
+      // Payout = costBasis / entryPrice  (e.g. $0.67 / 0.67 = $1.00)
+      const payout = (costBasis && entryPrice && entryPrice > 0)
+        ? +(costBasis / entryPrice).toFixed(2) : null;
+
+      // Live BBO
       let currentBid = null;
       try {
         const bbo = await getBBO(slug);
         currentBid = bbo?.bid ?? null;
       } catch {}
 
-      // ── P/L calculations ───────────────────────────────────────────
-      // currentVal = what the position is worth RIGHT NOW at live bid
-      // = currentBid × qty  (each contract worth currentBid cents on dollar)
-      const currentVal = (currentBid != null && qty > 0)
-        ? +(currentBid * qty).toFixed(2)
-        : cashValue; // fall back to API cashValue if no live bid
+      // Live P/L = (currentBid - entryPrice) * payout
+      // e.g. (0.68 - 0.67) * 1.00 = +$0.01
+      let openPnl = apiOpenPnl;
+      if (currentBid != null && entryPrice && payout) {
+        openPnl = +((currentBid - entryPrice) * payout).toFixed(2);
+      }
 
-      // openPnl = current value - what we paid
-      const openPnl = (currentVal != null && costBasis != null)
-        ? +(currentVal - costBasis).toFixed(2)
-        : (cashValue != null && costBasis != null)
-          ? +(cashValue - costBasis).toFixed(2)  // API fallback
-          : null;
+      const currentVal = (currentBid && payout)
+        ? +(currentBid * payout).toFixed(2) : cashValue;
 
-      // ── payout: what you win if YES resolves ──────────────────────
-      // Each contract pays $1 at settlement, so payout = qty × $1
-      const payout = +(qty).toFixed(2);
-
-      console.log(`  📊 ${slug.slice(0,30)} | qty=${qty.toFixed(3)} cost=$${costBasis} avgP=${avgPrice} bid=${currentBid} P/L=${openPnl}`);
+      console.log(`  \uD83D\uDCCA ${slug.slice(0,28)} | cost=$${costBasis} entry=${entryPrice} bid=${currentBid} payout=$${payout} P/L=${openPnl}`);
 
       out.push({
         slug,
         question:   question || slug,
         category,
-        qty,
-        avgPrice,       // entry probability (cost/qty)
-        costBasis,      // $ wagered
-        currentBid,     // live bid price
-        currentVal,     // current market value
-        cashValue,      // API's cashValue field
-        openPnl,        // live P/L = currentVal - costBasis
-        payout,         // win amount at settlement = qty × $1
+        qty:        qtyRaw,
+        avgPrice:   entryPrice,
+        costBasis,
+        cashValue,
+        currentBid,
+        currentVal,
+        openPnl,
+        payout,
         realized,
         updateTime: p?.updateTime,
-        placedAt:   stateBet?.placedAt || p?.updateTime || null,
+        placedAt,
       });
     }
     return out;
   } catch (err) {
-    console.error("⚠️ getOpenPositionsEnriched failed:", err.message);
+    console.error("\u26A0\uFE0F getOpenPositionsEnriched failed:", err.message);
     return [];
   }
 }
