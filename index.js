@@ -13,6 +13,14 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as state from "./state.js";
+import {
+  getBuyingPower,
+  getOpenPositions,
+  getBBO,
+  fetchSportsMoneylines,
+  getOpenPositionsEnriched,
+  getTradeHistory,
+} from "./polymarket-us.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -65,7 +73,7 @@ async function getLiveSportsBalance() {
     return _liveBalCache.value;
   }
   try {
-    const { getBuyingPower } = await import("./polymarket-us.js");
+    
     const { currentBalance } = await getBuyingPower();
     _liveBalCache = { value: currentBalance, ts: Date.now() };
     return currentBalance;
@@ -119,7 +127,7 @@ async function getLivePortfolioPnl() {
   if (settings.dryRun) return null; // dry run — no real account to query
 
   try {
-    const { getOpenPositions, getBBO } = await import("./polymarket-us.js");
+    
     const positions = await getOpenPositions();
     if (!positions) return null;
 
@@ -297,7 +305,7 @@ app.get("/signals", (req, res) => {
 app.get("/markets", async (req, res) => {
   try {
     if (currentMode === "SPORTS") {
-      const { fetchSportsMoneylines } = await import("./polymarket-us.js");
+      
       const mkts = await fetchSportsMoneylines(); // 20s-cached internally
       return res.json(mkts.map(m => ({
         question: m.question,
@@ -361,8 +369,6 @@ app.get("/api/positions", async (req, res) => {
       return res.json(_posCache.data);
     }
     try {
-      const { getOpenPositionsEnriched } = await import("./polymarket-us.js");
-      // Pass local state bets so we can fill in missing avgPrice/question/category
       const stateBets = state.getAllBets ? state.getAllBets() : [];
       const positions = await getOpenPositionsEnriched(stateBets);
       _posCache = { data: positions, ts: Date.now() };
@@ -404,7 +410,6 @@ app.get("/api/history", async (req, res) => {
       return res.json(_histCache.data);
     }
     try {
-      const { getTradeHistory } = await import("./polymarket-us.js");
       const trades = await getTradeHistory({ limit: 500 });
       _histCache = { data: trades, ts: Date.now() };
       return res.json(trades);
@@ -431,7 +436,6 @@ app.get("/api/stats", async (req, res) => {
       // Use cached history if fresh, else fetch
       let acts = _histCache.data;
       if (!acts || Date.now() - _histCache.ts > 10_000) {
-        const { getTradeHistory } = await import("./polymarket-us.js");
         acts = await getTradeHistory({ limit: 500 });
         _histCache = { data: acts, ts: Date.now() };
       }
@@ -488,7 +492,8 @@ app.listen(PORT, () => {
 // ── Bot loaders + independent scanners ───────────────────────────
 async function loadBots() {
   try {
-    sportsBot = await import("./bot-sports.js");
+    const botMod = await import("./bot-sports.js");
+    sportsBot = botMod;
     console.log("[INFO] Loaded bot-sports.js");
   } catch (err) {
     console.error("Sports bot load error:", err.message);
@@ -506,7 +511,6 @@ async function loadBots() {
   // so the System Log panel shows your full bet history immediately.
   if (!DRY_RUN) {
     try {
-      const { getTradeHistory } = await import("./polymarket-us.js");
       const trades = await getTradeHistory({ limit: 500 });
       if (trades.length) {
         // Log raw shape of first trade so we know field names
@@ -545,9 +549,8 @@ async function loadBots() {
 
     // Also load open positions on boot
     try {
-      const { getOpenPositionsEnriched } = await import("./polymarket-us.js");
-      const stateBets = state.getAllBets ? state.getAllBets() : [];
-      const positions = await getOpenPositionsEnriched(stateBets);
+      const stateBetsB = state.getAllBets ? state.getAllBets() : [];
+      const positions = await getOpenPositionsEnriched(stateBetsB);
       if (positions.length) {
         console.log(`📊 OPEN POSITIONS — ${positions.length} active`);
         positions.forEach(p => {
