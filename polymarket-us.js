@@ -540,71 +540,98 @@ export async function getOpenPositionsEnriched(stateBets = []) {
     const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
     const data = await signedRequest("GET", "/v1/portfolio/positions");
     const raw = data?.positions || {};
-    const out = [];
 
+    // Log raw shape of first position so we can verify field names
+    const slugs = Object.keys(raw);
+    if (slugs.length > 0) {
+      const sample = raw[slugs[0]];
+      console.log(`🔍 Position fields: ${JSON.stringify(Object.keys(sample))}`);
+      console.log(`🔍 Position sample: ${JSON.stringify(sample).slice(0, 400)}`);
+    }
+
+    const out = [];
     for (const [slug, p] of Object.entries(raw)) {
-      // Use decimal fields (whole-number fields are deprecated)
+
+      // ── qty: number of contracts held ─────────────────────────────
+      // qtyBoughtDecimal preferred (decimal string), fall back to int fields
       const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
       if (qty <= 0) continue;
 
-      // Cost basis = total $ spent buying this position
+      // ── costBasis: total $ paid for this position ──────────────────
+      // API: cost: { value: "0.67", currency: "USD" }
       const costBasis = amtVal(p?.cost);
 
-      // cashValue = current mark-to-market value (unrealized P/L proxy)
-      // Per docs: "Unrealized PnL for the position"
+      // ── cashValue: what the API calls "unrealized PnL" ─────────────
+      // Per docs: cashValue = "Unrealized PnL for the position"
+      // BUT on Polymarket this is actually the CURRENT MARKET VALUE
+      // (i.e. currentBid × qty), NOT the P/L itself.
+      // Real openPnl = cashValue - costBasis
       const cashValue = amtVal(p?.cashValue);
+      const realized  = amtVal(p?.realized);
 
-      // Realized P/L (from sells/settlement so far)
-      const realized = amtVal(p?.realized);
+      // ── avgPrice: entry probability (derived from cost / qty) ──────
+      // Each contract pays $1 at settlement, so avgPrice = cost per contract
+      // e.g. cost=$0.67, qty=1 → avgPrice=0.67 (67%)
+      const avgPrice = (costBasis != null && qty > 0)
+        ? +(costBasis / qty).toFixed(4)
+        : null;
 
-      // Open P/L = cashValue - costBasis (if available)
-      // cashValue IS the unrealized PnL per docs, so use directly
-      const openPnl = cashValue != null ? cashValue : null;
-
-      // Market metadata from embedded object
+      // ── question / category ────────────────────────────────────────
       const meta = p?.marketMetadata || {};
-      let question = meta.title || meta.slug || null;
+      let question = meta.title || null;
       let category = "";
 
-      // Cross-ref state bets for missing question/category/placedAt
+      // Cross-ref state bets for question/category if API doesn't provide them
       const stateBet = stateBets.find(b =>
         b.marketConditionId === slug ||
-        b.marketConditionId === (slug + "-yes") ||
-        (slug && slug.includes(b.marketConditionId?.split("-yes")[0]))
+        b.marketConditionId === slug + "-yes" ||
+        slug === b.marketConditionId + "-yes"
       );
       if (stateBet) {
         if (!question) question = (stateBet.marketQuestion || "").replace(/^\[.*?\]\s*/, "") || null;
         if (!category) category = stateBet.entryCoin || "";
       }
 
-      // Entry price (avgPrice) = costBasis / qty  — derived since API doesn't return it directly
-      const avgPrice = costBasis && qty ? +(costBasis / qty).toFixed(4) : null;
-
-      // Live BBO for current bid price
+      // ── live price from BBO ────────────────────────────────────────
       let currentBid = null;
       try {
         const bbo = await getBBO(slug);
         currentBid = bbo?.bid ?? null;
       } catch {}
 
-      // If we have live bid, compute real-time openPnl = (currentBid × qty) - costBasis
-      const liveVal = currentBid && qty ? +(currentBid * qty).toFixed(2) : null;
-      const liveOpenPnl = liveVal != null && costBasis != null
-        ? +(liveVal - costBasis).toFixed(2)
-        : openPnl; // fall back to cashValue-based
+      // ── P/L calculations ───────────────────────────────────────────
+      // currentVal = what the position is worth RIGHT NOW at live bid
+      // = currentBid × qty  (each contract worth currentBid cents on dollar)
+      const currentVal = (currentBid != null && qty > 0)
+        ? +(currentBid * qty).toFixed(2)
+        : cashValue; // fall back to API cashValue if no live bid
+
+      // openPnl = current value - what we paid
+      const openPnl = (currentVal != null && costBasis != null)
+        ? +(currentVal - costBasis).toFixed(2)
+        : (cashValue != null && costBasis != null)
+          ? +(cashValue - costBasis).toFixed(2)  // API fallback
+          : null;
+
+      // ── payout: what you win if YES resolves ──────────────────────
+      // Each contract pays $1 at settlement, so payout = qty × $1
+      const payout = +(qty).toFixed(2);
+
+      console.log(`  📊 ${slug.slice(0,30)} | qty=${qty.toFixed(3)} cost=$${costBasis} avgP=${avgPrice} bid=${currentBid} P/L=${openPnl}`);
 
       out.push({
         slug,
         question:   question || slug,
         category,
         qty,
-        avgPrice,           // derived entry price
-        costBasis,          // $ wagered (from API)
-        cashValue,          // unrealized PnL from API
-        currentBid,         // live BBO bid
-        currentVal: liveVal,
-        openPnl:    liveOpenPnl,
-        realized,           // realized P/L
+        avgPrice,       // entry probability (cost/qty)
+        costBasis,      // $ wagered
+        currentBid,     // live bid price
+        currentVal,     // current market value
+        cashValue,      // API's cashValue field
+        openPnl,        // live P/L = currentVal - costBasis
+        payout,         // win amount at settlement = qty × $1
+        realized,
         updateTime: p?.updateTime,
         placedAt:   stateBet?.placedAt || p?.updateTime || null,
       });
