@@ -105,7 +105,7 @@ header{display:flex;align-items:center;gap:14px;
 /* ── TRADES TABLE ── */
 .trades-wrap{border:1px solid var(--border);border-top:none;
   background:rgba(0,0,0,0.5);margin-bottom:14px;min-height:58px;}
-.trade-row{display:grid;grid-template-columns:1fr 52px 52px 48px;
+.trade-row{display:grid;grid-template-columns:1fr 44px 40px 50px 50px 40px;
   padding:9px 14px;border-bottom:1px solid rgba(57,255,143,0.06);
   gap:6px;align-items:center;}
 .trade-row:last-child{border-bottom:none;}
@@ -122,7 +122,7 @@ header{display:flex;align-items:center;gap:14px;
   background:rgba(0,0,0,0.45);margin-bottom:14px;max-height:240px;overflow-y:auto;}
 .hist-wrap::-webkit-scrollbar{width:3px;}
 .hist-wrap::-webkit-scrollbar-thumb{background:rgba(57,255,143,0.15);}
-.hist-row{display:grid;grid-template-columns:1fr 44px 44px 52px;
+.hist-row{display:grid;grid-template-columns:1fr 40px 40px 44px 50px 52px;
   padding:7px 14px;border-bottom:1px solid rgba(57,255,143,0.05);
   gap:6px;align-items:center;font-size:8.5px;}
 .hist-row:last-child{border-bottom:none;}
@@ -257,10 +257,12 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);
   </div>
   <div class="trades-wrap">
     <div class="trade-row" style="background:rgba(57,255,143,0.03);border-bottom:1px solid var(--border)">
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim)">MARKET</div>
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">PAYOUT</div>
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">LIVE P/L</div>
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">TIME</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim)">MARKET</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">BET</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">PROB</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">PAYOUT</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">P/L</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">TIME</div>
     </div>
     <div id="trades-body"><div class="empty-tr">> NO ACTIVE POSITIONS_</div></div>
   </div>
@@ -273,10 +275,12 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);
   </div>
   <div class="hist-wrap">
     <div class="hist-row" style="background:rgba(57,255,143,0.03);border-bottom:1px solid var(--border)">
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim)">MARKET</div>
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">RESULT</div>
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">P/L</div>
-      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">DATE</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim)">MARKET</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">BET</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">PROB</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">RESULT</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">P/L</div>
+      <div style="font-size:6px;letter-spacing:1px;color:var(--dim);text-align:right">DATE</div>
     </div>
     <div id="hist-body"><div class="empty-tr">> NO HISTORY YET_</div></div>
   </div>
@@ -356,11 +360,14 @@ function renderPositions(positions,isDry){
     const cat=(p.category||p.entryCoin||detectSport(rawQ)).toUpperCase().slice(0,6);
     const bidPct=p.currentBid?Math.round(p.currentBid*100)+'¢':'—';
     const ts=(p.placedAt||p.createdAt||p.created_at||p.ts||'').slice(11,16)||'—';
+    const probPct=price?Math.round(price*100)+'%':'—';
     return `<div class="trade-row">
       <div>
         <div class="tr-q">> ${q}</div>
-        <div class="tr-meta"><span class="league-tag">${cat}</span> $${cost.toFixed(2)} @ ${price?Math.round(price*100)+'¢':'—'} · now ${bidPct}</div>
+        <div class="tr-meta"><span class="league-tag">${cat}</span> now ${bidPct}</div>
       </div>
+      <div class="tr-num c-yellow">$${cost.toFixed(2)}</div>
+      <div class="tr-num c-neutral">${probPct}</div>
       <div class="tr-num c-blue">$${payout==='—'?'—':payout}</div>
       <div class="tr-num ${opc}">${oSign}$${Math.abs(op).toFixed(2)}</div>
       <div class="tr-num" style="font-size:7px;color:var(--dim)">${ts}</div>
@@ -398,9 +405,10 @@ function renderHistory(data, isDry){
       const lost=pl<0||(t.outcome||'').toLowerCase()==='lost';
       const q=(t.question||t.marketQuestion||t.title||t.marketSlug||'Unknown').replace(/^\[.*?\]\s*/,'').slice(0,42);
       const cost=parseFloat(t.size??t.amount??t.betSize??0);
+      const price=parseFloat(t.price??t.avgPrice??t.entryPrice??t.fillPrice??0)||null;
       const ts=(t.createdAt||t.created_at||t.closedAt||t.placedAt||'').slice(0,10)||'—';
       const sport=detectSport(q);
-      return {q,cost,ts,sport,pl,won,lost,isExp:false};
+      return {q,cost,price,ts,sport,pl,won,lost,isExp:false};
     }
     // DRY: state.js bet object
     const pnl=parseFloat(t.pnl||0);
@@ -408,9 +416,10 @@ function renderHistory(data, isDry){
     const isExp=t.status==='expired';
     const q=(t.marketQuestion||'Unknown').replace(/^\[.*?\]\s*/,'').slice(0,42);
     const cost=parseFloat(t.betSize||0);
+    const price=parseFloat(t.entryPrice||t.impliedProbability||0)||null;
     const ts=(t.closedAt||t.placedAt||'').slice(0,10)||'—';
     const sport=(t.entryCoin||detectSport(q)).toUpperCase().slice(0,6);
-    return {q,cost,ts,sport,pl:pnl,won,lost:t.status==='lost',isExp};
+    return {q,cost,price,ts,sport,pl:pnl,won,lost:t.status==='lost',isExp};
   });
 
   // Newest first
@@ -420,11 +429,15 @@ function renderHistory(data, isDry){
   $('hist-body').innerHTML=rows.map(r=>{
     const pnlCl=r.isExp?'c-neutral':r.won?'c-green':r.lost?'c-red':'c-neutral';
     const result=r.isExp?'EXP':r.won?'WIN':r.lost?'LOSS':'—';
+    const entryProb=r.price?Math.round(r.price*100)+'%':'—';
+    const potPayout=r.price&&r.cost?(r.cost/r.price).toFixed(2):'—';
     return `<div class="hist-row">
       <div>
         <div class="hist-q"><span class="league-tag">${r.sport}</span>${r.q}</div>
-        <div style="font-size:7px;color:var(--dim);margin-top:1px">$${r.cost.toFixed(2)}</div>
+        <div style="font-size:7px;color:var(--dim);margin-top:1px">win→$${potPayout}</div>
       </div>
+      <div class="hist-result c-yellow">$${r.cost.toFixed(2)}</div>
+      <div class="hist-result c-neutral">${entryProb}</div>
       <div class="hist-result ${pnlCl}">${result}</div>
       <div class="hist-result ${pnlCl}">${r.isExp?'—':(r.pl>=0?'+':'')+'$'+Math.abs(r.pl).toFixed(2)}</div>
       <div class="hist-date">${r.ts}</div>
