@@ -463,13 +463,60 @@ export async function getOpenPositions() {
 }
 
 // ── getTradeHistory ──────────────────────────────────────────────
-// Fetches all filled trades from your Polymarket account (signed).
-// Endpoint: GET /v1/portfolio/trades
+// Fetches activities from /v1/portfolio/activities (correct endpoint per docs).
+// Filters to TRADE + POSITION_RESOLUTION types.
+// Activity shape:
+//   { type, trade: { marketSlug, price:{value,currency}, qtyDecimal, costBasis:{value}, realizedPnl:{value}, createTime, state }, positionResolution: { ... } }
 export async function getTradeHistory({ limit = 500 } = {}) {
   try {
-    const data = await signedRequest("GET", `/v1/portfolio/trades?limit=${limit}`);
-    const trades = data?.trades || data || [];
-    return Array.isArray(trades) ? trades : [];
+    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+    const allActivities = [];
+    let cursor = null;
+    let page = 0;
+    // Paginate to get full history
+    while (page < 10) {
+      const qs = new URLSearchParams({ limit: Math.min(limit, 200), sortOrder: "SORT_ORDER_DESCENDING" });
+      if (cursor) qs.set("cursor", cursor);
+      const data = await signedRequest("GET", `/v1/portfolio/activities?${qs}`);
+      const acts = data?.activities || [];
+      allActivities.push(...acts);
+      if (data?.eof || !data?.nextCursor || acts.length === 0) break;
+      cursor = data.nextCursor;
+      page++;
+      if (allActivities.length >= limit) break;
+    }
+
+    // Normalise into flat objects the dashboard can use
+    return allActivities.map(a => {
+      if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
+        const t = a.trade;
+        return {
+          _type:       "trade",
+          marketSlug:  t.marketSlug,
+          question:    t.marketSlug, // enriched later via positions cross-ref
+          price:       amtVal(t.price),        // entry price 0-1
+          qty:         parseFloat(t.qtyDecimal ?? t.qty ?? 0),
+          costBasis:   amtVal(t.costBasis),    // $ spent
+          realizedPnl: amtVal(t.realizedPnl),  // $ profit/loss on this trade
+          createTime:  t.createTime,
+          state:       t.state,                // TRADE_STATE_CLEARED etc
+        };
+      }
+      if (a.type === "ACTIVITY_TYPE_POSITION_RESOLUTION" && a.positionResolution) {
+        const r = a.positionResolution;
+        const after = r.afterPosition;
+        return {
+          _type:       "resolution",
+          marketSlug:  r.marketSlug,
+          question:    after?.marketMetadata?.title || r.marketSlug,
+          realizedPnl: parseFloat(after?.realized?.value ?? 0),
+          createTime:  r.updateTime,
+          side:        r.side,  // LONG = won, SHORT = lost
+          won:         r.side === "POSITION_RESOLUTION_SIDE_LONG",
+        };
+      }
+      return null;
+    }).filter(Boolean);
   } catch (err) {
     console.error("⚠️ getTradeHistory failed:", err.message);
     return [];
@@ -479,37 +526,87 @@ export async function getTradeHistory({ limit = 500 } = {}) {
 // ── getOpenPositionsEnriched ─────────────────────────────────────
 // Returns open positions with live BBO price + market question.
 // Combines /v1/portfolio/positions + BBO per slug.
-export async function getOpenPositionsEnriched() {
+// ── getOpenPositionsEnriched ─────────────────────────────────────
+// Correct field names per docs.polymarket.us/api-reference/portfolio/get-user-positions
+// Position object (UserPosition schema):
+//   qtyBoughtDecimal (string decimal), qtySoldDecimal, netPositionDecimal
+//   cost: Amount { value, currency }   — total $ spent (cost basis)
+//   realized: Amount                   — realized P/L so far
+//   cashValue: Amount                  — unrealized P/L (current mark value)
+//   marketMetadata: { slug, title, outcome, icon, eventSlug }
+//   updateTime
+export async function getOpenPositionsEnriched(stateBets = []) {
   try {
+    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
     const data = await signedRequest("GET", "/v1/portfolio/positions");
     const raw = data?.positions || {};
     const out = [];
+
     for (const [slug, p] of Object.entries(raw)) {
-      const qty = Number(p?.qtyBought ?? p?.size ?? 0);
+      // Use decimal fields (whole-number fields are deprecated)
+      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
       if (qty <= 0) continue;
-      let bid = null, ask = null;
+
+      // Cost basis = total $ spent buying this position
+      const costBasis = amtVal(p?.cost);
+
+      // cashValue = current mark-to-market value (unrealized P/L proxy)
+      // Per docs: "Unrealized PnL for the position"
+      const cashValue = amtVal(p?.cashValue);
+
+      // Realized P/L (from sells/settlement so far)
+      const realized = amtVal(p?.realized);
+
+      // Open P/L = cashValue - costBasis (if available)
+      // cashValue IS the unrealized PnL per docs, so use directly
+      const openPnl = cashValue != null ? cashValue : null;
+
+      // Market metadata from embedded object
+      const meta = p?.marketMetadata || {};
+      let question = meta.title || meta.slug || null;
+      let category = "";
+
+      // Cross-ref state bets for missing question/category/placedAt
+      const stateBet = stateBets.find(b =>
+        b.marketConditionId === slug ||
+        b.marketConditionId === (slug + "-yes") ||
+        (slug && slug.includes(b.marketConditionId?.split("-yes")[0]))
+      );
+      if (stateBet) {
+        if (!question) question = (stateBet.marketQuestion || "").replace(/^\[.*?\]\s*/, "") || null;
+        if (!category) category = stateBet.entryCoin || "";
+      }
+
+      // Entry price (avgPrice) = costBasis / qty  — derived since API doesn't return it directly
+      const avgPrice = costBasis && qty ? +(costBasis / qty).toFixed(4) : null;
+
+      // Live BBO for current bid price
+      let currentBid = null;
       try {
         const bbo = await getBBO(slug);
-        bid = bbo?.bid ?? null;
-        ask = bbo?.ask ?? null;
+        currentBid = bbo?.bid ?? null;
       } catch {}
-      const avgPrice  = Number(p?.avgPrice ?? p?.averagePrice ?? p?.entryPrice ?? 0) || null;
-      const costBasis = avgPrice && qty ? +(qty * avgPrice).toFixed(2) : null;
-      const currentVal = bid && qty   ? +(qty * bid).toFixed(2)       : null;
-      const openPnl    = currentVal != null && costBasis != null
-        ? +(currentVal - costBasis).toFixed(2) : null;
+
+      // If we have live bid, compute real-time openPnl = (currentBid × qty) - costBasis
+      const liveVal = currentBid && qty ? +(currentBid * qty).toFixed(2) : null;
+      const liveOpenPnl = liveVal != null && costBasis != null
+        ? +(liveVal - costBasis).toFixed(2)
+        : openPnl; // fall back to cashValue-based
+
       out.push({
         slug,
-        question: p?.question || slug,
-        category: p?.category || "",
+        question:   question || slug,
+        category,
         qty,
-        avgPrice,
-        currentBid: bid,
-        currentAsk: ask,
-        costBasis,
-        currentVal,
-        openPnl,
-        side: p?.side || "YES",
+        avgPrice,           // derived entry price
+        costBasis,          // $ wagered (from API)
+        cashValue,          // unrealized PnL from API
+        currentBid,         // live BBO bid
+        currentVal: liveVal,
+        openPnl:    liveOpenPnl,
+        realized,           // realized P/L
+        updateTime: p?.updateTime,
+        placedAt:   stateBet?.placedAt || p?.updateTime || null,
       });
     }
     return out;
