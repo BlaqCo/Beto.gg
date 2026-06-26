@@ -372,57 +372,84 @@ function renderHistory(data, isDry){
     return;
   }
 
-  const rows=data.map(a=>{
+  const rows = data.map(a => {
     if(!isDry){
+      // ── Data API: buy activity ──────────────────────────────────
+      if(a._type==='buy'){
+        const q   = a.question||a.marketSlug||'Unknown';
+        const bet = parseFloat(a.costBasis??0);
+        const prob= parseFloat(a.price??0)||null;
+        const ts  = (a.createTime||'').slice(0,10)||'—';
+        return {q,bet,prob,pl:null,result:'BUY',resCls:'bc-exp-badge',pnlStr:'—',ts,tag:sport(q)};
+      }
+      // ── Data API: sell activity ─────────────────────────────────
+      if(a._type==='sell'){
+        const q       = a.question||a.marketSlug||'Unknown';
+        const proceeds= parseFloat(a.proceeds??(parseFloat(a.price??0)*parseFloat(a.qty??0)));
+        const prob    = parseFloat(a.price??0)||null;
+        const won     = a.won||(prob>=0.95);
+        const ts      = (a.createTime||'').slice(0,10)||'—';
+        const result  = won?'WIN':'SELL';
+        const resCls  = won?'bc-win-badge':'bc-exp-badge';
+        return {q,bet:proceeds,prob,pl:null,result,resCls,
+                pnlStr:'+$'+proceeds.toFixed(2),ts,tag:sport(q)};
+      }
+      // ── Resolution ─────────────────────────────────────────────
       if(a._type==='resolution'){
-        const q=cleanQ(a.question||a.marketSlug||'Unknown');
-        const pl=parseFloat(a.realizedPnl??0);
-        const ts=(a.createTime||'').slice(0,10)||'—';
-        return {q,bet:null,prob:null,pl,won:a.won,lost:!a.won,isExp:false,ts,tag:sport(q)};
+        const q   = a.question||a.marketSlug||'Unknown';
+        const pl  = parseFloat(a.realizedPnl??0);
+        const ts  = (a.createTime||'').slice(0,10)||'—';
+        const won = a.won;
+        const result = won?'WIN':'LOSS';
+        const resCls = won?'bc-win-badge':'bc-loss-badge';
+        const pnlStr = (pl>=0?'+':'')+'$'+Math.abs(pl).toFixed(2);
+        return {q,bet:null,prob:null,pl,result,resCls,pnlStr,ts,tag:sport(q)};
       }
+      // ── Legacy trade ────────────────────────────────────────────
       if(a._type==='trade'){
-        const q=cleanQ(a.question||a.marketSlug||'Unknown');
-        const bet=parseFloat(a.costBasis??0);
-        const prob=parseFloat(a.price??0)||null;
-        const pl=parseFloat(a.realizedPnl??0);
-        const ts=(a.createTime||'').slice(0,10)||'—';
-        return {q,bet,prob,pl,won:pl>0,lost:pl<0,isExp:false,ts,tag:sport(q)};
+        const q   = cleanQ(a.question||a.marketSlug||'Unknown');
+        const bet = parseFloat(a.costBasis??0);
+        const prob= parseFloat(a.price??0)||null;
+        const pl  = parseFloat(a.realizedPnl??0);
+        const ts  = (a.createTime||'').slice(0,10)||'—';
+        return {q,bet,prob,pl,result:pl>0?'WIN':pl<0?'LOSS':'TRADE',
+                resCls:pl>0?'bc-win-badge':pl<0?'bc-loss-badge':'bc-exp-badge',
+                pnlStr:(pl>=0?'+':'')+'$'+Math.abs(pl).toFixed(2),ts,tag:sport(q)};
       }
-      return null;
     } else {
-      const q=cleanQ(a.marketQuestion||'Unknown');
-      const bet=parseFloat(a.betSize||0);
-      const prob=parseFloat(a.entryPrice||0)||null;
-      const pl=parseFloat(a.pnl||0);
-      const won=a.status==='won';
-      const isExp=a.status==='expired';
-      const ts=(a.closedAt||a.placedAt||'').slice(0,10)||'—';
-      const tag=(a.entryCoin||sport(q)).toUpperCase().slice(0,6);
-      return {q,bet,prob,pl,won,lost:a.status==='lost',isExp,ts,tag};
+      // DRY mode: state.js bet
+      const q    = cleanQ(a.marketQuestion||'Unknown');
+      const bet  = parseFloat(a.betSize||0);
+      const prob = parseFloat(a.entryPrice||0)||null;
+      const pl   = parseFloat(a.pnl||0);
+      const won  = a.status==='won';
+      const isExp= a.status==='expired';
+      const ts   = (a.closedAt||a.placedAt||'').slice(0,10)||'—';
+      const tag  = (a.entryCoin||sport(q)).toUpperCase().slice(0,6);
+      const result = isExp?'EXP':won?'WIN':a.status==='lost'?'LOSS':'—';
+      const resCls = isExp?'bc-exp-badge':won?'bc-win-badge':'bc-loss-badge';
+      const pnlStr = isExp?'—':(pl>=0?'+':'')+'$'+Math.abs(pl).toFixed(2);
+      return {q,bet,prob,pl,result,resCls,pnlStr,ts,tag};
     }
+    return null;
   }).filter(Boolean).sort((a,b)=>b.ts>a.ts?1:-1);
 
-  $('hist-meta').textContent=rows.length+' entries';
-  $('hist-body').innerHTML=rows.map(r=>{
-    const probStr=r.prob?Math.round(r.prob*100)+'%':'—';
-    const payout=r.prob&&r.bet?(r.bet/r.prob).toFixed(2):null;
-    const result=r.isExp?'EXP':r.won?'WIN':r.lost?'LOSS':'—';
-    const resCls=r.isExp?'bc-exp-badge':r.won?'bc-win-badge':'bc-loss-badge';
-    const pnlStr=r.isExp?'—':(r.pl>=0?'+':'')+'$'+Math.abs(r.pl).toFixed(2);
-    const pnlColor=r.isExp?'c-neutral':pnlCls(r.pl);
-    const betStr=r.bet!=null?fmt$(r.bet):'—';
+  $('hist-meta').textContent = rows.length + ' entries';
+  $('hist-body').innerHTML = rows.map(r => {
+    const probStr = r.prob ? Math.round(r.prob*100)+'%' : '—';
+    const payout  = r.prob&&r.bet ? (r.bet/r.prob).toFixed(2) : null;
+    const betStr  = r.bet != null ? '$'+r.bet.toFixed(2) : '—';
     return `<div class="bet-card">
       <div class="bc-top">
-        <div class="bc-q">> ${r.q}</div>
-        <div class="bc-result ${resCls}">${result}</div>
+        <div class="bc-q">> ${cleanQ(r.q)}</div>
+        <div class="bc-result ${r.resCls}">${r.result}</div>
       </div>
       <div class="bc-meta">
         <span class="bc-tag">${r.tag}</span>
-        <span class="bc-pill">bet <strong>${betStr}</strong></span>
+        <span class="bc-pill">${betStr}</span>
         <span class="bc-pill">@ <strong>${probStr}</strong></span>
-        <span class="bc-pill">win→<strong class="c-blue">${payout?'$'+payout:'—'}</strong></span>
         <span class="bc-spacer"></span>
-        <span class="bc-pnl ${pnlColor}">${pnlStr}</span>
+        <span class="bc-pnl ${r.result==='WIN'?'c-green':r.result==='LOSS'?'c-red':'c-neutral'}">${r.pnlStr}</span>
         <span class="bc-time">${r.ts}</span>
       </div>
     </div>`;
