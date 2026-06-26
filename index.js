@@ -400,7 +400,7 @@ app.get("/api/positions", async (req, res) => {
 let _histCache = { data: null, ts: 0 };
 app.get("/api/history", async (req, res) => {
   if (!DRY_RUN) {
-    if (_histCache.data && Date.now() - _histCache.ts < 60_000) {
+    if (_histCache.data && Date.now() - _histCache.ts < 10_000) {
       return res.json(_histCache.data);
     }
     try {
@@ -417,6 +417,51 @@ app.get("/api/history", async (req, res) => {
     .filter(b => b.status && b.status !== "open" && b.strategy === "SPORTS_ML")
     .sort((a, b) => (b.closedAt || "") > (a.closedAt || "") ? 1 : -1);
   res.json(closed);
+});
+
+// ── /api/stats — real P/L from Polymarket activities ─────────────
+// Computes total settled P/L, W/L record, total wagered from activities
+let _statsCache = { data: null, ts: 0 };
+app.get("/api/stats", async (req, res) => {
+  if (!DRY_RUN) {
+    if (_statsCache.data && Date.now() - _statsCache.ts < 10_000) {
+      return res.json(_statsCache.data);
+    }
+    try {
+      // Use cached history if fresh, else fetch
+      let acts = _histCache.data;
+      if (!acts || Date.now() - _histCache.ts > 10_000) {
+        const { getTradeHistory } = await import("./polymarket-us.js");
+        acts = await getTradeHistory({ limit: 500 });
+        _histCache = { data: acts, ts: Date.now() };
+      }
+
+      const resolutions = acts.filter(a => a._type === "resolution");
+      const trades      = acts.filter(a => a._type === "trade");
+
+      const wins        = resolutions.filter(a => a.won).length;
+      const losses      = resolutions.filter(a => !a.won).length;
+      const totalPnl    = resolutions.reduce((s, a) => s + (a.realizedPnl ?? 0), 0);
+      const totalWagered= trades.reduce((s, a) => s + (a.costBasis ?? 0), 0);
+      const totalBets   = trades.length;
+
+      const stats = { wins, losses, totalPnl: +totalPnl.toFixed(2),
+                      totalWagered: +totalWagered.toFixed(2), totalBets };
+      _statsCache = { data: stats, ts: Date.now() };
+      return res.json(stats);
+    } catch (e) {
+      console.error("⚠️ /api/stats error:", e.message);
+    }
+  }
+  // DRY fallback from state.js
+  const s = state.getStats ? state.getStats() : {};
+  const sp = s.sports || {};
+  res.json({
+    wins: sp.wins || 0, losses: sp.losses || 0,
+    totalPnl: parseFloat(sp.pnl ?? 0),
+    totalWagered: parseFloat(sp.totalWagered ?? 0),
+    totalBets: sp.totalBets || 0,
+  });
 });
 
 app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
