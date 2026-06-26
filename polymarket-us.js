@@ -152,7 +152,10 @@ function detectLeague(m) {
 //   "Will [Team] beat [Team]?"
 //   "[Team] vs [Team]"
 //   "[Team] at [Team]"
-const GAME_VS = /\bvs\.?\b|\bat\b|\bbeat\b|\bdefeat\b|\bwill .+ win (against|over|the match)|\bwill .+ (beat|defeat)/i;
+// Polymarket.us MLB/WNBA: "Will [Team] win?" (no opponent listed)
+// Soccer/Tennis: "Will [Team] win against [Team]?"  
+// Also: "[Team] vs [Team]", "[Team] at [Team]"
+const GAME_VS = /\bvs\.?\b|\bat\b|\bwill .+ win\b|\bwill .+ (beat|defeat)/i;
 const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1\b/i;
 const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|over\/under \d+ wins)\b/i;
 
@@ -272,7 +275,12 @@ export async function fetchSportsMoneylines() {
       const hoursOut = (startMs - now) / 3_600_000;
       passesTime = startMs <= now || hoursOut <= 12;
     } else if (endMs) {
-      passesTime = endMs > now && (endMs - now) <= 24 * 3_600_000;
+      // MLB/WNBA/Tennis markets often lack gameStartTime — accept if ending within 72h
+      const hoursToEnd = (endMs - now) / 3_600_000;
+      passesTime = endMs > now && hoursToEnd <= 72;
+    } else {
+      // No time fields at all — trust MONEYLINE tag
+      passesTime = m.sportsMarketTypeV2 === "MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE";
     }
     if (!passesTime) continue;
 
