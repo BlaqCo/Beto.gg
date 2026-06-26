@@ -473,48 +473,86 @@ export async function getTradeHistory({ limit = 500 } = {}) {
     const allActivities = [];
     let cursor = null;
     let page = 0;
-    // Paginate to get full history
+
     while (page < 10) {
-      const qs = new URLSearchParams({ limit: Math.min(limit, 200), sortOrder: "SORT_ORDER_DESCENDING" });
+      const qs = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
       if (cursor) qs.set("cursor", cursor);
       const data = await signedRequest("GET", `/v1/portfolio/activities?${qs}`);
+
+      // Log raw shape once so we know the exact field names
+      if (page === 0 && data?.activities?.length > 0) {
+        console.log(`📋 Activities raw sample: ${JSON.stringify(data.activities[0]).slice(0, 500)}`);
+        console.log(`📋 Activity types: ${[...new Set(data.activities.map(a => a.type))].join(", ")}`);
+      }
+
       const acts = data?.activities || [];
       allActivities.push(...acts);
-      if (data?.eof || !data?.nextCursor || acts.length === 0) break;
+      if (!data?.nextCursor || acts.length === 0 || data?.eof) break;
       cursor = data.nextCursor;
       page++;
       if (allActivities.length >= limit) break;
     }
 
-    // Normalise into flat objects the dashboard can use
+    console.log(`📋 Total activities fetched: ${allActivities.length}`);
+
     return allActivities.map(a => {
+      // ── Trade (buy/sell fill) ───────────────────────────────────
       if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
         const t = a.trade;
+        // realizedPnl on a trade = profit from this specific fill
+        // For a BUY this is 0 or negative (cost). For a SELL/WIN it's positive.
+        const pl = amtVal(t.realizedPnl) ?? 0;
         return {
           _type:       "trade",
-          marketSlug:  t.marketSlug,
-          question:    t.marketSlug, // enriched later via positions cross-ref
-          price:       amtVal(t.price),        // entry price 0-1
+          marketSlug:  t.marketSlug || a.marketSlug,
+          question:    t.question || t.marketTitle || t.marketSlug || a.marketSlug,
+          price:       amtVal(t.price),
           qty:         parseFloat(t.qtyDecimal ?? t.qty ?? 0),
-          costBasis:   amtVal(t.costBasis),    // $ spent
-          realizedPnl: amtVal(t.realizedPnl),  // $ profit/loss on this trade
-          createTime:  t.createTime,
-          state:       t.state,                // TRADE_STATE_CLEARED etc
+          costBasis:   amtVal(t.costBasis) ?? amtVal(t.cost),
+          realizedPnl: pl,
+          createTime:  t.createTime || a.createTime,
+          state:       t.state,
         };
       }
+
+      // ── Position resolution (market settled) ────────────────────
+      // This is the key one — fires when a market resolves YES or NO
       if (a.type === "ACTIVITY_TYPE_POSITION_RESOLUTION" && a.positionResolution) {
         const r = a.positionResolution;
-        const after = r.afterPosition;
+        const before = r.beforePosition;
+        const after  = r.afterPosition;
+
+        // P/L from this resolution = after.realized - before.realized
+        // (the incremental gain, not cumulative)
+        const beforeRealized = amtVal(before?.realized) ?? 0;
+        const afterRealized  = amtVal(after?.realized)  ?? 0;
+        const pl = afterRealized - beforeRealized;
+
+        // Also try direct pnl field if available
+        const directPl = amtVal(r.pnl) ?? amtVal(r.realizedPnl) ?? null;
+        const finalPl  = directPl ?? pl;
+
+        const won = r.side === "POSITION_RESOLUTION_SIDE_LONG" ||
+                    r.outcome === "YES" || r.outcome === "WON" ||
+                    (after?.side === "LONG") || (finalPl > 0);
+
+        const question = after?.marketMetadata?.title ||
+                         before?.marketMetadata?.title ||
+                         r.marketTitle || r.marketSlug;
+
+        console.log(`📋 RESOLUTION: ${question?.slice(0,40)} | beforeR=$${beforeRealized} afterR=$${afterRealized} pl=$${finalPl} won=${won}`);
+
         return {
           _type:       "resolution",
-          marketSlug:  r.marketSlug,
-          question:    after?.marketMetadata?.title || r.marketSlug,
-          realizedPnl: parseFloat(after?.realized?.value ?? 0),
-          createTime:  r.updateTime,
-          side:        r.side,  // LONG = won, SHORT = lost
-          won:         r.side === "POSITION_RESOLUTION_SIDE_LONG",
+          marketSlug:  r.marketSlug || a.marketSlug,
+          question,
+          realizedPnl: finalPl,
+          createTime:  r.updateTime || r.createTime || a.createTime,
+          side:        r.side,
+          won,
         };
       }
+
       return null;
     }).filter(Boolean);
   } catch (err) {
