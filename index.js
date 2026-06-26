@@ -436,14 +436,27 @@ app.get("/api/stats", async (req, res) => {
         _histCache = { data: acts, ts: Date.now() };
       }
 
-      const resolutions = acts.filter(a => a._type === "resolution");
-      const trades      = acts.filter(a => a._type === "trade");
+      // Data API: buys + sells + resolutions
+      const buys       = acts.filter(a => a._type === "buy"  || (a._type === "trade" && (a.side||"BUY").toUpperCase()==="BUY"));
+      const sells      = acts.filter(a => a._type === "sell" || (a._type === "trade" && (a.side||"").toUpperCase()==="SELL"));
+      const resolutions= acts.filter(a => a._type === "resolution");
 
-      const wins        = resolutions.filter(a => a.won).length;
-      const losses      = resolutions.filter(a => !a.won).length;
-      const totalPnl    = resolutions.reduce((s, a) => s + (a.realizedPnl ?? 0), 0);
-      const totalWagered= trades.reduce((s, a) => s + (a.costBasis ?? 0), 0);
-      const totalBets   = trades.length;
+      // Wins: sells at ~$1 (settlement payouts) + winning resolutions
+      const wins   = sells.filter(a => a.won || parseFloat(a.price ?? 0) >= 0.95).length
+                   + resolutions.filter(a => a.won).length;
+
+      // Losses: resolutions that were losses + buys that were never sold (resolved to 0)
+      const losses = resolutions.filter(a => !a.won && a.realizedPnl < 0).length;
+
+      // Total P/L: sum proceeds from sells - sum cost from buys
+      const totalBought = buys.reduce((s, a)  => s + parseFloat(a.costBasis   ?? 0), 0);
+      const totalSold   = sells.reduce((s, a) => s + parseFloat(a.proceeds    ?? (a.price ?? 0) * (a.qty ?? 0)), 0);
+      const resPnl      = resolutions.reduce((s, a) => s + parseFloat(a.realizedPnl ?? 0), 0);
+      const totalPnl    = sells.length > 0
+        ? +(totalSold - totalBought + resPnl).toFixed(2)
+        : +resPnl.toFixed(2);
+      const totalWagered= +(totalBought).toFixed(2);
+      const totalBets   = buys.length;
 
       const stats = { wins, losses, totalPnl: +totalPnl.toFixed(2),
                       totalWagered: +totalWagered.toFixed(2), totalBets };
