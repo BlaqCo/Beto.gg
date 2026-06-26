@@ -132,44 +132,42 @@ export async function runScanCycle() {
     console.log(`💰 Paper: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
   }
 
-  // ── Entry candidates: favorites 60-70¢, live or starting in 24h ──
+  // ── Entry candidates: favorites 60-70¢ ──────────────────────────
+  // polymarket-us.js already handles all time filtering.
+  // Here we ONLY filter by price range and reject already-ended markets.
   const now = Date.now();
+
+  console.log(`  📋 Raw markets from fetch: ${markets.length} | checking price range ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+
   const pool = markets
     .map(m => ({ ...m, px: m.ask ?? m.est }))
-    .filter(m => m.px && m.px >= FAV_MIN && m.px <= FAV_MAX)
     .filter(m => {
-      // If no gameStartIso, use endDate as proxy with 72h window
-      // MLB/WNBA/Tennis often lack gameStartTime but have endDate
-      if (!m.gameStartIso) {
-        if (!m.endIso) return true; // no time info — trust the fetch filter
-        const end = new Date(m.endIso).getTime();
-        return end > now && (end - now) <= 72 * 3_600_000;
-      }
-      const start = new Date(m.gameStartIso).getTime();
-      return start <= now || (start - now) <= NEXT_DAY_MS;
+      if (!m.px || m.px < FAV_MIN || m.px > FAV_MAX) return false;
+      // Only reject if market is confirmed ended
+      if (m.endIso && new Date(m.endIso).getTime() < now - 3_600_000) return false;
+      return true;
     })
-    .filter(m => !m.endIso || new Date(m.endIso).getTime() > now)
-    // Sort: 1) live first 2) soonest start 3) highest price (strongest edge)
+    // Sort: 1) live first 2) by price descending (strongest edge)
     .sort((a, b) => {
-      const aStart = a.gameStartIso ? new Date(a.gameStartIso).getTime() : now + 999_999_999;
-      const bStart = b.gameStartIso ? new Date(b.gameStartIso).getTime() : now + 999_999_999;
-      const aLive = aStart <= now ? 1 : 0;
-      const bLive = bStart <= now ? 1 : 0;
-      if (bLive !== aLive) return bLive - aLive;       // live > pre-game
-      if (aStart !== bStart) return aStart - bStart;    // soonest first
-      return b.px - a.px;                               // highest price = clearest edge
+      const aLive = a.isLive ? 1 : 0;
+      const bLive = b.isLive ? 1 : 0;
+      if (bLive !== aLive) return bLive - aLive;
+      return b.px - a.px;
     });
 
   if (!pool.length) {
-    console.log(`[INFO] No favorites in 60-70¢ range (live or next-12h) right now`);
+    // Show what prices ARE available so we can debug range issues
+    const sample = markets.slice(0, 5).map(m => `${cents(m.ask ?? m.est)} ${m.question?.slice(0,25)}`).join(" | ");
+    console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} range. Sample prices: ${sample}`);
     const s = getStats();
     console.log(`── +0 entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
     return { signals: null, exits, betsPlaced: 0 };
   }
 
-  const liveCount = pool.filter(m => new Date(m.gameStartIso).getTime() <= now).length;
+  const liveCount = pool.filter(m => m.isLive).length;
   const preCount  = pool.length - liveCount;
   console.log(`🏆 ${pool.length} favorites (${liveCount} 🔴 live, ${preCount} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+  console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
 
   // ── In dry run: skip BBO check, paper fill at est price ────────
   let candidates;
