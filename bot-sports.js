@@ -16,14 +16,14 @@ import { fetchSportsMoneylines, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 1;       // flat $1 per bet (testing)
+const BET_SIZE      = 1;       // flat $1 per bet
 const BET_MIN       = 1;
-const FAV_MIN       = 0.60;    // wait for the favorite to reach 60¢
-const FAV_MAX       = 0.70;    // skip heavy favorites / near-decided games
+const FAV_MIN       = 0.60;    // 60¢ minimum edge
+const FAV_MAX       = 0.70;    // skip near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 8;       // max concurrent open positions
-const ENTRIES_SCAN  = 5;       // max new entries per scan cycle — snipe mode
-const NEXT_DAY_MS   = 12 * 60 * 60 * 1000; // 12h max — live games + earliest upcoming only
+const MAX_CONC      = 12;      // 12 concurrent slots
+const ENTRIES_SCAN  = 12;      // up to 12 entries per scan — fill all slots
+const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
 const shares    = b  => b.betSize / b.entryPrice;
@@ -172,7 +172,7 @@ export async function runScanCycle() {
   // ── In dry run: skip BBO check, paper fill at est price ────────
   let candidates;
   if (DRY_RUN) {
-    candidates = pool.slice(0, 8).map(m => ({
+    candidates = pool.slice(0, 16).map(m => ({
       ...m,
       ask: m.ask ?? m.est ?? 0.65,
       bid: m.bid ?? (m.est ? m.est - 0.02 : 0.63),
@@ -180,7 +180,7 @@ export async function runScanCycle() {
     console.log(`📗 ${candidates.length} dry candidates: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 24)}`).join(" · ")}`);
   } else {
     // Live: verify real orderbook (spread ≤ 6¢)
-    const checks = await Promise.all(pool.slice(0, 8).map(async c => {
+    const checks = await Promise.all(pool.slice(0, 16).map(async c => {
       const bbo = await getBBO(c.slug);
       if (!bbo?.bid || !bbo?.ask) return null;
       if (bbo.ask - bbo.bid > 0.06) return null;
@@ -212,7 +212,7 @@ export async function runScanCycle() {
   // ── Entry loop ─────────────────────────────────────────────────
   let betsPlaced = 0;
   let attempts   = 0;
-  const MAX_ATTEMPTS = 5;
+  const MAX_ATTEMPTS = 12;
 
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
