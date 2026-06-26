@@ -320,18 +320,36 @@ function renderPositions(list){
     return;
   }
   $('trades-body').innerHTML=list.map(p=>{
-    const q       = cleanQ(p.question||p.slug||'Unknown market');
-    const tag     = (p.category||p.entryCoin||sport(q)).toUpperCase().slice(0,6);
-    const bet     = parseFloat(p.costBasis??p.betSize??0);          // $ wagered
-    const prob    = parseFloat(p.avgPrice??p.entryPrice??0);         // entry probability 0-1
-    const payout  = prob>0 ? (bet/prob).toFixed(2) : null;          // $ if YES wins
-    const curBid  = parseFloat(p.currentBid??0);                    // live market price
-    const openPnl = parseFloat(p.openPnl??0);                       // live $ gain/loss
-    const ts      = (p.placedAt||p.createdAt||'').slice(11,16)||'—';
+    // Question: clean up slug fallback into readable form
+    const rawQ = p.question || p.slug || 'Unknown';
+    const isSlug = !p.question || p.question === p.slug;
+    // Turn slug like "aec-ufc-javrey-kaaofl-2026-06-27" → "UFC · Javrey vs Kaaofl"
+    const q = isSlug
+      ? rawQ.replace(/^[a-z]+-/,'').replace(/-\d{4}-\d{2}-\d{2}.*$/,'').replace(/-/g,' ').toUpperCase().slice(0,50)
+      : cleanQ(rawQ).slice(0,50);
 
-    const probStr  = prob  ? Math.round(prob*100)+'%'   : '—';
-    const bidStr   = curBid? Math.round(curBid*100)+'¢' : '—';
+    const tag = (p.category||p.entryCoin||sport(rawQ)).toUpperCase().slice(0,6)||'SPORT';
+
+    // Financials — use every possible field
+    const bet    = parseFloat(p.costBasis??p.betSize??0);
+    const qty    = parseFloat(p.qty??0);
+    const prob   = parseFloat(p.avgPrice??p.entryPrice??0);
+    const curBid = parseFloat(p.currentBid??0);
+    const curVal = parseFloat(p.currentVal??0);
+
+    // P/L: prefer pre-computed openPnl, else calculate from currentVal - costBasis
+    let openPnl = p.openPnl != null ? parseFloat(p.openPnl) : null;
+    if (openPnl == null && curVal > 0 && bet > 0) openPnl = curVal - bet;
+    openPnl = openPnl ?? 0;
+
+    // Payout if YES wins = qty × $1 (each contract pays $1)
+    const payout = qty > 0 ? qty.toFixed(2) : (prob > 0 && bet > 0 ? (bet/prob).toFixed(2) : null);
+
+    const probStr = prob   ? Math.round(prob*100)+'%'   : '—';
+    const bidStr  = curBid ? Math.round(curBid*100)+'¢' : '—';
+    const betStr  = bet    ? fmt$(bet)                   : '—';
     const pnlColor = pnlCls(openPnl);
+    const ts = (p.placedAt||p.createdAt||'').slice(11,16)||'—';
 
     return `<div class="bet-card">
       <div class="bc-top">
@@ -340,7 +358,7 @@ function renderPositions(list){
       </div>
       <div class="bc-meta">
         <span class="bc-tag">${tag}</span>
-        <span class="bc-pill">bet <strong>${fmt$(bet)}</strong></span>
+        <span class="bc-pill">bet <strong>${betStr}</strong></span>
         <span class="bc-pill">@ <strong>${probStr}</strong></span>
         <span class="bc-pill">win→<strong class="c-blue">${payout?'$'+payout:'—'}</strong></span>
         <span class="bc-spacer"></span>
@@ -350,6 +368,7 @@ function renderPositions(list){
     </div>`;
   }).join('');
 }
+
 
 // ── BET HISTORY ──────────────────────────────────────────────────
 // Data from /api/history
@@ -362,43 +381,45 @@ function renderHistory(data, isDry){
     return;
   }
 
-  // Normalise to common shape
-  const rows=data.map(t=>{
+  const rows=data.map(a=>{
     if(!isDry){
-      // Real Polymarket trade object
-      // Common fields across API versions: marketSlug, question, size/amount, price/avgPrice, profitLoss, outcome, createdAt
-      const q   = cleanQ(t.question||t.title||t.marketQuestion||t.marketSlug||'Unknown');
-      const bet = parseFloat(t.size??t.amount??t.betSize??0);
-      const prob= parseFloat(t.price??t.avgPrice??t.fillPrice??t.entryPrice??0)||null;
-      const pl  = parseFloat(t.profitLoss??t.profit_loss??t.pnl??0);
-      const won = pl>0 || (t.outcome||'').toLowerCase()==='won';
-      const lost= pl<0 || (t.outcome||'').toLowerCase()==='lost';
-      const ts  = (t.createdAt||t.created_at||t.placedAt||'').slice(0,10)||'—';
-      return {q,bet,prob,pl,won,lost,isExp:false,ts,tag:sport(q)};
+      if(a._type==='resolution'){
+        const q=cleanQ(a.question||a.marketSlug||'Unknown');
+        const pl=parseFloat(a.realizedPnl??0);
+        const ts=(a.createTime||'').slice(0,10)||'—';
+        return {q,bet:null,prob:null,pl,won:a.won,lost:!a.won,isExp:false,ts,tag:sport(q)};
+      }
+      if(a._type==='trade'){
+        const q=cleanQ(a.question||a.marketSlug||'Unknown');
+        const bet=parseFloat(a.costBasis??0);
+        const prob=parseFloat(a.price??0)||null;
+        const pl=parseFloat(a.realizedPnl??0);
+        const ts=(a.createTime||'').slice(0,10)||'—';
+        return {q,bet,prob,pl,won:pl>0,lost:pl<0,isExp:false,ts,tag:sport(q)};
+      }
+      return null;
     } else {
-      // state.js closed bet
-      const q    = cleanQ(t.marketQuestion||'Unknown');
-      const bet  = parseFloat(t.betSize||0);
-      const prob = parseFloat(t.entryPrice||t.impliedProbability||0)||null;
-      const pl   = parseFloat(t.pnl||0);
-      const won  = t.status==='won';
-      const lost = t.status==='lost';
-      const isExp= t.status==='expired';
-      const ts   = (t.closedAt||t.placedAt||'').slice(0,10)||'—';
-      const tag  = (t.entryCoin||sport(q)).toUpperCase().slice(0,6);
-      return {q,bet,prob,pl,won,lost,isExp,ts,tag};
+      const q=cleanQ(a.marketQuestion||'Unknown');
+      const bet=parseFloat(a.betSize||0);
+      const prob=parseFloat(a.entryPrice||0)||null;
+      const pl=parseFloat(a.pnl||0);
+      const won=a.status==='won';
+      const isExp=a.status==='expired';
+      const ts=(a.closedAt||a.placedAt||'').slice(0,10)||'—';
+      const tag=(a.entryCoin||sport(q)).toUpperCase().slice(0,6);
+      return {q,bet,prob,pl,won,lost:a.status==='lost',isExp,ts,tag};
     }
-  }).sort((a,b)=>b.ts>a.ts?1:-1);
+  }).filter(Boolean).sort((a,b)=>b.ts>a.ts?1:-1);
 
-  $('hist-meta').textContent=rows.length+' settled';
+  $('hist-meta').textContent=rows.length+' entries';
   $('hist-body').innerHTML=rows.map(r=>{
-    const probStr  = r.prob ? Math.round(r.prob*100)+'%' : '—';
-    const payout   = r.prob&&r.bet ? (r.bet/r.prob).toFixed(2) : null;
-    const result   = r.isExp?'EXP':r.won?'WIN':r.lost?'LOSS':'—';
-    const resCls   = r.isExp?'bc-exp-badge':r.won?'bc-win-badge':'bc-loss-badge';
-    const pnlStr   = r.isExp?'—':(r.pl>=0?'+':'')+fmt$(r.pl);
-    const pnlColor = r.isExp?'c-neutral':pnlCls(r.pl);
-
+    const probStr=r.prob?Math.round(r.prob*100)+'%':'—';
+    const payout=r.prob&&r.bet?(r.bet/r.prob).toFixed(2):null;
+    const result=r.isExp?'EXP':r.won?'WIN':r.lost?'LOSS':'—';
+    const resCls=r.isExp?'bc-exp-badge':r.won?'bc-win-badge':'bc-loss-badge';
+    const pnlStr=r.isExp?'—':(r.pl>=0?'+':'')+'$'+Math.abs(r.pl).toFixed(2);
+    const pnlColor=r.isExp?'c-neutral':pnlCls(r.pl);
+    const betStr=r.bet!=null?fmt$(r.bet):'—';
     return `<div class="bet-card">
       <div class="bc-top">
         <div class="bc-q">> ${r.q}</div>
@@ -406,7 +427,7 @@ function renderHistory(data, isDry){
       </div>
       <div class="bc-meta">
         <span class="bc-tag">${r.tag}</span>
-        <span class="bc-pill">bet <strong>${fmt$(r.bet)}</strong></span>
+        <span class="bc-pill">bet <strong>${betStr}</strong></span>
         <span class="bc-pill">@ <strong>${probStr}</strong></span>
         <span class="bc-pill">win→<strong class="c-blue">${payout?'$'+payout:'—'}</strong></span>
         <span class="bc-spacer"></span>
@@ -486,16 +507,24 @@ async function refresh(){
 
       // W/L + totals — use real Polymarket history in LIVE mode
       if(!isDry&&hist.length>0){
-        const wins =hist.filter(t=>parseFloat(t.profitLoss??t.profit_loss??0)>0||(t.outcome||'').toLowerCase()==='won').length;
-        const losses=hist.filter(t=>parseFloat(t.profitLoss??t.profit_loss??0)<0||(t.outcome||'').toLowerCase()==='lost').length;
-        const wag  =hist.reduce((a,t)=>a+parseFloat(t.size??t.amount??0),0);
-        const tot  =wins+losses;
+        // Activities schema: _type="trade"|"resolution", realizedPnl, costBasis, won, createTime
+        const resolutions=hist.filter(a=>a._type==='resolution');
+        const trades     =hist.filter(a=>a._type==='trade');
+        const wins  =resolutions.filter(a=>a.won).length;
+        const losses=resolutions.filter(a=>!a.won).length;
+        // Total wagered = sum of costBasis on all trade activities
+        const wag=trades.reduce((s,a)=>s+parseFloat(a.costBasis??0),0);
+        const tot=wins+losses;
         $('record').textContent=wins+'W/'+losses+'L';
         $('rec-sub').textContent=(tot>0?Math.round(wins/tot*100):0)+'% win rate';
-        $('total-bets').textContent=hist.length;
+        $('total-bets').textContent=trades.length||hist.length;
         $('active-sub').textContent=positions.length+' active';
         $('wagered').textContent='$'+wag.toFixed(2);
-        $('wagered-sub').textContent='across '+hist.length+' bets';
+        $('wagered-sub').textContent='across '+(trades.length||hist.length)+' bets';
+        // Settled P/L = sum of realizedPnl on resolutions
+        const settledPnl=resolutions.reduce((s,a)=>s+parseFloat(a.realizedPnl??0),0);
+        pnlEl.textContent=(settledPnl>=0?'+':'')+'$'+Math.abs(settledPnl).toFixed(2);
+        pnlEl.className='s-val '+pnlCls(settledPnl);
       } else {
         const w=parseInt(sp.wins||0),l=parseInt(sp.losses||0);
         $('record').textContent=w+'W/'+l+'L';
