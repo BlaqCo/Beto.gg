@@ -263,26 +263,33 @@ export async function fetchSportsMoneylines() {
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
-    if (!est) continue; // must have a price
+    if (!est) {
+      // Log price extraction failures for baseball/basketball to debug
+      const cat = (m.category || "").toLowerCase();
+      if (cat.includes("baseball") || cat.includes("basketball") || cat.includes("mlb") || cat.includes("nba")) {
+        console.log(`  ⚠️ No price: ${cat} | ${q.slice(0,50)} | ask=${JSON.stringify(m.bestAsk)} outP=${m.outcomePrices}`);
+      }
+      continue;
+    }
 
-    // Time window: live OR starting within 12h
+    // Time gate:
+    // - If gameStartTime exists: live (started) OR starting within 48h
+    // - If NO gameStartTime (MLB/WNBA/Tennis set endDate to end-of-season):
+    //   ACCEPT — the market is active, isGameMarket passed, trust it.
+    //   MLB endDate is often weeks away; using it as a time gate kills live games.
     const gameStart = m.gameStartTime || m.startDate || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
 
-    let passesTime = false;
     if (startMs) {
       const hoursOut = (startMs - now) / 3_600_000;
-      passesTime = startMs <= now || hoursOut <= 12;
-    } else if (endMs) {
-      // MLB/WNBA/Tennis markets often lack gameStartTime — accept if ending within 72h
-      const hoursToEnd = (endMs - now) / 3_600_000;
-      passesTime = endMs > now && hoursToEnd <= 72;
+      // Must be live OR starting within 48h, and not ended >6h ago
+      if (hoursOut > 48 || hoursOut < -6) continue;
     } else {
-      // No time fields at all — trust MONEYLINE tag
-      passesTime = m.sportsMarketTypeV2 === "MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE";
+      // No gameStartTime — only reject if market is already resolved/closed
+      if (endMs && endMs < now - 3_600_000) continue; // ended >1h ago, skip
+      // Otherwise: ACCEPT. Live MLB games show as active with no gameStartTime.
     }
-    if (!passesTime) continue;
 
     const league    = detectLeague(m);
     const isLive    = startMs ? startMs <= now : false;
@@ -323,10 +330,14 @@ export async function fetchSportsMoneylines() {
   const liveCount = out.filter(x => x.isLive).length;
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} 🔴 live, ${out.length - liveCount} ⏳ upcoming)`);
   if (out.length > 0) {
-    console.log("  Top markets: " + out.slice(0, 5).map(m =>
-      `${m.isLive ? "🔴" : "⏳"} ${m.league} ${(m.est * 100).toFixed(0)}¢ ${m.question.slice(0, 35)}`
+    console.log("  Top markets: " + out.slice(0, 8).map(m =>
+      `${m.isLive ? "🔴" : "⏳"} ${m.league} ${(m.est * 100).toFixed(0)}¢ ${m.question.slice(0, 40)}`
     ).join(" | "));
   }
+  // Log how many per league for debugging
+  const byLeague = {};
+  out.forEach(m => { byLeague[m.league] = (byLeague[m.league] || 0) + 1; });
+  console.log("  By league: " + Object.entries(byLeague).map(([l,n]) => `${l}:${n}`).join(" "));
 
   _cache = out;
   _cacheTime = Date.now();
