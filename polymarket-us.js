@@ -462,6 +462,63 @@ export async function getOpenPositions() {
   }
 }
 
+// ── getTradeHistory ──────────────────────────────────────────────
+// Fetches all filled trades from your Polymarket account (signed).
+// Endpoint: GET /v1/portfolio/trades
+export async function getTradeHistory({ limit = 500 } = {}) {
+  try {
+    const data = await signedRequest("GET", `/v1/portfolio/trades?limit=${limit}`);
+    const trades = data?.trades || data || [];
+    return Array.isArray(trades) ? trades : [];
+  } catch (err) {
+    console.error("⚠️ getTradeHistory failed:", err.message);
+    return [];
+  }
+}
+
+// ── getOpenPositionsEnriched ─────────────────────────────────────
+// Returns open positions with live BBO price + market question.
+// Combines /v1/portfolio/positions + BBO per slug.
+export async function getOpenPositionsEnriched() {
+  try {
+    const data = await signedRequest("GET", "/v1/portfolio/positions");
+    const raw = data?.positions || {};
+    const out = [];
+    for (const [slug, p] of Object.entries(raw)) {
+      const qty = Number(p?.qtyBought ?? p?.size ?? 0);
+      if (qty <= 0) continue;
+      let bid = null, ask = null;
+      try {
+        const bbo = await getBBO(slug);
+        bid = bbo?.bid ?? null;
+        ask = bbo?.ask ?? null;
+      } catch {}
+      const avgPrice  = Number(p?.avgPrice ?? p?.averagePrice ?? p?.entryPrice ?? 0) || null;
+      const costBasis = avgPrice && qty ? +(qty * avgPrice).toFixed(2) : null;
+      const currentVal = bid && qty   ? +(qty * bid).toFixed(2)       : null;
+      const openPnl    = currentVal != null && costBasis != null
+        ? +(currentVal - costBasis).toFixed(2) : null;
+      out.push({
+        slug,
+        question: p?.question || slug,
+        category: p?.category || "",
+        qty,
+        avgPrice,
+        currentBid: bid,
+        currentAsk: ask,
+        costBasis,
+        currentVal,
+        openPnl,
+        side: p?.side || "YES",
+      });
+    }
+    return out;
+  } catch (err) {
+    console.error("⚠️ getOpenPositionsEnriched failed:", err.message);
+    return [];
+  }
+}
+
 // ── preflightUS ──────────────────────────────────────────────────
 export async function preflightUS() {
   const msgs = [];
