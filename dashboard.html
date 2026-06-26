@@ -255,8 +255,14 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);
     <span class="p-title">ACTIVE POSITIONS</span>
     <span class="p-meta" id="trades-meta">0 open</span>
   </div>
-  <div class="trades-wrap" id="trades-body">
-    <div class="empty-tr">> NO ACTIVE POSITIONS_</div>
+  <div class="trades-wrap">
+    <div class="trade-row" style="background:rgba(57,255,143,0.03);border-bottom:1px solid var(--border)">
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim)">MARKET</div>
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">PAYOUT</div>
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">LIVE P/L</div>
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">TIME</div>
+    </div>
+    <div id="trades-body"><div class="empty-tr">> NO ACTIVE POSITIONS_</div></div>
   </div>
 
   <!-- BET HISTORY -->
@@ -265,8 +271,14 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);
     <span class="p-title">BET HISTORY</span>
     <span class="p-meta" id="hist-meta">all time</span>
   </div>
-  <div class="hist-wrap" id="hist-body">
-    <div class="empty-tr">> NO HISTORY YET_</div>
+  <div class="hist-wrap">
+    <div class="hist-row" style="background:rgba(57,255,143,0.03);border-bottom:1px solid var(--border)">
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim)">MARKET</div>
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">RESULT</div>
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">P/L</div>
+      <div style="font-size:6.5px;letter-spacing:2px;color:var(--dim);text-align:right">DATE</div>
+    </div>
+    <div id="hist-body"><div class="empty-tr">> NO HISTORY YET_</div></div>
   </div>
 
   <!-- SYSTEM LOG -->
@@ -327,57 +339,71 @@ const pnlCls=n=>parseFloat(n)>0?'c-green':parseFloat(n)<0?'c-red':'c-neutral';
 
 // ── Render active positions ──────────────────────────────────────
 function renderTrades(bets){
-  const active=(bets||[]).filter(b=>!b.settledAt&&(b.status==='open'||b.status==='active'||!b.status));
+  const active=(bets||[]).filter(b=>b.status==='open');
   $('trades-meta').textContent=active.length+' open';
   if(!active.length){
     $('trades-body').innerHTML='<div class="empty-tr">> NO ACTIVE POSITIONS_</div>';
     return;
   }
   $('trades-body').innerHTML=active.map(b=>{
-    const cost=parseFloat(b.betSize||b.cost||b.sizeUsd||0);
-    const price=parseFloat(b.entryPrice||b.fillPrice||0);
+    const cost=parseFloat(b.betSize||0);
+    const price=parseFloat(b.entryPrice||0);
     const payout=price>0?(cost/price).toFixed(2):'—';
-    const op=parseFloat(b.openPnl||0);
+    // openPnl is injected by withSportsLiveMarks() in index.js via /bets
+    const op=parseFloat(b.openPnl??b.pnl??0);
     const opc=pnlCls(op);
     const oSign=op>=0?'+':'';
-    const lg=(b.entryCoin||b.league||b.sport||'—').toUpperCase().slice(0,6);
-    const q=(b.marketQuestion||b.question||b.market||'Unknown').replace(/^\[(.*?)\]\s*/,'').slice(0,44);
-    const ts=(b.ts||b.openedAt||'').slice(11,16)||'—';
+    // entryCoin = league (MLB, SOCCER etc) — now persisted in state.js
+    const raw=b.entryCoin||'';
+    const lg=raw.toUpperCase().slice(0,6)||'—';
+    // marketQuestion includes [LEAGUE] prefix from bot-sports — strip it
+    const q=(b.marketQuestion||'Unknown').replace(/^\[.*?\]\s*/,'').slice(0,44);
+    // placedAt is the field name in state.js recordBet
+    const ts=(b.placedAt||'').slice(11,16)||'—';
     return `<div class="trade-row">
       <div>
         <div class="tr-q">> ${q}</div>
-        <div class="tr-meta"><span class="league-tag">${lg}</span>${dollar(cost)} @ ${price?Math.round(price*100)+'¢':'—'}</div>
+        <div class="tr-meta"><span class="league-tag">${lg}</span> $${cost.toFixed(2)} @ ${price?Math.round(price*100)+'¢':'—'} · to win $${payout}</div>
       </div>
-      <div class="tr-num c-blue">${payout==='—'?'—':'$'+payout}</div>
-      <div class="tr-num ${opc}">${oSign}${dollar(op)}</div>
-      <div class="tr-num" style="font-size:7.5px;color:var(--dim)">${ts}</div>
+      <div class="tr-num c-blue">$${payout==='—'?'—':payout}</div>
+      <div class="tr-num ${opc}">${oSign}$${Math.abs(op).toFixed(2)}</div>
+      <div class="tr-num" style="font-size:7px;color:var(--dim)">${ts}</div>
     </div>`;
   }).join('');
 }
 
 // ── Render bet history ───────────────────────────────────────────
 function renderHistory(bets){
-  const closed=(bets||[]).filter(b=>b.settledAt||b.status==='closed'||b.status==='settled'||b.status==='won'||b.status==='lost');
-  const sorted=[...closed].sort((a,b)=>((b.settledAt||b.ts||'')<(a.settledAt||a.ts||'') ? -1:1));
-  $('hist-meta').textContent=sorted.length+' bets';
+  // state.js sets: status='won'/'lost'/'breakeven'/'expired', closedAt
+  const closed=(bets||[]).filter(b=>
+    b.status==='won'||b.status==='lost'||b.status==='breakeven'||b.status==='expired'
+  );
+  // newest closed first — sort by closedAt descending
+  const sorted=[...closed].sort((a,b)=>(b.closedAt||'') > (a.closedAt||'') ? 1 : -1);
+  $('hist-meta').textContent=sorted.length+' settled';
   if(!sorted.length){
     $('hist-body').innerHTML='<div class="empty-tr">> NO HISTORY YET_</div>';
     return;
   }
   $('hist-body').innerHTML=sorted.map(b=>{
-    const pnl=parseFloat(b.pnl||b.realizedPnl||0);
-    const won=pnl>0||(b.status==='won');
-    const cost=parseFloat(b.betSize||b.cost||0);
-    const lg=(b.entryCoin||b.league||'—').toUpperCase().slice(0,5);
-    const q=(b.marketQuestion||b.question||b.market||'Unknown').replace(/^\[(.*?)\]\s*/,'').slice(0,42);
-    const ts=(b.settledAt||b.ts||'').slice(0,10)||'—';
-    const pnlCl=won?'c-green':'c-red';
+    const pnl=parseFloat(b.pnl||0);
+    const won=b.status==='won';
+    const isExp=b.status==='expired';
+    // entryCoin = league, now stored in state.js
+    const lg=(b.entryCoin||'').toUpperCase().slice(0,5)||'—';
+    const q=(b.marketQuestion||'Unknown').replace(/^\[.*?\]\s*/,'').slice(0,42);
+    const ts=(b.closedAt||b.placedAt||'').slice(0,10)||'—';
+    const pnlCl=isExp?'c-neutral':won?'c-green':'c-red';
+    const result=isExp?'EXP':won?'WIN':'LOSS';
+    const price=b.entryPrice?Math.round(b.entryPrice*100)+'¢':'—';
+    const cost=parseFloat(b.betSize||0);
     return `<div class="hist-row">
       <div>
         <div class="hist-q"><span class="league-tag">${lg}</span>${q}</div>
+        <div style="font-size:7px;color:var(--dim);margin-top:1px">$${cost.toFixed(2)} @ ${price}</div>
       </div>
-      <div class="hist-result ${pnlCl}">${won?'WIN':'LOSS'}</div>
-      <div class="hist-result ${pnlCl}">${sign(pnl)}</div>
+      <div class="hist-result ${pnlCl}">${result}</div>
+      <div class="hist-result ${pnlCl}">${isExp?'—':(pnl>=0?'+':'')+'$'+Math.abs(pnl).toFixed(2)}</div>
       <div class="hist-date">${ts}</div>
     </div>`;
   }).join('');
@@ -431,18 +457,21 @@ async function refresh(){
       balEl.className='s-val '+(isDry?'c-yellow':'c-blue');
       $('bal-sub').textContent=isDry?'paper balance':'polymarket';
 
-      // Settled P/L
-      const pnl=parseFloat(sp.totalPnl??sp.pnl??0);
+      // sp = stats.sports from index.js fullStats()
+      // Fields: wins, losses, pnl (realized), openPnl, totalPnl, totalWagered, activeBets, totalBets
+
+      // Settled P/L (realized only)
+      const realPnl=parseFloat(sp.pnl??0);
       const pnlEl=$('pnl');
-      pnlEl.textContent=sign(pnl);
-      pnlEl.className='s-val '+pnlCls(pnl);
+      pnlEl.textContent=(realPnl>=0?'+':'')+'$'+Math.abs(realPnl).toFixed(2);
+      pnlEl.className='s-val '+pnlCls(realPnl);
       $('pnl-sub').textContent='settled';
 
-      // Live / open P/L
-      const op=parseFloat(sp.openPnl??sp.portfolioOpenPnl??0);
+      // Live open P/L — from portfolio mark-to-market (index.js injects portfolioOpenPnl)
+      const openPnlVal=parseFloat(sp.openPnl??s.portfolioOpenPnl??0);
       const lpEl=$('live-pnl');
-      lpEl.textContent=(op>=0?'+':'')+'$'+Math.abs(op).toFixed(2);
-      lpEl.className='s-val '+pnlCls(op);
+      lpEl.textContent=(openPnlVal>=0?'+':'')+'$'+Math.abs(openPnlVal).toFixed(2);
+      lpEl.className='s-val '+pnlCls(openPnlVal);
       $('live-pnl-sub').textContent=(sp.activeBets||0)+' open';
 
       // Record
@@ -451,12 +480,12 @@ async function refresh(){
       const wr=w+l>0?Math.round(w/(w+l)*100):0;
       $('rec-sub').textContent=wr+'% win rate';
 
-      // Total bets
+      // Total bets (all time — includes open + closed)
       const tot=parseInt(sp.totalBets||0);
       $('total-bets').textContent=tot;
       $('active-sub').textContent=(sp.activeBets||0)+' active';
 
-      // Total wagered
+      // Total wagered (state.js tracks totalWagered per bet placed)
       const wag=parseFloat(sp.totalWagered??0);
       $('wagered').textContent='$'+wag.toFixed(2);
       $('wagered-sub').textContent='across '+tot+' bets';
