@@ -449,92 +449,83 @@ function renderLog(logs){
 // ── MAIN POLL ────────────────────────────────────────────────────
 async function refresh(){
   try{
-    const [rootR,logR,posR,histR]=await Promise.allSettled([
+    const [rootR, logR, posR, histR, statsR] = await Promise.allSettled([
       fetch('/').then(r=>r.json()),
       fetch('/log').then(r=>r.json()),
       fetch('/api/positions').then(r=>r.json()),
       fetch('/api/history').then(r=>r.json()),
+      fetch('/api/stats').then(r=>r.json()),
     ]);
 
     $('sdot').className='dot';
     $('stxt').textContent='ONLINE';
 
     if(rootR.status==='fulfilled'){
-      const root=rootR.value;
-      const s=root.stats||{};
-      const isDry=root.settings?.dryRun!==false;
-      const sp=s.sports||{};
+      const root = rootR.value;
+      const isDry = root.settings?.dryRun !== false;
 
       // Badge
-      const badge=$('mbadge');
-      badge.textContent=isDry?'◎ DRY RUN':'⬤ LIVE';
-      badge.className='badge '+(isDry?'badge-dry':'badge-live');
+      const badge = $('mbadge');
+      badge.textContent = isDry ? '◎ DRY RUN' : '⬤ LIVE';
+      badge.className = 'badge ' + (isDry ? 'badge-dry' : 'badge-live');
 
       // Balance
-      const bp=isDry?parseFloat(s.dryBalance??0):parseFloat(s.liveBalance??s.buyingPower??0);
-      const balEl=$('balance');
-      balEl.textContent='$'+bp.toFixed(2);
-      balEl.className='s-val '+(isDry?'c-yellow':'c-blue');
-      $('bal-sub').textContent=isDry?'paper balance':'polymarket';
-
-      // Positions from /api/positions
-      const positions=posR.status==='fulfilled'?(posR.value||[]):[];
-
-      // Settled P/L from state
-      const realPnl=parseFloat(sp.pnl??0);
-      const pnlEl=$('pnl');
-      pnlEl.textContent=fmtPnl(realPnl);
-      pnlEl.className='s-val '+pnlCls(realPnl);
-
-      // Live P/L summed from positions
-      const liveSum=positions.reduce((a,p)=>a+parseFloat(p.openPnl??0),0);
-      const lpEl=$('live-pnl');
-      lpEl.textContent=fmtPnl(liveSum);
-      lpEl.className='s-val '+pnlCls(liveSum);
-      $('live-pnl-sub').textContent=positions.length+' open';
-
-      // History
-      const hist=histR.status==='fulfilled'?(histR.value||[]):[];
-
-      // W/L + totals — use real Polymarket history in LIVE mode
-      if(!isDry&&hist.length>0){
-        // Activities schema: _type="trade"|"resolution", realizedPnl, costBasis, won, createTime
-        const resolutions=hist.filter(a=>a._type==='resolution');
-        const trades     =hist.filter(a=>a._type==='trade');
-        const wins  =resolutions.filter(a=>a.won).length;
-        const losses=resolutions.filter(a=>!a.won).length;
-        // Total wagered = sum of costBasis on all trade activities
-        const wag=trades.reduce((s,a)=>s+parseFloat(a.costBasis??0),0);
-        const tot=wins+losses;
-        $('record').textContent=wins+'W/'+losses+'L';
-        $('rec-sub').textContent=(tot>0?Math.round(wins/tot*100):0)+'% win rate';
-        $('total-bets').textContent=trades.length||hist.length;
-        $('active-sub').textContent=positions.length+' active';
-        $('wagered').textContent='$'+wag.toFixed(2);
-        $('wagered-sub').textContent='across '+(trades.length||hist.length)+' bets';
-        // Settled P/L = sum of realizedPnl on resolutions
-        const settledPnl=resolutions.reduce((s,a)=>s+parseFloat(a.realizedPnl??0),0);
-        pnlEl.textContent=(settledPnl>=0?'+':'')+'$'+Math.abs(settledPnl).toFixed(2);
-        pnlEl.className='s-val '+pnlCls(settledPnl);
-      } else {
-        const w=parseInt(sp.wins||0),l=parseInt(sp.losses||0);
-        $('record').textContent=w+'W/'+l+'L';
-        $('rec-sub').textContent=(w+l>0?Math.round(w/(w+l)*100):0)+'% win rate';
-        const tot=parseInt(sp.totalBets||0);
-        $('total-bets').textContent=tot;
-        $('active-sub').textContent=(sp.activeBets||0)+' active';
-        $('wagered').textContent='$'+parseFloat(sp.totalWagered??0).toFixed(2);
-        $('wagered-sub').textContent='across '+tot+' bets';
-      }
-
-      // Render panels (pass isDry so renderHistory knows which field names to use)
-      renderPositions(positions);
-      renderHistory(hist, isDry);
+      const s = root.stats || {};
+      const bp = isDry
+        ? parseFloat(s.dryBalance ?? 0)
+        : parseFloat(s.liveBalance ?? s.buyingPower ?? 0);
+      const balEl = $('balance');
+      balEl.textContent = '$' + bp.toFixed(2);
+      balEl.className = 's-val ' + (isDry ? 'c-yellow' : 'c-blue');
+      $('bal-sub').textContent = isDry ? 'paper balance' : 'polymarket';
     }
 
+    // ── Real stats from /api/stats ──────────────────────────────
+    const stats = statsR.status==='fulfilled' ? statsR.value : null;
+    if(stats){
+      // Total P/L (settled resolutions)
+      const totalPnl = parseFloat(stats.totalPnl ?? 0);
+      const pnlEl = $('pnl');
+      pnlEl.textContent = (totalPnl>=0?'+':'') + '$' + Math.abs(totalPnl).toFixed(2);
+      pnlEl.className = 's-val ' + pnlCls(totalPnl);
+      $('pnl-sub').textContent = 'settled';
+
+      // W/L record
+      const w = stats.wins || 0;
+      const l = stats.losses || 0;
+      $('record').textContent = w + 'W/' + l + 'L';
+      $('rec-sub').textContent = (w+l>0 ? Math.round(w/(w+l)*100) : 0) + '% win rate';
+
+      // Total bets + wagered
+      $('total-bets').textContent = stats.totalBets || 0;
+      $('wagered').textContent = '$' + parseFloat(stats.totalWagered ?? 0).toFixed(2);
+      $('wagered-sub').textContent = 'across ' + (stats.totalBets||0) + ' bets';
+    }
+
+    // ── Positions ───────────────────────────────────────────────
+    const positions = posR.status==='fulfilled' ? (posR.value||[]) : [];
+
+    // Live P/L = sum of openPnl across all open positions
+    const liveSum = positions.reduce((a,p) => a + parseFloat(p.openPnl ?? 0), 0);
+    const lpEl = $('live-pnl');
+    lpEl.textContent = (liveSum>=0?'+':'') + '$' + Math.abs(liveSum).toFixed(2);
+    lpEl.className = 's-val ' + pnlCls(liveSum);
+    $('live-pnl-sub').textContent = positions.length + ' open';
+    if(stats) $('active-sub').textContent = positions.length + ' active';
+
+    renderPositions(positions);
+
+    // ── History ─────────────────────────────────────────────────
+    const hist = histR.status==='fulfilled' ? (histR.value||[]) : [];
+    const isDry = rootR.status==='fulfilled'
+      ? rootR.value?.settings?.dryRun !== false
+      : true;
+    renderHistory(hist, isDry);
+
+    // ── Log ─────────────────────────────────────────────────────
     if(logR.status==='fulfilled') renderLog((logR.value||[]).slice(0,100));
 
-  }catch(e){
+  } catch(e){
     $('sdot').className='dot off';
     $('stxt').textContent='OFFLINE';
   }
@@ -542,6 +533,8 @@ async function refresh(){
 
 setInterval(refresh,3000);
 refresh();
+
+
 </script>
 </body>
 </html>
