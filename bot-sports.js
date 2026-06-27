@@ -150,99 +150,83 @@ export async function runScanCycle() {
 
   console.log(`  📋 Raw markets from fetch: ${markets.length} | checking price range ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
 
-  const pool = markets
-    .map(m => ({ ...m, px: m.ask ?? m.est }))
+  // ── KEY FIX: Market list prices are STALE for in-play markets ──
+  // A tennis match listed at 50% may now be 65% live in-play.
+  // Pre-filter wide (40-82¢ stale), then use LIVE BBO for the real range check.
+  const WIDE_MIN = 0.40, WIDE_MAX = 0.82;
+
+  const widePool = markets
     .filter(m => {
-      if (!m.px || m.px < FAV_MIN || m.px > FAV_MAX) return false;
-      // Only reject if market is confirmed ended
+      const px = m.ask ?? m.est;
+      if (!px || px < WIDE_MIN || px > WIDE_MAX) return false;
       if (m.endIso && new Date(m.endIso).getTime() < now - 3_600_000) return false;
       return true;
     })
-    // Sort: 1) live first 2) by price descending (strongest edge)
     .sort((a, b) => {
-      const aLive = a.isLive ? 1 : 0;
-      const bLive = b.isLive ? 1 : 0;
-      if (bLive !== aLive) return bLive - aLive;
-      return b.px - a.px;
-    });
+      if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
+      return (b.ask ?? b.est ?? 0) - (a.ask ?? a.est ?? 0);
+    })
+    .slice(0, 50); // check up to 50 markets via BBO
 
-  if (!pool.length) {
-    // Show what prices ARE available so we can debug range issues
-    const sample = markets.slice(0, 5).map(m => `${cents(m.ask ?? m.est)} ${m.question?.slice(0,25)}`).join(" | ");
-    console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} range. Sample prices: ${sample}`);
-    const s = getStats();
-    console.log(`── +0 entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
-    return { signals: null, exits, betsPlaced: 0 };
-  }
-
-  const liveCount = pool.filter(m => m.isLive).length;
-  const preCount  = pool.length - liveCount;
-  console.log(`🏆 ${pool.length} favorites (${liveCount} 🔴 live, ${preCount} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
-  console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
-
-  // ── In dry run: skip BBO check, paper fill at est price ────────
   let candidates;
   if (DRY_RUN) {
-    candidates = pool.slice(0, 30).map(m => ({
-      ...m,
-      ask: m.ask ?? m.est ?? 0.65,
-      bid: m.bid ?? (m.est ? m.est - 0.02 : 0.63),
-    }));
-    console.log(`📗 ${candidates.length} dry candidates: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 24)}`).join(" · ")}`);
+    candidates = widePool
+      .map(m => ({ ...m, px: m.ask ?? m.est, ask: m.ask ?? m.est ?? 0.65, bid: m.bid ?? (m.est ? m.est - 0.02 : 0.63) }))
+      .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
+      .slice(0, 30);
+    const lc = candidates.filter(m => m.isLive).length;
+    console.log(`🏆 ${candidates.length} favorites (${lc} 🔴 live, ${candidates.length-lc} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+    console.log(`  Top: ${candidates.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
+    console.log(`📗 ${candidates.length} dry candidates`);
   } else {
-    // Live: verify real orderbook
-    // Tennis/esports markets are less liquid — allow up to 10¢ spread
-    // UFC/soccer/MLB etc: standard 6¢ max
-    const checks = await Promise.all(pool.slice(0, 30).map(async c => {
-      const bbo = await getBBO(c.slug);
-      if (!bbo?.bid || !bbo?.ask) return null;
-      const spread = bbo.ask - bbo.bid;
-      const league = (c.league || "").toUpperCase();
-      // Determine max spread by league
-      // Individual sports (tennis, UFC, combat) tend to have wider books
-      // Detect sport from question text since league tag is often "SPORT" for everything
-      const qLow = (c.question || "").toLowerCase();
-      const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league)
-                     || /\batp\b|\bwta\b|\bitf\b|challenger|open\b|slam/i.test(qLow);
-      const isEsports = ["ESPORTS"].includes(league)
-                     || /esport|cs2|valorant|dota|legend/i.test(qLow);
-      const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(qLow);
+    // Fetch live BBO for all wide-pool markets in parallel
+    // This gives us the REAL current price, not the stale listing price
+    const bboResults = await Promise.all(widePool.map(async m => {
+      try {
+        const bbo = await getBBO(m.slug);
+        if (!bbo?.bid || !bbo?.ask) return null;
+        const livePx = bbo.ask; // price we'd pay
+        const spread = bbo.ask - bbo.bid;
 
-      // Spread limits — tennis in-play can have 10-15¢ spread naturally
-      const maxSpread = isTennis  ? 0.15
-                      : isEsports ? 0.12
-                      : isCombat  ? 0.10
-                      :             0.08;
+        // Spread check by sport type
+        const q = (m.question || "").toLowerCase();
+        const league = (m.league || "").toUpperCase();
+        const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
+        const isEsports = ["ESPORTS"].includes(league) || /esport|cs2|valorant|dota/i.test(q);
+        const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(q);
+        const maxSpread = isTennis ? 0.18 : isEsports ? 0.14 : isCombat ? 0.12 : 0.09;
 
-      if (spread > maxSpread) {
-        console.log(`  ⚠️ Spread too wide: ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ | ${c.question?.slice(0,35)}`);
-        return null;
-      }
-      return { ...c, ask: bbo.ask, bid: bbo.bid };
+        if (spread > maxSpread) {
+          console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ | ${m.question?.slice(0,35)}`);
+          return null;
+        }
+        // Log if a stale-filtered market is now in range (tennis drift detection)
+        const stalePx = m.ask ?? m.est ?? 0;
+        if (stalePx < FAV_MIN && livePx >= FAV_MIN) {
+          console.log(`  📈 Drifted IN: stale=${cents(stalePx)} live=${cents(livePx)} | ${m.question?.slice(0,35)}`);
+        }
+        return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
+      } catch { return null; }
     }));
-    candidates = checks.filter(Boolean);
-    if (candidates.length) {
-      console.log(`📗 ${candidates.length} verified: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 24)}`).join(" · ")}`);
-    } else {
-      console.log("[INFO] Books too thin/wide on all candidates this scan");
-    }
-  }
 
-  // ── Position dedup (live only) ─────────────────────────────────
-  let ownedSlugs = null;
-  if (!DRY_RUN) {
-    const positions = await getOpenPositions();
-    if (positions) {
-      ownedSlugs = new Set(
-        Object.entries(positions)
-          .filter(([, p]) => p.qtyBought > 0)
-          .map(([slug]) => slug)
-      );
-    } else {
-      console.log("  ⚠️ Could not verify live positions — skipping new entries to be safe");
-    }
-  }
+    const pool = bboResults
+      .filter(c => c && c.px >= FAV_MIN && c.px <= FAV_MAX)
+      .sort((a, b) => {
+        if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
+        return b.px - a.px;
+      });
 
+    const lc = pool.filter(m => m.isLive).length;
+    if (pool.length) {
+      console.log(`🏆 ${pool.length} favorites (${lc} 🔴 live, ${pool.length-lc} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+      console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
+      console.log(`📗 ${pool.length} verified: ${pool.slice(0,3).map(c => `${cents(c.ask)} ${c.question.slice(0,24)}`).join(" · ")}`);
+    } else {
+      const sample = widePool.slice(0,5).map(m=>`${cents(m.ask??m.est)} ${m.question?.slice(0,20)}`).join(" | ");
+      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} after BBO. Wide pool: ${sample}`);
+    }
+    candidates = pool;
+  }
   // ── Entry loop ─────────────────────────────────────────────────
   let betsPlaced = 0;
   let attempts   = 0;
@@ -310,4 +294,3 @@ export async function runScanCycle() {
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
   return { signals: null, exits, betsPlaced };
 }
-
