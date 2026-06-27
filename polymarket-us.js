@@ -610,6 +610,7 @@ export async function getTradeHistory({ limit = 500 } = {}) {
     console.error("⚠️ getTradeHistory failed:", err.message);
     return [];
   }
+}
 
 export async function getOpenPositionsEnriched(stateBets = []) {
   try {
