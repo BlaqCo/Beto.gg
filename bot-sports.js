@@ -72,10 +72,21 @@ async function processExits() {
     if (settle !== null) {
       const won = settle === 1;
       const pnl = expiryPnl(bet, won);
-      console.log(`  🏁 SETTLE ${won ? "🟢 WIN" : "🔴 LOSS"} | ${bet.entryCoin} $${bet.betSize} @ ${cents(bet.entryPrice)} | ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)} | ${bet.marketQuestion?.slice(0, 48)}`);
+      const q   = (bet.marketQuestion || slug).replace(/^\[.*?\]\s*/, "").slice(0, 50);
+      const league = (bet.entryCoin || "SPORT").toUpperCase();
+
+      // Prominent settlement log — appears in dashboard System Log
+      if (won) {
+        console.log(`✅ WIN | ${league} | ${q}`);
+        console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Payout: +$${pnl.toFixed(2)} | Net P/L: +$${pnl.toFixed(2)}`);
+      } else {
+        console.log(`❌ LOSS | ${league} | ${q}`);
+        console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Lost: -$${bet.betSize.toFixed(2)} | Net P/L: -$${bet.betSize.toFixed(2)}`);
+      }
+
       closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
       liveMarks.delete(slug);
-      exits.push({ pnl, won, reason: "expiry" });
+      exits.push({ pnl, won, reason: "expiry", question: q, league });
       continue;
     }
 
