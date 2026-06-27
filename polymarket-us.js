@@ -70,6 +70,18 @@ async function signedRequest(method, path, body) {
     validateStatus: () => true,
   });
   if (res.status >= 200 && res.status < 300) return res.data;
+  if (res.status === 429) {
+    // Rate limited — wait and retry once
+    const retryAfter = parseInt(res.headers?.["retry-after"] || "5") * 1000;
+    await new Promise(r => setTimeout(r, Math.max(retryAfter, 5000)));
+    const res2 = await axios({
+      method, url: API + path, headers: authHeaders(method, path),
+      data: body ?? undefined, timeout: 15_000,
+      validateStatus: () => true,
+    });
+    if (res2.status >= 200 && res2.status < 300) return res2.data;
+    throw new Error(`429 rate limited (retry also failed)`);
+  }
   const msg = res.data?.message || res.data?.error || JSON.stringify(res.data)?.slice(0, 140) || `HTTP ${res.status}`;
   throw new Error(`${res.status}: ${msg}`);
 }
