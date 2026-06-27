@@ -372,28 +372,23 @@ app.get("/api/positions", async (req, res) => {
       const stateBets = state.getAllBets ? state.getAllBets() : [];
 
       // Build entry price cache from trade activities (keyed by marketSlug)
-      // This gives us real fill prices even after state resets
+      // Use ONLY cached data — never trigger a fresh fetch here to avoid 429
       const entryPriceCache = {};
       try {
-        let acts = _histCache.data;
-        if (!acts || Date.now() - _histCache.ts > 30_000) {
-          acts = await getTradeHistory({ limit: 500 });
-          if (acts.length) _histCache = { data: acts, ts: Date.now() };
-        }
-        if (acts) {
-          // For each BUY trade, record the fill price keyed by slug
+        const acts = _histCache.data; // only use cache, no fresh fetch
+        if (acts && acts.length) {
           acts.filter(a => a._type === "trade" && a.price && a.price > 0.05
                         && (a.side === "BUY" || a.side === "" || !a.side))
               .forEach(a => {
-                if (!entryPriceCache[a.marketSlug]) {
+                if (a.marketSlug && !entryPriceCache[a.marketSlug]) {
                   entryPriceCache[a.marketSlug] = a.price;
                 }
               });
-          const cached = Object.keys(entryPriceCache).length;
-          if (cached > 0) console.log(`📊 Entry price cache: ${cached} slugs`);
+          const n = Object.keys(entryPriceCache).length;
+          if (n > 0) console.log(`📊 Entry price cache: ${n} slugs from ${acts.length} activities`);
         }
       } catch(e) {
-        console.error("⚠️ Entry price cache build failed:", e.message);
+        // Non-fatal — positions still show, just without entry price
       }
 
       const positions = await getOpenPositionsEnriched(stateBets, entryPriceCache);
@@ -486,7 +481,7 @@ app.get("/api/history", async (req, res) => {
 // We merge both and take the max to handle restarts gracefully.
 let _statsCache = { data: null, ts: 0 };
 app.get("/api/stats", async (req, res) => {
-  if (_statsCache.data && Date.now() - _statsCache.ts < 10_000) {
+  if (_statsCache.data && Date.now() - _statsCache.ts < 60_000) {
     return res.json(_statsCache.data);
   }
   try {
@@ -504,9 +499,9 @@ app.get("/api/stats", async (req, res) => {
     if (!DRY_RUN) {
       try {
         let acts = _histCache.data;
-        if (!acts || Date.now() - _histCache.ts > 10_000) {
+        if (!acts || Date.now() - _histCache.ts > 300_000) {
           acts = await getTradeHistory({ limit: 500 });
-          if (acts.length) _histCache = { data: acts, ts: Date.now() };
+          if (acts && acts.length) _histCache = { data: acts, ts: Date.now() };
         }
         if (acts && acts.length) {
           const trades      = acts.filter(a => a._type === "trade");
@@ -631,21 +626,59 @@ async function loadBots() {
       console.error("⚠️ Boot trade history load failed:", err.message);
     }
 
-    // Also load open positions on boot
+    // Load open positions on boot + reconcile with state.js
+    // This fixes the case where bets exist on Polymarket but state was reset
     try {
       const stateBetsB = state.getAllBets ? state.getAllBets() : [];
       const positions = await getOpenPositionsEnriched(stateBetsB, {});
       if (positions.length) {
         console.log(`📊 OPEN POSITIONS — ${positions.length} active`);
-        positions.forEach(p => {
-          const q    = (p.question || p.slug || "Unknown").slice(0, 50);
+
+        // Reconcile: if a position exists on Polymarket but NOT in state, record it
+        const stateIds = new Set((state.getAllBets ? state.getAllBets() : [])
+          .filter(b => b.status === "open")
+          .map(b => b.marketConditionId));
+
+        let reconciled = 0;
+        for (const p of positions) {
+          const slug = p.slug;
+          const q    = (p.question || slug || "Unknown").slice(0, 50);
           const cost = p.costBasis != null ? "$" + p.costBasis.toFixed(2) : "—";
           const bid  = p.currentBid ? Math.round(p.currentBid * 100) + "¢" : "—";
           const pnl  = p.openPnl != null ? (p.openPnl >= 0 ? "+" : "") + p.openPnl.toFixed(2) : "—";
           const prob = p.avgPrice  ? Math.round(p.avgPrice * 100) + "%" : "—";
           console.log(`  🔴 LIVE | ${cost} @ ${prob} | now ${bid} | P/L $${pnl} | ${q}`);
-        });
+
+          // If not in state, inject it so settlement tracking works
+          if (!stateIds.has(slug) && state.recordBet) {
+            try {
+              state.recordBet({
+                market: {
+                  conditionId: slug,
+                  question:    p.question || slug,
+                  endDateIso:  null,
+                },
+                side:               "YES",
+                betSize:            p.costBasis || 0,
+                edge:               0,
+                trueProbability:    p.avgPrice || 0.65,
+                impliedProbability: p.avgPrice || 0.65,
+                entryPrice:         p.avgPrice || null,
+                strategy:           "SPORTS_ML",
+                entryCoin:          p.category || "SPORT",
+                reasoning:          "Reconciled from Polymarket on boot",
+              });
+              reconciled++;
+              console.log(`  ♻️ Reconciled into state: ${slug.slice(0, 40)}`);
+            } catch(re) {
+              console.error("  ⚠️ Reconcile failed:", re.message);
+            }
+          }
+        }
+        if (reconciled > 0) console.log(`📊 Reconciled ${reconciled} Polymarket positions into state`);
         _posCache = { data: positions, ts: Date.now() };
+      } else {
+        console.log("📊 No open positions on Polymarket");
       }
     } catch (err) {
       console.error("⚠️ Boot positions load failed:", err.message);
