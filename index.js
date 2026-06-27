@@ -511,13 +511,31 @@ app.get("/api/stats", async (req, res) => {
         if (acts && acts.length) {
           const trades      = acts.filter(a => a._type === "trade");
           const resolutions = acts.filter(a => a._type === "resolution");
+
+          // Debug: log what we got
+          console.log(`📊 Stats: ${acts.length} total acts | ${trades.length} trades | ${resolutions.length} resolutions`);
+          if (trades.length > 0) {
+            const sample = trades[0];
+            console.log(`📊 Trade sample: slug=${sample.marketSlug?.slice(0,25)} side=${sample.side} price=${sample.price} cost=${sample.costBasis} pl=${sample.realizedPnl}`);
+          }
+          if (resolutions.length > 0) {
+            console.log(`📊 Resolution sample: ${resolutions[0].question?.slice(0,40)} won=${resolutions[0].won} pl=${resolutions[0].realizedPnl}`);
+          }
+
+          // BUY trades = bets placed (side=BUY or empty, cost>0)
+          const buys = trades.filter(a => {
+            const s = (a.side||"").toUpperCase();
+            return s === "BUY" || (s === "" && parseFloat(a.costBasis||0) > 0);
+          });
           actWins   = resolutions.filter(a => a.won).length;
           actLosses = resolutions.filter(a => !a.won && parseFloat(a.realizedPnl||0) < 0).length;
           actPnl    = resolutions.reduce((s,a) => s + parseFloat(a.realizedPnl||0), 0)
                     + trades.reduce((s,a) => s + parseFloat(a.realizedPnl||0), 0);
-          actWaged  = trades.filter(a => a.side === "BUY" || !a.side)
-                           .reduce((s,a) => s + parseFloat(a.costBasis||0), 0);
-          actBets   = trades.filter(a => a.side === "BUY" || !a.side).length;
+          actWaged  = buys.reduce((s,a) => s + parseFloat(a.costBasis||0), 0);
+          actBets   = buys.length;
+          console.log(`📊 Stats computed: wins=${actWins} losses=${actLosses} pnl=${actPnl.toFixed(2)} waged=${actWaged.toFixed(2)} bets=${actBets}`);
+        } else {
+          console.log("📊 Stats: no activities returned from getTradeHistory");
         }
       } catch(e) {
         console.error("⚠️ activities fetch in /api/stats:", e.message);
