@@ -469,148 +469,94 @@ export async function getOpenPositions() {
 //   { type, trade: { marketSlug, price:{value,currency}, qtyDecimal, costBasis:{value}, realizedPnl:{value}, createTime, state }, positionResolution: { ... } }
 export async function getTradeHistory({ limit = 500 } = {}) {
   try {
-    // ── Step 1: get proxy wallet address from account ──────────────
-    // The Data API needs the proxy wallet, not the API key
-    let proxyWallet = null;
-    try {
-      const acct = await signedRequest("GET", "/v1/account");
-      proxyWallet = acct?.proxyWallet || acct?.proxy_wallet ||
-                    acct?.walletAddress || acct?.address || null;
-      if (proxyWallet) {
-        console.log(`📋 Proxy wallet: ${proxyWallet}`);
-      } else {
-        console.log(`📋 Account response keys: ${JSON.stringify(Object.keys(acct || {}))}`);
-        console.log(`📋 Account sample: ${JSON.stringify(acct).slice(0, 300)}`);
+    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+    const allActivities = [];
+    let cursor = null;
+    let page = 0;
+
+    while (page < 10) {
+      const params = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
+      if (cursor) params.set("cursor", cursor);
+      const data = await signedRequest("GET", `/v1/portfolio/activities?${params}`);
+
+      // Log raw shape on first page so we can see real field names
+      if (page === 0) {
+        const sample = (data?.activities || [])[0];
+        if (sample) {
+          console.log(`📋 Activity sample: ${JSON.stringify(sample).slice(0, 500)}`);
+          console.log(`📋 Activity types found: ${[...new Set((data.activities||[]).map(a=>a.type))].join(", ")}`);
+        } else {
+          console.log(`📋 No activities returned. Response keys: ${JSON.stringify(Object.keys(data||{}))}`);
+        }
       }
-    } catch (e) {
-      console.error("⚠️ Could not fetch account:", e.message);
+
+      const acts = data?.activities || [];
+      allActivities.push(...acts);
+      if (!data?.nextCursor || acts.length === 0 || data?.eof) break;
+      cursor = data.nextCursor;
+      page++;
+      if (allActivities.length >= limit) break;
     }
 
-    const activities = [];
+    console.log(`📋 Total activities: ${allActivities.length}`);
 
-    // ── Step 2: fetch from Polymarket Data API (public, no auth needed) ──
-    // GET https://data-api.polymarket.com/activity?user={proxyWallet}
-    // Returns all trades/redeems for this wallet address
-    if (proxyWallet) {
-      try {
-        let offset = 0;
-        const pageSize = 200;
-        while (activities.length < limit) {
-          const url = `https://data-api.polymarket.com/activity?user=${proxyWallet}&limit=${pageSize}&offset=${offset}&sortDirection=DESC`;
-          const resp = await fetch(url, { headers: { "Accept": "application/json" } });
-          if (!resp.ok) {
-            console.error(`⚠️ Data API ${resp.status}: ${await resp.text().catch(()=>"")}`);
-            break;
-          }
-          const page = await resp.json();
-          const items = Array.isArray(page) ? page : (page.data || page.activities || []);
-          if (!items.length) break;
-          activities.push(...items);
-          if (items.length < pageSize) break;
-          offset += pageSize;
-        }
-        console.log(`📋 Data API: ${activities.length} activities fetched for ${proxyWallet.slice(0,10)}...`);
-        if (activities.length > 0) {
-          console.log(`📋 Activity sample: ${JSON.stringify(activities[0]).slice(0, 400)}`);
-        }
-      } catch (e) {
-        console.error("⚠️ Data API fetch failed:", e.message);
-      }
-    }
-
-    // ── Step 3: fall back to portfolio/activities if Data API empty ──
-    if (!activities.length) {
-      console.log("📋 Falling back to /v1/portfolio/activities...");
-      let cursor = null;
-      let page = 0;
-      while (page < 10) {
-        const qs = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
-        if (cursor) qs.set("cursor", cursor);
-        const data = await signedRequest("GET", `/v1/portfolio/activities?${qs}`);
-        if (page === 0) {
-          console.log(`📋 Portfolio activities sample: ${JSON.stringify((data?.activities||[])[0] || {}).slice(0,400)}`);
-        }
-        const acts = data?.activities || [];
-        activities.push(...acts);
-        if (!data?.nextCursor || !acts.length || data?.eof) break;
-        cursor = data.nextCursor;
-        page++;
-        if (activities.length >= limit) break;
-      }
-    }
-
-    // ── Step 4: normalise to common shape ────────────────────────────
-    // Data API shape: { side, price, size, timestamp, title, conditionId, outcome }
-    // Portfolio activities: { type, trade: {...}, positionResolution: {...} }
-    return activities.map(a => {
-      // Data API format
-      if (a.side !== undefined && a.timestamp !== undefined) {
-        const side  = (a.side || "").toUpperCase();  // BUY or SELL
-        const price = parseFloat(a.price ?? 0);
-        const size  = parseFloat(a.size ?? 0);
-        const cost  = side === "BUY" ? +(price * size).toFixed(4) : 0;
-        // A SELL near $1 = WIN (settlement payout)
-        // A SELL at current price = cash-out
-        const isSell    = side === "SELL";
-        const proceeds  = isSell ? +(price * size).toFixed(4) : 0;
-        const ts = a.timestamp
-          ? new Date(a.timestamp * 1000).toISOString()
-          : (a.createTime || "");
-        return {
-          _type:       isSell ? "sell" : "buy",
-          marketSlug:  a.conditionId || a.slug || "",
-          question:    a.title || a.market || "",
-          price,
-          qty:         size,
-          costBasis:   cost,
-          proceeds,
-          realizedPnl: isSell ? +(proceeds).toFixed(4) : 0, // gross proceeds on sell
-          createTime:  ts,
-          side:        a.side,
-          outcome:     a.outcome || "",
-          won:         isSell && price >= 0.95, // settled WIN if sold at ~$1
-        };
-      }
-
-      // Portfolio activities format (fallback)
+    return allActivities.map(a => {
+      // ACTIVITY_TYPE_TRADE — a buy or sell fill
       if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
         const t = a.trade;
-        const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+        const pl  = amtVal(t.realizedPnl) ?? 0;
+        const cost = amtVal(t.costBasis) ?? amtVal(t.cost) ?? 0;
+        const price = amtVal(t.price) ?? 0;
+        const side = t.side || (cost > 0 ? "BUY" : "SELL");
         return {
           _type:       "trade",
-          marketSlug:  t.marketSlug || "",
-          question:    t.marketTitle || t.marketSlug || "",
-          price:       amtVal(t.price),
-          qty:         parseFloat(t.qtyDecimal ?? 0),
-          costBasis:   amtVal(t.costBasis) ?? amtVal(t.cost),
-          realizedPnl: amtVal(t.realizedPnl) ?? 0,
-          createTime:  t.createTime || "",
-          side:        "BUY",
-          won:         false,
+          marketSlug:  t.marketSlug || a.marketSlug || "",
+          question:    t.marketTitle || t.question || t.marketSlug || "",
+          price,
+          qty:         parseFloat(t.qtyDecimal ?? t.qty ?? 0),
+          costBasis:   cost,
+          realizedPnl: pl,
+          side,
+          createTime:  t.createTime || a.createTime || "",
+          state:       t.state || "",
         };
       }
+
+      // ACTIVITY_TYPE_POSITION_RESOLUTION — market settled WIN or LOSS
       if (a.type === "ACTIVITY_TYPE_POSITION_RESOLUTION" && a.positionResolution) {
-        const r   = a.positionResolution;
-        const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
-        const before = amtVal(r.beforePosition?.realized) ?? 0;
-        const after  = amtVal(r.afterPosition?.realized)  ?? 0;
-        const pl = after - before;
+        const r = a.positionResolution;
+        const beforeReal = amtVal(r.beforePosition?.realized) ?? 0;
+        const afterReal  = amtVal(r.afterPosition?.realized)  ?? 0;
+        // Incremental P/L from this resolution
+        const pl = afterReal - beforeReal;
+        // Also try direct pnl fields
+        const directPl = amtVal(r.pnl) ?? amtVal(r.realizedPnl) ?? null;
+        const finalPl  = directPl !== null ? directPl : pl;
+        const won = finalPl > 0
+          || r.side === "POSITION_RESOLUTION_SIDE_LONG"
+          || r.outcome === "YES" || r.outcome === "WON";
+        const question = r.afterPosition?.marketMetadata?.title
+          || r.beforePosition?.marketMetadata?.title
+          || r.marketTitle || r.marketSlug || "";
+        console.log(`📋 RESOLUTION: ${question.slice(0,40)} pl=$${finalPl.toFixed(2)} won=${won}`);
         return {
           _type:       "resolution",
-          marketSlug:  r.marketSlug || "",
-          question:    r.afterPosition?.marketMetadata?.title || r.marketSlug || "",
-          realizedPnl: pl,
-          createTime:  r.updateTime || "",
-          won:         pl > 0 || r.side === "POSITION_RESOLUTION_SIDE_LONG",
+          marketSlug:  r.marketSlug || a.marketSlug || "",
+          question,
+          realizedPnl: finalPl,
+          createTime:  r.updateTime || r.createTime || a.createTime || "",
+          won,
         };
       }
       return null;
     }).filter(Boolean);
+
   } catch (err) {
     console.error("⚠️ getTradeHistory failed:", err.message);
     return [];
   }
 }
+
 
 export async function getOpenPositionsEnriched(stateBets = []) {
   try {
@@ -618,56 +564,56 @@ export async function getOpenPositionsEnriched(stateBets = []) {
     const data = await signedRequest("GET", "/v1/portfolio/positions");
     const raw = data?.positions || {};
 
-    // Log full raw shape of first position to diagnose qty/price scaling
+    // Log full raw shape so we know exact field names
     const slugs = Object.keys(raw);
     if (slugs.length > 0) {
-      console.log(`🔍 POSITIONS RAW SAMPLE: ${JSON.stringify(raw[slugs[0]]).slice(0,400)}`);
-      console.log(`🔍 API slugs: ${slugs.slice(0,5).join(" | ")}`);
-      console.log(`🔍 State IDs: ${stateBets.slice(0,5).map(b=>b.marketConditionId).join(" | ")}`);
+      console.log(`🔍 Position keys (slugs): ${slugs.slice(0,5).join(" | ")}`);
+      console.log(`🔍 Position sample fields: ${JSON.stringify(Object.keys(raw[slugs[0]]||{}))}`);
+      console.log(`🔍 Position sample values: ${JSON.stringify(raw[slugs[0]]).slice(0,400)}`);
+      console.log(`🔍 State bet IDs: ${stateBets.slice(0,5).map(b=>b.marketConditionId).join(" | ")}`);
     }
 
     const out = [];
     for (const [slug, p] of Object.entries(raw)) {
-      const qtyRaw = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
-      if (qtyRaw <= 0) continue;
+      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
+      if (qty <= 0) continue;
 
-      // Dollar amounts from API — always reliable regardless of qty scaling
-      const costBasis = amtVal(p?.cost);       // total $ paid
-      const cashValue = amtVal(p?.cashValue);  // current market value in $
+      // Dollar amounts from API
+      const costBasis = amtVal(p?.cost);
+      const cashValue = amtVal(p?.cashValue);
       const realized  = amtVal(p?.realized);
-
-      // P/L from API dollar fields
-      const apiOpenPnl = (cashValue != null && costBasis != null)
-        ? +(cashValue - costBasis).toFixed(2) : null;
 
       // Market metadata
       const meta = p?.marketMetadata || {};
-      let question   = meta.title || null;
-      let category   = "";
+      let question = meta.title || null;
+      let category = "";
       let entryPrice = null;
-      let placedAt   = null;
+      let placedAt = null;
 
-      // Cross-ref state bets for entry price, question, category
-      // Match state bet to API position slug
-      // API slug e.g. "aec-ufc-javrey-kaaofl-2026-06-27"
-      // State marketConditionId = m.slug from scan (should be identical)
-      // Also try partial matches in case of "-yes" suffix variants
+      // Cross-ref state bets — try multiple matching strategies
       const stateBet = stateBets.find(b => {
-        const id = b.marketConditionId || "";
-        return id === slug ||
-               id === slug + "-yes" ||
-               slug === id + "-yes" ||
-               slug.startsWith(id.replace(/-yes$/, "")) ||
-               id.startsWith(slug.replace(/-yes$/, ""));
+        const id = (b.marketConditionId || "").toLowerCase();
+        const s  = slug.toLowerCase();
+        return id === s                          // exact match
+          || id === s + "-yes"                  // slug + suffix
+          || s === id + "-yes"
+          || s.startsWith(id.replace(/-yes$/,""))  // slug starts with id
+          || id.startsWith(s.replace(/-yes$/,""))  // id starts with slug
+          || (id.length > 8 && s.includes(id.slice(0,15)))  // partial
+          || (s.length > 8 && id.includes(s.slice(0,15)));
       });
+
       if (stateBet) {
-        if (!question)   question   = (stateBet.marketQuestion || "").replace(/^\[.*?\]\s*/, "") || null;
-        if (!category)   category   = stateBet.entryCoin || "";
-        if (!entryPrice) entryPrice = stateBet.entryPrice || null;
-        if (!placedAt)   placedAt   = stateBet.placedAt || null;
+        if (!question)    question   = (stateBet.marketQuestion||"").replace(/^\[.*?\]\s*/,"") || null;
+        if (!category)    category   = stateBet.entryCoin || "";
+        if (!entryPrice)  entryPrice = stateBet.entryPrice || null;
+        if (!placedAt)    placedAt   = stateBet.placedAt || null;
+        console.log(`  ✅ Matched: ${slug.slice(0,30)} → state bet entry=${entryPrice}`);
+      } else {
+        console.log(`  ❌ No match: ${slug.slice(0,40)}`);
       }
 
-      // Payout = costBasis / entryPrice  (e.g. $0.67 / 0.67 = $1.00)
+      // Payout = costBasis / entryPrice (if we have entry price from state)
       const payout = (costBasis && entryPrice && entryPrice > 0)
         ? +(costBasis / entryPrice).toFixed(2) : null;
 
@@ -678,23 +624,22 @@ export async function getOpenPositionsEnriched(stateBets = []) {
         currentBid = bbo?.bid ?? null;
       } catch {}
 
-      // Live P/L = (currentBid - entryPrice) * payout
-      // e.g. (0.68 - 0.67) * 1.00 = +$0.01
-      let openPnl = apiOpenPnl;
+      // P/L = (currentBid - entryPrice) * payout
+      let openPnl = null;
       if (currentBid != null && entryPrice && payout) {
         openPnl = +((currentBid - entryPrice) * payout).toFixed(2);
+      } else if (cashValue != null && costBasis != null) {
+        openPnl = +(cashValue - costBasis).toFixed(2);
       }
 
       const currentVal = (currentBid && payout)
         ? +(currentBid * payout).toFixed(2) : cashValue;
 
-      console.log(`  \uD83D\uDCCA ${slug.slice(0,28)} | cost=$${costBasis} entry=${entryPrice} bid=${currentBid} payout=$${payout} P/L=${openPnl}`);
-
       out.push({
         slug,
         question:   question || slug,
         category,
-        qty:        qtyRaw,
+        qty,
         avgPrice:   entryPrice,
         costBasis,
         cashValue,
@@ -709,12 +654,12 @@ export async function getOpenPositionsEnriched(stateBets = []) {
     }
     return out;
   } catch (err) {
-    console.error("\u26A0\uFE0F getOpenPositionsEnriched failed:", err.message);
+    console.error("⚠️ getOpenPositionsEnriched failed:", err.message);
     return [];
   }
 }
 
-// ── preflightUS ──────────────────────────────────────────────────
+
 export async function preflightUS() {
   const msgs = [];
   let keyId;
