@@ -50,7 +50,9 @@ function getCreds() {
 function authHeaders(method, path) {
   const { keyId, privateKey } = getCreds();
   const timestamp = Date.now().toString();
-  const message = `${timestamp}${method}${path}`;
+  // Sign only the path WITHOUT query string — Polymarket US signs base path only
+  const basePath = path.split("?")[0];
+  const message = `${timestamp}${method}${basePath}`;
   const signature = crypto.sign(null, Buffer.from(message), privateKey).toString("base64");
   return {
     "X-PM-Access-Key": keyId,
@@ -583,10 +585,12 @@ export async function getOpenPositionsEnriched(stateBets = []) {
       const cashValue = amtVal(p?.cashValue);
       const realized  = amtVal(p?.realized);
 
-      // Market metadata
-      const meta = p?.marketMetadata || {};
-      let question = meta.title || null;
-      let category = "";
+      // Market metadata — field is "marketMetadata" per position sample
+      const meta = p?.marketMetadata || p?.market_metadata || {};
+      // Try multiple fields for question text
+      let question = meta.title || meta.question || meta.name ||
+                     p?.title || p?.question || null;
+      let category = meta.category || p?.category || "";
       let entryPrice = null;
       let placedAt = null;
 
@@ -594,12 +598,12 @@ export async function getOpenPositionsEnriched(stateBets = []) {
       const stateBet = stateBets.find(b => {
         const id = (b.marketConditionId || "").toLowerCase();
         const s  = slug.toLowerCase();
-        return id === s                          // exact match
-          || id === s + "-yes"                  // slug + suffix
+        return id === s
+          || id === s + "-yes"
           || s === id + "-yes"
-          || s.startsWith(id.replace(/-yes$/,""))  // slug starts with id
-          || id.startsWith(s.replace(/-yes$/,""))  // id starts with slug
-          || (id.length > 8 && s.includes(id.slice(0,15)))  // partial
+          || s.startsWith(id.replace(/-yes$/,""))
+          || id.startsWith(s.replace(/-yes$/,""))
+          || (id.length > 8 && s.includes(id.slice(0,15)))
           || (s.length > 8 && id.includes(s.slice(0,15)));
       });
 
@@ -608,12 +612,19 @@ export async function getOpenPositionsEnriched(stateBets = []) {
         if (!category)    category   = stateBet.entryCoin || "";
         if (!entryPrice)  entryPrice = stateBet.entryPrice || null;
         if (!placedAt)    placedAt   = stateBet.placedAt || null;
-        console.log(`  ✅ Matched: ${slug.slice(0,30)} → state bet entry=${entryPrice}`);
+        console.log(`  ✅ Matched: ${slug.slice(0,30)} → entry=${entryPrice}`);
       } else {
-        console.log(`  ❌ No match: ${slug.slice(0,40)}`);
+        // No state match (state reset on restart) — derive entry price from API cost/qty
+        // cost=$0.67, qty=1 → entryPrice=0.67 (67%)
+        if (!entryPrice && costBasis && qty > 0) {
+          entryPrice = +(costBasis / qty).toFixed(4);
+          console.log(`  📊 Derived: ${slug.slice(0,30)} → entry=${entryPrice} (cost=${costBasis}/qty=${qty})`);
+        } else {
+          console.log(`  ❌ No match: ${slug.slice(0,40)}`);
+        }
       }
 
-      // Payout = costBasis / entryPrice (if we have entry price from state)
+      // Payout = costBasis / entryPrice = contracts × $1 per contract
       const payout = (costBasis && entryPrice && entryPrice > 0)
         ? +(costBasis / entryPrice).toFixed(2) : null;
 
