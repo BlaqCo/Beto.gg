@@ -614,13 +614,22 @@ export async function getOpenPositionsEnriched(stateBets = []) {
         if (!placedAt)    placedAt   = stateBet.placedAt || null;
         console.log(`  ✅ Matched: ${slug.slice(0,30)} → entry=${entryPrice}`);
       } else {
-        // No state match (state reset on restart) — derive entry price from API cost/qty
-        // cost=$0.67, qty=1 → entryPrice=0.67 (67%)
-        if (!entryPrice && costBasis && qty > 0) {
-          entryPrice = +(costBasis / qty).toFixed(4);
-          console.log(`  📊 Derived: ${slug.slice(0,30)} → entry=${entryPrice} (cost=${costBasis}/qty=${qty})`);
-        } else {
-          console.log(`  ❌ No match: ${slug.slice(0,40)}`);
+        // No state match (state reset on restart)
+        // DO NOT derive entryPrice from cost/qty — qty scale is unreliable
+        // Try bodPosition fields from the API instead
+        const bod = p?.bodPosition || {};
+        const bodCost = amtVal(bod?.cost);
+        const bodQty  = parseFloat(bod?.qtyBought ?? 0);
+        if (!entryPrice && bodCost && bodQty > 0) {
+          const derived = +(bodCost / bodQty).toFixed(4);
+          // Only use if it's a sane probability (5% - 98%)
+          if (derived >= 0.05 && derived <= 0.98) {
+            entryPrice = derived;
+            console.log(`  📊 bodDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
+          }
+        }
+        if (!entryPrice) {
+          console.log(`  ❌ No entry price: ${slug.slice(0,40)} cost=${costBasis} qty=${qty}`);
         }
       }
 
