@@ -1,562 +1,289 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>BETO.GG</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-:root{
-  --bg:#030805;--green:#39ff8f;--dim:rgba(57,255,143,0.25);
-  --border:rgba(57,255,143,0.18);--red:#ff3d6e;--yellow:#ffd200;--blue:#7dd3ff;
-  --faint:rgba(57,255,143,0.06);
-}
-html,body{min-height:100%;background:var(--bg);color:var(--green);font-family:'Share Tech Mono',monospace;}
-body::before{content:'';position:fixed;inset:0;z-index:999;pointer-events:none;
-  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.18) 2px,rgba(0,0,0,0.18) 4px);}
-body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background-image:linear-gradient(rgba(57,255,143,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(57,255,143,0.025) 1px,transparent 1px);
-  background-size:40px 40px;}
-#topglow{position:fixed;top:-15%;left:50%;transform:translateX(-50%);width:80vw;height:50vh;
-  background:radial-gradient(ellipse,rgba(57,255,143,0.06),transparent 70%);pointer-events:none;z-index:0;}
+/**
+ * bot-sports.js — BETO.GG Sports v4.2 (polymarket.us native)
+ *
+ * Strategy: BUY YES on moneyline favorites 60-70¢ (live or starting within 12h)
+ *           Flat $10 bets. HOLD TO RESOLUTION — no TP/SL, settlement only.
+ * DRY:  paper fills at estimated price (no BBO required)
+ * LIVE: FOK limit entries via signed REST
+ */
 
-.wrap{position:relative;z-index:1;max-width:820px;margin:0 auto;padding:16px 12px 32px;
-  display:flex;flex-direction:column;gap:0;}
+import { recordBet, hasActiveBet, getStats, getAllActiveBets,
+         closeBet, getDryBalance, countBetsForMarket } from "./state.js";
+import { fetchSportsMoneylines, getBBO, getSettlement,
+         buyYesFOK, getBuyingPower, getOpenPositions,
+         preflightUS } from "./polymarket-us.js";
 
-/* HEADER */
-header{display:flex;align-items:center;gap:12px;padding-bottom:14px;
-  border-bottom:1px solid var(--border);margin-bottom:12px;}
-.logo-mark{font-family:'Orbitron';font-size:clamp(15px,5vw,22px);font-weight:900;
-  letter-spacing:4px;color:var(--green);text-shadow:0 0 20px rgba(57,255,143,0.5);}
-.logo-mark span{opacity:0.35;}
-.logo-sub{font-size:7px;letter-spacing:3px;color:var(--dim);margin-top:4px;}
-.hdr-right{margin-left:auto;text-align:right;font-size:8px;letter-spacing:1px;color:var(--dim);line-height:1.9;flex-shrink:0;}
-.status-inline{display:flex;align-items:center;gap:5px;justify-content:flex-end;}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.3s ease-in-out infinite;}
-.dot.off{background:var(--red);box-shadow:0 0 8px var(--red);animation:none;}
-.badge{font-size:7px;letter-spacing:2px;padding:3px 8px;margin-top:2px;display:inline-block;}
-.badge-live{background:rgba(57,255,143,0.08);color:var(--green);border:1px solid rgba(57,255,143,0.3);}
-.badge-dry{background:rgba(255,210,0,0.06);color:var(--yellow);border:1px solid rgba(255,210,0,0.25);}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
-@keyframes scanline{0%{transform:translateY(0)}100%{transform:translateY(28px)}}
-#beto-scan{animation:scanline 1.8s linear infinite;}
+const DRY_RUN = process.env.DRY_RUN !== "false";
 
-/* MODE BAR */
-.mode-bar{display:flex;margin-bottom:12px;border:1px solid var(--border);}
-.mode-btn{flex:1;padding:9px 4px;text-align:center;cursor:pointer;
-  font-family:'Orbitron';font-size:7.5px;letter-spacing:2px;
-  background:transparent;border:none;color:var(--dim);transition:all .15s;user-select:none;}
-.mode-btn+.mode-btn{border-left:1px solid var(--border);}
-.mode-btn.active{background:rgba(57,255,143,0.08);color:var(--green);text-shadow:0 0 12px rgba(57,255,143,0.4);}
-.mode-btn.locked{cursor:not-allowed;color:rgba(57,255,143,0.12);}
-.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(60px);
-  background:#0a1a0e;border:1px solid rgba(255,61,110,0.35);color:var(--red);
-  font-size:9px;letter-spacing:2px;padding:10px 20px;z-index:9999;
-  transition:transform .22s,opacity .22s;opacity:0;pointer-events:none;white-space:nowrap;}
-.toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+// ── Config ──────────────────────────────────────────────────────
+const BET_SIZE      = 5;       // flat $5 per bet
+const BET_MIN       = 5;
+const FAV_MIN       = 0.60;    // 60¢ minimum edge
+const FAV_MAX       = 0.70;    // skip near-decided games
+const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
+const MAX_CONC      = 10;      // 10 concurrent slots
+const ENTRIES_SCAN  = 10;      // up to 10 entries per scan
+const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
-/* STAT BOXES */
-.stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-bottom:0;}
-.stat-box{border:1px solid var(--border);padding:12px 8px;text-align:center;background:rgba(0,0,0,0.45);}
-.stat-box+.stat-box{border-left:none;}
-.stat-row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-bottom:12px;}
-.stat-row2 .stat-box{border-top:none;}
-.stat-row2 .stat-box+.stat-box{border-left:none;}
-.s-lbl{font-size:6.5px;letter-spacing:2px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;}
-.s-val{font-family:'Orbitron';font-size:clamp(14px,3.8vw,22px);font-weight:900;line-height:1;}
-.s-sub{font-size:7px;color:var(--dim);margin-top:4px;}
-.c-green{color:var(--green);text-shadow:0 0 12px rgba(57,255,143,0.45);}
-.c-blue{color:var(--blue);text-shadow:0 0 12px rgba(125,211,255,0.35);}
-.c-red{color:var(--red);text-shadow:0 0 10px rgba(255,61,110,0.4);}
-.c-neutral{color:#c8e8d8;}
-.c-yellow{color:var(--yellow);}
+// ── Helpers ──────────────────────────────────────────────────────
+const shares    = b  => b.betSize / b.entryPrice;
+const expiryPnl = (b, won) => won ? shares(b) * (1 - FEE) - b.betSize : -b.betSize;
+const exitPnl   = (b, px) => shares(b) * px - b.betSize;
+const pct       = x  => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+const cents     = x  => `${(x * 100).toFixed(0)}¢`;
 
-/* PANEL */
-.panel-hd{display:flex;align-items:center;justify-content:space-between;
-  background:rgba(57,255,143,0.04);border:1px solid var(--border);
-  padding:7px 12px;border-bottom:none;}
-.p-title{font-family:'Orbitron';font-size:7.5px;letter-spacing:3px;color:var(--green);opacity:0.7;}
-.p-meta{font-size:7.5px;color:var(--dim);}
-.dots{display:flex;gap:5px;}
-.d{width:8px;height:8px;border-radius:50%;}
-.d-r{background:#ff5f57;opacity:.7;} .d-y{background:#ffbd2e;opacity:.7;} .d-g{background:#28c940;opacity:.7;}
-
-/* PANEL BODY */
-.panel-body{border:1px solid var(--border);border-top:none;
-  background:rgba(0,0,0,0.5);margin-bottom:12px;}
-.empty-row{text-align:center;padding:18px;color:var(--dim);font-size:8px;letter-spacing:2px;}
-
-/* BET CARD — used for both active positions and history */
-/* Two-line design: top line = question | right = key number */
-/*                  bottom line = meta details spread across */
-.bet-card{
-  padding:10px 12px;
-  border-bottom:1px solid rgba(57,255,143,0.07);
-}
-.bet-card:last-child{border-bottom:none;}
-
-/* Line 1: question text + win-if amount */
-.bc-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:5px;}
-.bc-q{font-size:9px;color:var(--green);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.bc-win{font-family:'Orbitron';font-size:11px;flex-shrink:0;text-align:right;}
-
-/* Line 2: sport tag | bet | @ prob | payout label | p/l | time */
-.bc-meta{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:hidden;}
-.bc-tag{font-size:6px;letter-spacing:1px;padding:1px 5px;
-  background:rgba(57,255,143,0.06);border:1px solid rgba(57,255,143,0.15);
-  color:var(--green);opacity:0.6;flex-shrink:0;}
-.bc-pill{font-size:7.5px;color:var(--dim);flex-shrink:0;white-space:nowrap;}
-.bc-pill strong{color:var(--green);font-style:normal;}
-.bc-spacer{flex:1;}
-.bc-pnl{font-family:'Orbitron';font-size:9px;flex-shrink:0;}
-.bc-time{font-size:6.5px;color:rgba(57,255,143,0.2);flex-shrink:0;}
-
-/* History result badge */
-.bc-result{font-family:'Orbitron';font-size:8px;padding:1px 6px;flex-shrink:0;
-  border:1px solid currentColor;}
-.bc-win-badge{color:var(--green);}
-.bc-loss-badge{color:var(--red);}
-.bc-exp-badge{color:var(--dim);}
-
-/* LOG */
-.log-wrap{border:1px solid var(--border);border-top:none;
-  background:rgba(0,0,0,0.55);height:260px;overflow-y:auto;padding:8px 10px;margin-bottom:0;}
-.log-wrap::-webkit-scrollbar{width:3px;}
-.log-wrap::-webkit-scrollbar-thumb{background:rgba(57,255,143,0.12);}
-.ll{display:flex;gap:8px;line-height:2;}
-.lt{color:rgba(57,255,143,0.18);flex-shrink:0;font-size:7.5px;padding-top:1px;}
-.lok{font-size:8.5px;color:var(--green);}
-.lerr{font-size:8.5px;color:var(--red);}
-.lwarn{font-size:8.5px;color:var(--yellow);}
-.linfo{font-size:8.5px;color:var(--dim);}
-
-/* FOOTER */
-footer{border-top:1px solid var(--border);padding:18px 12px 28px;text-align:center;margin-top:12px;}
-.x-link{display:inline-flex;align-items:center;gap:8px;text-decoration:none;
-  color:var(--dim);font-size:8.5px;letter-spacing:3px;border:1px solid var(--border);padding:8px 18px;}
-.f-sub{margin-top:7px;font-size:6.5px;letter-spacing:2px;color:rgba(57,255,143,0.1);}
-</style>
-</head>
-<body>
-<div id="topglow"></div>
-<div class="wrap">
-
-<!-- HEADER -->
-<header>
-  <svg width="50" height="50" viewBox="0 0 320 320" style="flex-shrink:0;filter:drop-shadow(0 0 7px rgba(57,255,143,0.4))">
-    <defs>
-      <linearGradient id="fb" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#39ff8f" stop-opacity="0.85"/>
-        <stop offset="100%" stop-color="#1a9955" stop-opacity="0.95"/>
-      </linearGradient>
-      <filter id="fg" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation="3" result="b"/>
-        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
-      <clipPath id="fc"><rect x="142" y="132" width="36" height="28" rx="4"/></clipPath>
-    </defs>
-    <polygon points="160,85 218,140 205,215 115,215 102,140" fill="url(#fb)"/>
-    <polygon points="160,85 218,140 205,215 115,215 102,140" fill="none" stroke="#39ff8f" stroke-width="1.5" stroke-opacity="0.45"/>
-    <polygon points="130,95 90,45 155,75" fill="url(#fb)"/>
-    <polygon points="190,95 230,45 165,75" fill="url(#fb)"/>
-    <polygon points="132,170 188,170 180,215 140,215" fill="#050e08" fill-opacity="0.65"/>
-    <polygon points="160,174 167,180 160,186 153,180" fill="#39ff8f" opacity="0.9" filter="url(#fg)"/>
-    <rect x="142" y="132" width="36" height="28" rx="5" fill="#050e08" stroke="#39ff8f" stroke-width="1.5" stroke-opacity="0.9" filter="url(#fg)"/>
-    <rect id="beto-scan" x="142" y="132" width="36" height="3" fill="#39ff8f" opacity="0.38" clip-path="url(#fc)"/>
-    <ellipse cx="160" cy="146" rx="10" ry="10" fill="none" stroke="#39ff8f" stroke-width="1.2" stroke-opacity="0.7" filter="url(#fg)"/>
-    <ellipse cx="160" cy="146" rx="4" ry="4" fill="#39ff8f" opacity="0.9" filter="url(#fg)"/>
-  </svg>
-  <div>
-    <div class="logo-mark">BETO<span>.</span>GG</div>
-    <div class="logo-sub">AUTOMATED PREDICTION MARKETS</div>
-  </div>
-  <div class="hdr-right">
-    <div class="status-inline"><div class="dot" id="sdot"></div><span id="stxt">CONNECTING</span></div>
-    <div id="hdr-time">—</div>
-    <div id="mbadge" class="badge badge-dry">◎ DRY RUN</div>
-  </div>
-</header>
-
-<!-- MODE SWITCHER -->
-<div class="mode-bar">
-  <div class="mode-btn active" id="btn-sports" onclick="setMode('SPORTS')">⚽ SPORTS</div>
-  <div class="mode-btn locked" onclick="clickCrypto()">🔒 CRYPTO</div>
-  <div class="mode-btn locked" onclick="clickCrypto()">🔒 BOTH</div>
-</div>
-
-<!-- STATS ROW 1 -->
-<div class="stat-grid">
-  <div class="stat-box">
-    <div class="s-lbl">Balance</div>
-    <div class="s-val c-blue" id="balance">$—</div>
-    <div class="s-sub" id="bal-sub">buying power</div>
-  </div>
-  <div class="stat-box">
-    <div class="s-lbl">Total P/L</div>
-    <div class="s-val c-neutral" id="pnl">+$0.00</div>
-    <div class="s-sub" id="pnl-sub">settled</div>
-  </div>
-  <div class="stat-box">
-    <div class="s-lbl">Live P/L</div>
-    <div class="s-val c-neutral" id="live-pnl">$0.00</div>
-    <div class="s-sub" id="live-pnl-sub">0 open</div>
-  </div>
-</div>
-
-<!-- STATS ROW 2 -->
-<div class="stat-row2">
-  <div class="stat-box">
-    <div class="s-lbl">Record</div>
-    <div class="s-val c-green" id="record">—W/—L</div>
-    <div class="s-sub" id="rec-sub">all time</div>
-  </div>
-  <div class="stat-box">
-    <div class="s-lbl">Total Bets</div>
-    <div class="s-val c-neutral" id="total-bets">0</div>
-    <div class="s-sub" id="active-sub">0 active</div>
-  </div>
-  <div class="stat-box">
-    <div class="s-lbl">Wagered</div>
-    <div class="s-val c-yellow" id="wagered">$0.00</div>
-    <div class="s-sub" id="wagered-sub">all time</div>
-  </div>
-</div>
-
-<!-- ACTIVE POSITIONS -->
-<div class="panel-hd">
-  <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
-  <span class="p-title">ACTIVE POSITIONS</span>
-  <span class="p-meta" id="trades-meta">0 open</span>
-</div>
-<div class="panel-body" id="trades-body">
-  <div class="empty-row">> NO ACTIVE POSITIONS_</div>
-</div>
-
-<!-- BET HISTORY -->
-<div class="panel-hd">
-  <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
-  <span class="p-title">BET HISTORY</span>
-  <span class="p-meta" id="hist-meta">all time</span>
-</div>
-<div class="panel-body" id="hist-body" style="max-height:320px;overflow-y:auto;">
-  <div class="empty-row">> NO HISTORY YET_</div>
-</div>
-
-<!-- SYSTEM LOG -->
-<div class="panel-hd" style="margin-top:12px">
-  <div class="dots"><div class="d d-r"></div><div class="d d-y"></div><div class="d d-g"></div></div>
-  <span class="p-title">SYSTEM LOG</span>
-  <span class="p-meta" id="log-meta">—</span>
-</div>
-<div class="log-wrap" id="log-body">
-  <div class="ll"><span class="lt">[BOOT]</span><span class="linfo">> BETO.GG INITIALIZING...</span></div>
-</div>
-
-</div><!-- /wrap -->
-
-<footer>
-  <a class="x-link" href="https://x.com/0xblaq?s=11" target="_blank" rel="noopener">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-    </svg>
-    BUILT BY 0XBLAQ
-  </a>
-  <div class="f-sub">BETO.GG // AUTOMATED PREDICTION MARKETS</div>
-</footer>
-
-<div class="toast" id="toast">🔒 NOT LIVE IN CALIFORNIA YET</div>
-
-<script>
-'use strict';
-
-// Clock
-function tick(){
-  document.getElementById('hdr-time').textContent=
-    new Date().toISOString().replace('T',' ').slice(0,19)+' UTC';
-}
-tick(); setInterval(tick,1000);
-
-// Mode
-function setMode(m){
-  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('btn-'+m.toLowerCase()).classList.add('active');
-}
-let _tt=null;
-function clickCrypto(){
-  const t=document.getElementById('toast');
-  t.classList.add('show');
-  clearTimeout(_tt);
-  _tt=setTimeout(()=>t.classList.remove('show'),2800);
-}
-
-// Helpers
-const $=id=>document.getElementById(id);
-const pnlCls=n=>n>0?'c-green':n<0?'c-red':'c-neutral';
-const fmt$=n=>'$'+Math.abs(parseFloat(n)||0).toFixed(2);
-const fmtPnl=n=>{const v=parseFloat(n)||0;return(v>=0?'+':'')+fmt$(v);};
-
-// Detect sport from question text
-function sport(q){
-  const s=(q||'').toLowerCase();
-  if(/yankees|astros|red sox|dodgers|cubs|mets|braves|padres|mariners|pirates|reds|orioles|rays|twins|royals|rangers|angels|athletics|tigers|nationals|cardinals|phillies|brewers|guardians|diamondbacks|white sox/.test(s))return'MLB';
-  if(/celtics|lakers|warriors|heat|nuggets|bucks|suns|nets|knicks|raptors|76ers|bulls|pistons|hawks|pacers|hornets|magic|wizards|cavs|thunder|blazers|jazz|spurs|rockets|grizzlies|pelicans|kings|wolves|clippers|mavs/.test(s))return'NBA';
-  if(/wnba|sky\b|aces\b|liberty|fever|dream\b|sparks|storm\b|sun\b|lynx|wings\b|mercury|mystics|valkyries|firebirds/.test(s))return'WNBA';
-  if(/world cup|fc |united|real madrid|barcelona|arsenal|chelsea|liverpool|man city|tottenham|juventus|ac milan|inter |roma|atletico|dortmund|bayern|psg/.test(s))return'SOCCER';
-  if(/atp|wta|wimbledon|french open|us open|djokovic|alcaraz|sinner|medvedev|zverev|nadal|federer|murray|osaka|swiatek/.test(s))return'TENNIS';
-  return'SPORT';
-}
-
-// Strip [TAG] prefix bots add to question
-const cleanQ=q=>(q||'').replace(/^\[.*?\]\s*/,'');
-
-// ── ACTIVE POSITIONS ─────────────────────────────────────────────
-// Data from /api/positions — enriched position objects
-// Fields: slug, question, category, qty, avgPrice, currentBid, costBasis, currentVal, openPnl, placedAt
-function renderPositions(list){
-  $('trades-meta').textContent=list.length+' open';
-  if(!list.length){
-    $('trades-body').innerHTML='<div class="empty-row">> NO ACTIVE POSITIONS_</div>';
-    return;
-  }
-  $('trades-body').innerHTML=list.map(p=>{
-    const rawQ=p.question||p.slug||'Unknown';
-    const q=cleanQ(rawQ).slice(0,50)||rawQ.slice(0,50);
-    const tag=(p.category||sport(rawQ)).toUpperCase().slice(0,6)||'SPORT';
-
-    const bet    = parseFloat(p.costBasis??0);
-    // avgPrice = entry probability — only show if reliable (came from state bet)
-    // If null/undefined it means state was reset and we don't know entry price
-    const prob   = (p.avgPrice!=null && p.avgPrice>0) ? parseFloat(p.avgPrice) : null;
-    // payout only valid if we have entry price
-    const payout = (p.payout!=null && prob!=null) ? parseFloat(p.payout) : null;
-    const curBid = parseFloat(p.currentBid??0);
-    // openPnl only valid if we have entry price for the math
-    const openPnl= (prob!=null && p.openPnl!=null) ? parseFloat(p.openPnl) : 0;
-
-    const betStr  = bet   ? '$'+bet.toFixed(2)        : '—';
-    const probStr = prob  ? Math.round(prob*100)+'%'  : '—';
-    const payStr  = payout? '$'+payout.toFixed(2)     : '—';
-    const bidStr  = curBid? Math.round(curBid*100)+'¢': '—';
-    const pnlColor= pnlCls(openPnl);
-    const ts=(p.placedAt||p.updateTime||'').slice(11,16)||'—';
-
-    return `<div class="bet-card">
-      <div class="bc-top">
-        <div class="bc-q">> ${q}</div>
-        <div class="bc-win ${pnlColor}">${fmtPnl(openPnl)}</div>
-      </div>
-      <div class="bc-meta">
-        <span class="bc-tag">${tag}</span>
-        <span class="bc-pill">bet <strong>${betStr}</strong></span>
-        <span class="bc-pill">@ <strong>${probStr}</strong></span>
-        <span class="bc-pill">win→<strong class="c-blue">${payStr}</strong></span>
-        <span class="bc-spacer"></span>
-        <span class="bc-pill">now ${bidStr}</span>
-        <span class="bc-time">${ts}</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-
-// ── BET HISTORY ──────────────────────────────────────────────────
-// Data from /api/history
-// LIVE mode: Polymarket trade objects (raw API shape varies — we handle both)
-// DRY mode:  state.js closed bet objects
-function renderHistory(data, isDry){
-  if(!data||!data.length){
-    $('hist-body').innerHTML='<div class="empty-row">> NO HISTORY YET_</div>';
-    $('hist-meta').textContent='0 settled';
-    return;
-  }
-
-  // Normalise all sources to common display shape
-  const rows = data.map(a => {
-    // State.js closed bet (always reliable — this session's settled bets)
-    if(a._source==='state'){
-      const q   = cleanQ(a.question||'Unknown');
-      const bet = parseFloat(a.costBasis??0);
-      const prob= parseFloat(a.price??0)||null;
-      const pl  = parseFloat(a.realizedPnl??0);
-      const won = a.won;
-      const ts  = (a.createTime||'').slice(0,10)||'—';
-      const tag = sport(q);
-      const result = won?'WIN':'LOSS';
-      const resCls = won?'bc-win-badge':'bc-loss-badge';
-      return {q,bet,prob,pl,result,resCls,ts,tag};
+// ── Live preflight (once per boot; 60s backoff on failure) ──────
+let _preflightDone = false;
+let _preflightNextTry = 0;
+async function ensureLiveReady() {
+  if (DRY_RUN || _preflightDone) return true;
+  if (Date.now() < _preflightNextTry) return false;
+  try {
+    const check = await preflightUS();
+    check.messages.forEach(m => console.log(m));
+    if (!check.ok) {
+      _preflightNextTry = Date.now() + 60_000;
+      console.error("❌ LIVE preflight failed — retrying in 60s");
+      return false;
     }
-    // Resolution activity from /v1/portfolio/activities
-    if(a._type==='resolution'){
-      const q   = cleanQ(a.question||a.marketSlug||'Unknown');
-      const pl  = parseFloat(a.realizedPnl??0);
-      const won = a.won;
-      const ts  = (a.createTime||'').slice(0,10)||'—';
-      const result = won?'WIN':'LOSS';
-      const resCls = won?'bc-win-badge':'bc-loss-badge';
-      return {q,bet:null,prob:null,pl,result,resCls,ts,tag:sport(q)};
-    }
-    // Trade activity (buy/sell fill)
-    if(a._type==='trade'){
-      const q   = cleanQ(a.question||a.marketSlug||'Unknown');
-      const bet = parseFloat(a.costBasis??0);
-      const prob= parseFloat(a.price??0)||null;
-      const pl  = parseFloat(a.realizedPnl??0);
-      const won = pl>0;
-      const ts  = (a.createTime||'').slice(0,10)||'—';
-      const result = pl>0?'WIN':pl<0?'LOSS':'BUY';
-      const resCls = pl>0?'bc-win-badge':pl<0?'bc-loss-badge':'bc-exp-badge';
-      return {q,bet,prob,pl,result,resCls,ts,tag:sport(q)};
-    }
-    // DRY mode: raw state.js bet object
-    if(isDry){
-      const q    = cleanQ(a.marketQuestion||'Unknown');
-      const bet  = parseFloat(a.betSize||0);
-      const prob = parseFloat(a.entryPrice||0)||null;
-      const pl   = parseFloat(a.pnl||0);
-      const won  = a.status==='won';
-      const isExp= a.status==='expired';
-      const ts   = (a.closedAt||a.placedAt||'').slice(0,10)||'—';
-      const tag  = (a.entryCoin||sport(q)).toUpperCase().slice(0,6);
-      const result = isExp?'EXP':won?'WIN':a.status==='lost'?'LOSS':'—';
-      const resCls = isExp?'bc-exp-badge':won?'bc-win-badge':'bc-loss-badge';
-      return {q,bet,prob,pl,result,resCls,ts,tag};
-    }
-    return null;
-  }).filter(Boolean).sort((a,b)=>b.ts>a.ts?1:-1);
-
-  $('hist-meta').textContent = rows.length + ' entries';
-  $('hist-body').innerHTML = rows.map(r => {
-    const probStr = r.prob ? Math.round(r.prob*100)+'%' : '—';
-    const payout  = r.prob&&r.bet ? '$'+(r.bet/r.prob).toFixed(2) : '—';
-    const betStr  = r.bet!=null ? '$'+r.bet.toFixed(2) : '—';
-    const pnlSign = r.pl>=0?'+':'';
-    const pnlStr  = '$'+Math.abs(r.pl).toFixed(2);
-    const pnlColor = r.result==='WIN'?'c-green':r.result==='LOSS'?'c-red':'c-neutral';
-    return `<div class="bet-card">
-      <div class="bc-top">
-        <div class="bc-q">> ${cleanQ(r.q)}</div>
-        <div class="bc-result ${r.resCls}">${r.result}</div>
-      </div>
-      <div class="bc-meta">
-        <span class="bc-tag">${r.tag}</span>
-        <span class="bc-pill">bet <strong>${betStr}</strong></span>
-        <span class="bc-pill">@ <strong>${probStr}</strong></span>
-        <span class="bc-pill">win→<strong class="c-blue">${payout}</strong></span>
-        <span class="bc-spacer"></span>
-        <span class="bc-pnl ${pnlColor}">${pnlSign}${pnlStr}</span>
-        <span class="bc-time">${r.ts}</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-// ── SYSTEM LOG ───────────────────────────────────────────────────
-function renderLog(logs){
-  const el=$('log-body');
-  if(!logs||!logs.length){
-    el.innerHTML='<div class="ll"><span class="lt">[—]</span><span class="linfo">> AWAITING DATA_</span></div>';
-    return;
-  }
-  el.innerHTML=[...logs].reverse().map(l=>{
-    const ts=(l.ts||'').slice(11,19)||'--:--:--';
-    const msg='> '+(l.msg||'').slice(0,130);
-    const cls='l'+(l.type||'info');
-    return `<div class="ll"><span class="lt">[${ts}]</span><span class="${cls}">${msg}</span></div>`;
-  }).join('');
-  $('log-meta').textContent=logs.length+' lines';
-  el.scrollTop=el.scrollHeight;
-}
-
-// ── MAIN POLL ────────────────────────────────────────────────────
-async function refresh(){
-  try{
-    const [rootR, logR, posR, histR, statsR] = await Promise.allSettled([
-      fetch('/').then(r=>r.json()),
-      fetch('/log').then(r=>r.json()),
-      fetch('/api/positions').then(r=>r.json()),
-      fetch('/api/history').then(r=>r.json()),
-      fetch('/api/stats').then(r=>r.json()),
-    ]);
-
-    $('sdot').className='dot';
-    $('stxt').textContent='ONLINE';
-
-    if(rootR.status==='fulfilled'){
-      const root = rootR.value;
-      const isDry = root.settings?.dryRun !== false;
-
-      // Badge
-      const badge = $('mbadge');
-      badge.textContent = isDry ? '◎ DRY RUN' : '⬤ LIVE';
-      badge.className = 'badge ' + (isDry ? 'badge-dry' : 'badge-live');
-
-      // Balance
-      const s = root.stats || {};
-      const bp = isDry
-        ? parseFloat(s.dryBalance ?? 0)
-        : parseFloat(s.liveBalance ?? s.buyingPower ?? 0);
-      const balEl = $('balance');
-      balEl.textContent = '$' + bp.toFixed(2);
-      balEl.className = 's-val ' + (isDry ? 'c-yellow' : 'c-blue');
-      $('bal-sub').textContent = isDry ? 'paper balance' : 'polymarket';
-    }
-
-    // ── Real stats from /api/stats ──────────────────────────────
-    const stats = statsR.status==='fulfilled' ? statsR.value : null;
-    if(stats){
-      // Total P/L (settled resolutions)
-      const totalPnl = parseFloat(stats.totalPnl ?? 0);
-      const pnlEl = $('pnl');
-      pnlEl.textContent = (totalPnl>=0?'+':'') + '$' + Math.abs(totalPnl).toFixed(2);
-      pnlEl.className = 's-val ' + pnlCls(totalPnl);
-      $('pnl-sub').textContent = 'settled';
-
-      // W/L record
-      const w = stats.wins || 0;
-      const l = stats.losses || 0;
-      $('record').textContent = w + 'W/' + l + 'L';
-      $('rec-sub').textContent = (w+l>0 ? Math.round(w/(w+l)*100) : 0) + '% win rate';
-
-      // Total bets + wagered
-      $('total-bets').textContent = stats.totalBets || 0;
-      $('wagered').textContent = '$' + parseFloat(stats.totalWagered ?? 0).toFixed(2);
-      $('wagered-sub').textContent = 'across ' + (stats.totalBets||0) + ' bets';
-    }
-
-    // ── Positions ───────────────────────────────────────────────
-    const positions = posR.status==='fulfilled' ? (posR.value||[]) : [];
-
-    // Live P/L = sum of openPnl across all open positions
-    const liveSum = positions.reduce((a,p) => a + parseFloat(p.openPnl ?? 0), 0);
-    const lpEl = $('live-pnl');
-    lpEl.textContent = (liveSum>=0?'+':'') + '$' + Math.abs(liveSum).toFixed(2);
-    lpEl.className = 's-val ' + pnlCls(liveSum);
-    $('live-pnl-sub').textContent = positions.length + ' open';
-    if(stats) $('active-sub').textContent = positions.length + ' active';
-
-    renderPositions(positions);
-
-    // ── History ─────────────────────────────────────────────────
-    const hist = histR.status==='fulfilled' ? (histR.value||[]) : [];
-    const isDry = rootR.status==='fulfilled'
-      ? rootR.value?.settings?.dryRun !== false
-      : true;
-    renderHistory(hist, isDry);
-
-    // ── Log ─────────────────────────────────────────────────────
-    if(logR.status==='fulfilled') renderLog((logR.value||[]).slice(0,100));
-
-  } catch(e){
-    $('sdot').className='dot off';
-    $('stxt').textContent='OFFLINE';
+    _preflightDone = true;
+    return true;
+  } catch (err) {
+    console.error("❌ Preflight threw:", err.message);
+    _preflightNextTry = Date.now() + 60_000;
+    return false;
   }
 }
 
-setInterval(refresh,3000);
-refresh();
+// ── Mark-to-market cache (read by dashboard) ────────────────────
+const liveMarks = new Map();
+export function getSportsMarks() { return liveMarks; }
 
+// ── Exits: settlement only — hold to close ──────────────────────
+async function processExits() {
+  const exits = [];
+  const mine = getAllActiveBets().filter(b => b.strategy === "SPORTS_ML");
 
-</script>
-</body>
-</html>
+  for (const bet of mine) {
+    const slug = bet.marketConditionId;
+
+    // Only exit path: market settlement
+    const settle = await getSettlement(slug);
+    if (settle !== null) {
+      const won = settle === 1;
+      const pnl = expiryPnl(bet, won);
+      const q   = (bet.marketQuestion || slug).replace(/^\[.*?\]\s*/, "").slice(0, 50);
+      const league = (bet.entryCoin || "SPORT").toUpperCase();
+
+      // Prominent settlement log — appears in dashboard System Log
+      if (won) {
+        console.log(`✅ WIN | ${league} | ${q}`);
+        console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Payout: +$${pnl.toFixed(2)} | Net P/L: +$${pnl.toFixed(2)}`);
+      } else {
+        console.log(`❌ LOSS | ${league} | ${q}`);
+        console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Lost: -$${bet.betSize.toFixed(2)} | Net P/L: -$${bet.betSize.toFixed(2)}`);
+      }
+
+      closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
+      liveMarks.delete(slug);
+      exits.push({ pnl, won, reason: "expiry", question: q, league });
+      continue;
+    }
+
+    // Not settled — mark-to-market for dashboard only, never exit early
+    const bbo = await getBBO(slug);
+    const bid = bbo?.bid ?? bbo?.last;
+    if (bid) {
+      const move = (bid - bet.entryPrice) / bet.entryPrice;
+      liveMarks.set(slug, { price: bid, pnl: +exitPnl(bet, bid).toFixed(2), movePct: move, ts: Date.now() });
+      console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | Δ${pct(move)} | holding to close | ${bet.marketQuestion?.slice(0, 40)}`);
+    } else {
+      console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} @ ${cents(bet.entryPrice)} | awaiting settlement | ${bet.marketQuestion?.slice(0, 40)}`);
+    }
+  }
+  return exits;
+}
+
+// ── Main scan ────────────────────────────────────────────────────
+export async function runScanCycle() {
+  const stats = getStats();
+  console.log(`\n── SPORTS SCAN ${new Date().toISOString()} ${DRY_RUN ? "[DRY]" : "[🔴 LIVE]"} ──`);
+
+  let markets;
+  try {
+    markets = await fetchSportsMoneylines();
+  } catch (err) {
+    console.error("polymarket.us fetch error:", err.message);
+    return { signals: null, exits: [], betsPlaced: 0 };
+  }
+
+  console.log(`📊 polymarket.us: ${markets.length} full-game moneylines`);
+
+  const exits = await processExits();
+
+  // ── Balance ──────────────────────────────────────────────────
+  let balance = getDryBalance();
+  if (!DRY_RUN) {
+    const ok = await ensureLiveReady();
+    if (!ok) {
+      console.log(`💰 Buying power: checking... | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+      const s = getStats();
+      console.log(`── +0 entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
+      return { signals: null, exits, betsPlaced: 0 };
+    }
+    try {
+      const bp = await getBuyingPower();
+      balance = bp.buyingPower;
+      console.log(`💰 Buying power: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+    } catch (err) {
+      console.error("⚠️ getBuyingPower failed:", err.message);
+      console.log(`💰 Buying power: unknown | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+    }
+  } else {
+    console.log(`💰 Paper: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+  }
+
+  // ── Entry candidates: favorites 60-70¢ ──────────────────────────
+  // polymarket-us.js already handles all time filtering.
+  // Here we ONLY filter by price range and reject already-ended markets.
+  const now = Date.now();
+
+  console.log(`  📋 Raw markets from fetch: ${markets.length} | checking price range ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+
+  const pool = markets
+    .map(m => ({ ...m, px: m.ask ?? m.est }))
+    .filter(m => {
+      if (!m.px || m.px < FAV_MIN || m.px > FAV_MAX) return false;
+      // Only reject if market is confirmed ended
+      if (m.endIso && new Date(m.endIso).getTime() < now - 3_600_000) return false;
+      return true;
+    })
+    // Sort: 1) live first 2) by price descending (strongest edge)
+    .sort((a, b) => {
+      const aLive = a.isLive ? 1 : 0;
+      const bLive = b.isLive ? 1 : 0;
+      if (bLive !== aLive) return bLive - aLive;
+      return b.px - a.px;
+    });
+
+  if (!pool.length) {
+    // Show what prices ARE available so we can debug range issues
+    const sample = markets.slice(0, 5).map(m => `${cents(m.ask ?? m.est)} ${m.question?.slice(0,25)}`).join(" | ");
+    console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} range. Sample prices: ${sample}`);
+    const s = getStats();
+    console.log(`── +0 entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
+    return { signals: null, exits, betsPlaced: 0 };
+  }
+
+  const liveCount = pool.filter(m => m.isLive).length;
+  const preCount  = pool.length - liveCount;
+  console.log(`🏆 ${pool.length} favorites (${liveCount} 🔴 live, ${preCount} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+  console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
+
+  // ── In dry run: skip BBO check, paper fill at est price ────────
+  let candidates;
+  if (DRY_RUN) {
+    candidates = pool.slice(0, 16).map(m => ({
+      ...m,
+      ask: m.ask ?? m.est ?? 0.65,
+      bid: m.bid ?? (m.est ? m.est - 0.02 : 0.63),
+    }));
+    console.log(`📗 ${candidates.length} dry candidates: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 24)}`).join(" · ")}`);
+  } else {
+    // Live: verify real orderbook (spread ≤ 6¢)
+    const checks = await Promise.all(pool.slice(0, 16).map(async c => {
+      const bbo = await getBBO(c.slug);
+      if (!bbo?.bid || !bbo?.ask) return null;
+      if (bbo.ask - bbo.bid > 0.06) return null;
+      return { ...c, ask: bbo.ask, bid: bbo.bid };
+    }));
+    candidates = checks.filter(Boolean);
+    if (candidates.length) {
+      console.log(`📗 ${candidates.length} verified: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 24)}`).join(" · ")}`);
+    } else {
+      console.log("[INFO] Books too thin/wide on all candidates this scan");
+    }
+  }
+
+  // ── Position dedup (live only) ─────────────────────────────────
+  let ownedSlugs = null;
+  if (!DRY_RUN) {
+    const positions = await getOpenPositions();
+    if (positions) {
+      ownedSlugs = new Set(
+        Object.entries(positions)
+          .filter(([, p]) => p.qtyBought > 0)
+          .map(([slug]) => slug)
+      );
+    } else {
+      console.log("  ⚠️ Could not verify live positions — skipping new entries to be safe");
+    }
+  }
+
+  // ── Entry loop ─────────────────────────────────────────────────
+  let betsPlaced = 0;
+  let attempts   = 0;
+  const MAX_ATTEMPTS = 12;
+
+  for (const m of candidates) {
+    if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
+    if (getAllActiveBets().length >= MAX_CONC) break;
+    if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
+    if (hasActiveBet(m.slug)) continue;
+    if (!DRY_RUN) {
+      if (ownedSlugs === null) continue;
+      if (ownedSlugs.has(m.slug)) {
+        console.log(`  ⏭ Already holding ${m.slug.slice(0, 24)} on Polymarket`);
+        continue;
+      }
+    }
+
+    let entryPrice = m.ask;
+    let betSize    = BET_SIZE;
+    let orderId    = `dry_${Date.now()}`;
+
+    if (!DRY_RUN) {
+      attempts++;
+      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
+      if (!r.filled) {
+        console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
+        continue;
+      }
+      entryPrice = r.fillPrice;
+      betSize    = +r.cost.toFixed(2);
+      orderId    = r.orderId;
+      balance   -= betSize;
+    } else {
+      balance -= betSize;
+    }
+
+    const league = m.league || "SPORT";
+    const game   = [m.question, m.subtitle].filter(Boolean).join(" — ");
+    recordBet({
+      market:             { conditionId: m.slug, question: `[${league}] ${game}`, endDateIso: m.endIso },
+      side:               "YES",
+      betSize,
+      edge:               0,
+      trueProbability:    entryPrice,
+      impliedProbability: entryPrice,
+      orderId,
+      entryPrice,
+      strategy:           "SPORTS_ML",
+      reasoning:          `⚽ ${league} moneyline favorite @ ${cents(entryPrice)} | ${game} | flat $${betSize} | hold to close${DRY_RUN ? "" : " | LIVE FOK fill"}`,
+      entryBtcPrice:      null,
+      entryCoin:          league,
+      sharpShooter:       false,
+      valueBet:           false,
+      strike:             null,
+      direction:          m.question.slice(0, 30),
+    });
+
+    betsPlaced++;
+    const payout = (betSize / entryPrice).toFixed(2);
+    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
+  }
+
+  const s = getStats();
+  console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
+  return { signals: null, exits, betsPlaced };
+}
