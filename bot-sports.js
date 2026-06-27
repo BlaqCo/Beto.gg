@@ -310,3 +310,4 @@ export async function runScanCycle() {
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
   return { signals: null, exits, betsPlaced };
 }
+
