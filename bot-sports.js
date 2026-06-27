@@ -190,11 +190,26 @@ export async function runScanCycle() {
     }));
     console.log(`📗 ${candidates.length} dry candidates: ${candidates.slice(0, 3).map(c => `${cents(c.ask)} ${c.question.slice(0, 24)}`).join(" · ")}`);
   } else {
-    // Live: verify real orderbook (spread ≤ 6¢)
+    // Live: verify real orderbook
+    // Tennis/esports markets are less liquid — allow up to 10¢ spread
+    // UFC/soccer/MLB etc: standard 6¢ max
     const checks = await Promise.all(pool.slice(0, 16).map(async c => {
       const bbo = await getBBO(c.slug);
       if (!bbo?.bid || !bbo?.ask) return null;
-      if (bbo.ask - bbo.bid > 0.06) return null;
+      const spread = bbo.ask - bbo.bid;
+      const league = (c.league || "").toUpperCase();
+      // Determine max spread by league
+      // Individual sports (tennis, UFC, combat) tend to have wider books
+      const isCombat  = ["UFC","MMA","BOXING","SPORT"].includes(league);
+      const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league);
+      const isEsports = ["ESPORTS"].includes(league);
+      const maxSpread = (isTennis || isEsports) ? 0.10
+                      : isCombat                ? 0.08
+                      :                           0.06;
+      if (spread > maxSpread) {
+        console.log(`  ⚠️ Spread too wide: ${(spread*100).toFixed(0)}¢ > ${maxSpread*100}¢ | ${c.question?.slice(0,35)}`);
+        return null;
+      }
       return { ...c, ask: bbo.ask, bid: bbo.bid };
     }));
     candidates = checks.filter(Boolean);
