@@ -631,6 +631,11 @@ export async function getOpenPositionsEnriched(stateBets = [], entryPriceCache =
       let entryPrice = null;
       let placedAt = null;
 
+      // avgPx from API is ground truth for entry price when available
+      if (!entryPrice && apiAvgPx && apiAvgPx > 0.05 && apiAvgPx < 0.99) {
+        entryPrice = +apiAvgPx.toFixed(4);
+      }
+
       // Cross-ref state bets — try multiple matching strategies
       const stateBet = stateBets.find(b => {
         const id = (b.marketConditionId || "").toLowerCase();
