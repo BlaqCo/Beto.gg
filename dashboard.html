@@ -324,22 +324,21 @@ function renderPositions(list){
     const q=cleanQ(rawQ).slice(0,50)||rawQ.slice(0,50);
     const tag=(p.category||sport(rawQ)).toUpperCase().slice(0,6)||'SPORT';
 
-    // costBasis = $ wagered (from API cost field)
-    const bet=parseFloat(p.costBasis??0);
-    // avgPrice = entry probability from state.js bet (0.67 = 67%)
-    const prob=parseFloat(p.avgPrice??0);
-    // payout = costBasis / entryPrice = $ if YES wins (from server)
-    const payout=p.payout!=null?parseFloat(p.payout):null;
-    // currentBid = live market price (0-1)
-    const curBid=parseFloat(p.currentBid??0);
-    // openPnl = (currentBid - entryPrice) × payout
-    const openPnl=parseFloat(p.openPnl??0);
+    const bet    = parseFloat(p.costBasis??0);
+    // avgPrice = entry probability — only show if reliable (came from state bet)
+    // If null/undefined it means state was reset and we don't know entry price
+    const prob   = (p.avgPrice!=null && p.avgPrice>0) ? parseFloat(p.avgPrice) : null;
+    // payout only valid if we have entry price
+    const payout = (p.payout!=null && prob!=null) ? parseFloat(p.payout) : null;
+    const curBid = parseFloat(p.currentBid??0);
+    // openPnl only valid if we have entry price for the math
+    const openPnl= (prob!=null && p.openPnl!=null) ? parseFloat(p.openPnl) : 0;
 
-    const betStr =bet  ?'$'+bet.toFixed(2)               :'—';
-    const probStr=prob ?Math.round(prob*100)+'%'          :'—';
-    const payStr =payout!=null?'$'+payout.toFixed(2)      :'—';
-    const bidStr =curBid?Math.round(curBid*100)+'¢'       :'—';
-    const pnlColor=pnlCls(openPnl);
+    const betStr  = bet   ? '$'+bet.toFixed(2)        : '—';
+    const probStr = prob  ? Math.round(prob*100)+'%'  : '—';
+    const payStr  = payout? '$'+payout.toFixed(2)     : '—';
+    const bidStr  = curBid? Math.round(curBid*100)+'¢': '—';
+    const pnlColor= pnlCls(openPnl);
     const ts=(p.placedAt||p.updateTime||'').slice(11,16)||'—';
 
     return `<div class="bet-card">
