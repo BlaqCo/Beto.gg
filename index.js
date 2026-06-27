@@ -370,7 +370,33 @@ app.get("/api/positions", async (req, res) => {
     }
     try {
       const stateBets = state.getAllBets ? state.getAllBets() : [];
-      const positions = await getOpenPositionsEnriched(stateBets);
+
+      // Build entry price cache from trade activities (keyed by marketSlug)
+      // This gives us real fill prices even after state resets
+      const entryPriceCache = {};
+      try {
+        let acts = _histCache.data;
+        if (!acts || Date.now() - _histCache.ts > 30_000) {
+          acts = await getTradeHistory({ limit: 500 });
+          if (acts.length) _histCache = { data: acts, ts: Date.now() };
+        }
+        if (acts) {
+          // For each BUY trade, record the fill price keyed by slug
+          acts.filter(a => a._type === "trade" && a.price && a.price > 0.05
+                        && (a.side === "BUY" || a.side === "" || !a.side))
+              .forEach(a => {
+                if (!entryPriceCache[a.marketSlug]) {
+                  entryPriceCache[a.marketSlug] = a.price;
+                }
+              });
+          const cached = Object.keys(entryPriceCache).length;
+          if (cached > 0) console.log(`📊 Entry price cache: ${cached} slugs`);
+        }
+      } catch(e) {
+        console.error("⚠️ Entry price cache build failed:", e.message);
+      }
+
+      const positions = await getOpenPositionsEnriched(stateBets, entryPriceCache);
       _posCache = { data: positions, ts: Date.now() };
       return res.json(positions);
     } catch (e) {
@@ -590,7 +616,7 @@ async function loadBots() {
     // Also load open positions on boot
     try {
       const stateBetsB = state.getAllBets ? state.getAllBets() : [];
-      const positions = await getOpenPositionsEnriched(stateBetsB);
+      const positions = await getOpenPositionsEnriched(stateBetsB, {});
       if (positions.length) {
         console.log(`📊 OPEN POSITIONS — ${positions.length} active`);
         positions.forEach(p => {
