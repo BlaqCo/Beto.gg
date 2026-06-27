@@ -273,14 +273,29 @@ export async function fetchSportsMoneylines() {
   for (const m of raw) {
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
-    if (!isGameMarket(m)) continue;
+    if (!isGameMarket(m)) {
+      // Log rejected WNBA/MLB/Tennis to diagnose misses
+      const qd = (m.question || m.title || "").toLowerCase();
+      if (/wnba|toronto|phoenix|mercury|valkyries|blue jays|rangers|yankees|dodgers|tennis|atp|wta|itf|challenger/i.test(qd)) {
+        const q2 = m.question || m.title || "";
+        const why = !q2 ? "no question"
+          : m.active === false ? "inactive"
+          : m.closed === true  ? "closed"
+          : m.resolved === true ? "resolved"
+          : /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1/i.test(q2) ? "SUB_PERIOD"
+          : /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|over\/under \d+ wins/i.test(q2) ? "SEASON_FUTURE"
+          : m.sportsMarketTypeV2 !== "MONEYLINE" && m.sportsMarketType !== "SPORTS_MARKET_TYPE_MONEYLINE" && !/vs\.?|at|will .+ win|will .+ (beat|defeat)/i.test(q2) ? "no GAME_VS"
+          : "category";
+        console.log(`  🔍 Rejected(${why}): ${q2.slice(0,50)}`);
+      }
+      continue;
+    }
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
     if (!est) {
-      // Log price extraction failures for baseball/basketball to debug
       const cat = (m.category || "").toLowerCase();
-      if (cat.includes("baseball") || cat.includes("basketball") || cat.includes("mlb") || cat.includes("nba")) {
+      if (cat.includes("baseball") || cat.includes("basketball") || cat.includes("mlb") || cat.includes("nba") || cat.includes("wnba") || cat.includes("tennis")) {
         console.log(`  ⚠️ No price: ${cat} | ${q.slice(0,50)} | ask=${JSON.stringify(m.bestAsk)} outP=${m.outcomePrices}`);
       }
       continue;
@@ -298,7 +313,7 @@ export async function fetchSportsMoneylines() {
     if (startMs) {
       const hoursOut = (startMs - now) / 3_600_000;
       // Must be live OR starting within 48h, and not ended >6h ago
-      if (hoursOut > 48 || hoursOut < -6) continue;
+      if (hoursOut > 48 || hoursOut < -12) continue; // allow up to 12h past start for long games
     } else {
       // No gameStartTime — only reject if market is already resolved/closed
       if (endMs && endMs < now - 3_600_000) continue; // ended >1h ago, skip
