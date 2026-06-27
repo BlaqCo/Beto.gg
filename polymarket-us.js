@@ -181,19 +181,37 @@ function isGameMarket(m) {
 
   // ✅ Strongest signal: sportsMarketTypeV2 = MONEYLINE
   if (m.sportsMarketTypeV2 === "MONEYLINE") return true;
-  // Also accept old field
   if (m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE") return true;
 
-  // Must look like a head-to-head matchup question
+  // Must look like a head-to-head matchup
   if (!GAME_VS.test(q)) return false;
 
-  // Must be sports category
+  // Category check — be very permissive
+  // Many markets have category="sports" or subcategory="WNBA"/"MLB" etc.
+  // Some have no category at all but still pass GAME_VS
   const cat = (m.category || "").toLowerCase();
   const sub = (m.subcategory || "").toLowerCase();
-  const isSports = ["sports","baseball","basketball","tennis","esports","soccer","football","hockey","wnba","nba","nfl","mlb","nhl","atp","wta","itf"].some(s => cat.includes(s) || sub.includes(s));
-  if (!isSports) return false;
+  const league = (m.league || "").toLowerCase();
+  const combined = cat + " " + sub + " " + league;
 
-  return true;
+  // Accept if ANY sports keyword present, OR if category is just "sports"
+  const SPORTS_KEYWORDS = ["sports","baseball","basketball","tennis","esports",
+    "soccer","football","hockey","wnba","nba","nfl","mlb","nhl",
+    "atp","wta","itf","cricket","volleyball","rugby","mma","ufc",
+    "boxing","golf","racing","cycling"];
+
+  const isSports = SPORTS_KEYWORDS.some(s => combined.includes(s));
+
+  // Also accept if question looks like a player/team matchup with no category
+  // (some markets have empty category but are clearly sports)
+  if (!isSports && !cat && !sub) {
+    // Accept if it has "vs" and looks like a sports name pattern
+    // e.g. "A. Nguyen vs. A. Vagramov" — two proper nouns with vs
+    const looksLikeSports = /^[A-Z][\w\s\.]+ vs\.? [A-Z][\w\s\.]+$/.test(q.trim());
+    if (looksLikeSports) return true;
+  }
+
+  return isSports;
 }
 
 // ── Main fetch ───────────────────────────────────────────────────
@@ -274,9 +292,9 @@ export async function fetchSportsMoneylines() {
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
     if (!isGameMarket(m)) {
-      // Log rejected WNBA/MLB/Tennis to diagnose misses
+      // Log rejected WNBA/MLB/Tennis/Esports to diagnose misses
       const qd = (m.question || m.title || "").toLowerCase();
-      if (/wnba|toronto|phoenix|mercury|valkyries|blue jays|rangers|yankees|dodgers|tennis|atp|wta|itf|challenger/i.test(qd)) {
+      if (/wnba|toronto|phoenix|mercury|valkyries|blue jays|rangers|yankees|dodgers|cubs|mets|brewers|reds|pirates|royals|white sox|tennis|atp|wta|itf|challenger|cs2|valorant|esport/i.test(qd)) {
         const q2 = m.question || m.title || "";
         const why = !q2 ? "no question"
           : m.active === false ? "inactive"
@@ -312,8 +330,9 @@ export async function fetchSportsMoneylines() {
 
     if (startMs) {
       const hoursOut = (startMs - now) / 3_600_000;
-      // Must be live OR starting within 48h, and not ended >6h ago
-      if (hoursOut > 48 || hoursOut < -12) continue; // allow up to 12h past start for long games
+      // Accept: live games (hoursOut < 0) or starting within 48h
+      // Reject: started more than 24h ago (game definitely over)
+      if (hoursOut > 48 || hoursOut < -24) continue;
     } else {
       // No gameStartTime — only reject if market is already resolved/closed
       if (endMs && endMs < now - 3_600_000) continue; // ended >1h ago, skip
@@ -637,9 +656,11 @@ export async function getOpenPositionsEnriched(stateBets = [], entryPriceCache =
       const cashValue = amtVal(p?.cashValue);
       const realized  = amtVal(p?.realized);
 
-      // Market metadata — field is "marketMetadata" per position sample
+      // avgPx: the actual average fill price from the API — most reliable source
+      const apiAvgPx = p?.avgPx != null ? parseFloat(p.avgPx) : null;
+
+      // Market metadata
       const meta = p?.marketMetadata || p?.market_metadata || {};
-      // Try multiple fields for question text
       let question = meta.title || meta.question || meta.name ||
                      p?.title || p?.question || null;
       let category = meta.category || p?.category || "";
