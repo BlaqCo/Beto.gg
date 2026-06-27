@@ -16,13 +16,13 @@ import { fetchSportsMoneylines, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 1;       // flat $1 per bet
-const BET_MIN       = 1;
+const BET_SIZE      = 5;       // flat $5 per bet
+const BET_MIN       = 5;
 const FAV_MIN       = 0.60;    // 60¢ minimum edge
 const FAV_MAX       = 0.70;    // skip near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 12;      // 12 concurrent slots
-const ENTRIES_SCAN  = 12;      // up to 12 entries per scan — fill all slots
+const MAX_CONC      = 10;      // 10 concurrent slots
+const ENTRIES_SCAN  = 10;      // up to 10 entries per scan
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
