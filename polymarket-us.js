@@ -506,16 +506,41 @@ export async function getTradeHistory({ limit = 500 } = {}) {
       // ACTIVITY_TYPE_TRADE — a buy or sell fill
       if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
         const t = a.trade;
-        const pl  = amtVal(t.realizedPnl) ?? 0;
+        const pl   = amtVal(t.realizedPnl) ?? 0;
         const cost = amtVal(t.costBasis) ?? amtVal(t.cost) ?? 0;
-        const price = amtVal(t.price) ?? 0;
-        const side = t.side || (cost > 0 ? "BUY" : "SELL");
+
+        // Price from aggressorExecution (fill price) or makerExecution
+        // aggressorExecution: { price: {value, currency}, quantity, ... }
+        const aggEx  = t.aggressorExecution || t.aggressor_execution || {};
+        const mkEx   = t.makerExecution     || t.maker_execution     || {};
+        const exPrice = amtVal(aggEx.price) ?? amtVal(mkEx.price) ?? amtVal(t.price) ?? null;
+
+        // Quantity from execution
+        const exQty = parseFloat(aggEx.quantity ?? aggEx.qty ?? mkEx.quantity ?? t.qtyDecimal ?? t.qty ?? 0);
+
+        // Side: aggressorExecution side or trade-level side
+        const rawSide = (aggEx.side || t.side || "").toUpperCase();
+        const side = rawSide || (cost > 0 && pl <= 0 ? "BUY" : "SELL");
+
+        // For a BUY: entryPrice = exPrice (the price you paid per contract)
+        // This is the reliable source — not cost/qty
+        const entryPrice = exPrice;
+
+        const slug = t.marketSlug || a.marketSlug || "";
+        const q    = t.marketTitle || t.question || t.marketSlug || "";
+        // Log first few trades to see full field structure
+        if (!getTradeHistory._logged || getTradeHistory._logged < 3) {
+          getTradeHistory._logged = (getTradeHistory._logged || 0) + 1;
+          console.log(`📋 Trade[${getTradeHistory._logged}]: ${slug.slice(0,30)} side=${side} price=${entryPrice} qty=${exQty} cost=${cost}`);
+          console.log(`📋   aggEx fields: ${JSON.stringify(Object.keys(aggEx))}`);
+          console.log(`📋   aggEx.price: ${JSON.stringify(aggEx.price)}`);
+        }
         return {
           _type:       "trade",
-          marketSlug:  t.marketSlug || a.marketSlug || "",
-          question:    t.marketTitle || t.question || t.marketSlug || "",
-          price,
-          qty:         parseFloat(t.qtyDecimal ?? t.qty ?? 0),
+          marketSlug:  slug,
+          question:    q,
+          price:       entryPrice,   // real fill price (0-1)
+          qty:         exQty,
           costBasis:   cost,
           realizedPnl: pl,
           side,
@@ -560,7 +585,7 @@ export async function getTradeHistory({ limit = 500 } = {}) {
 }
 
 
-export async function getOpenPositionsEnriched(stateBets = []) {
+export async function getOpenPositionsEnriched(stateBets = [], entryPriceCache = {}) {
   try {
     const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
     const data = await signedRequest("GET", "/v1/portfolio/positions");
@@ -627,6 +652,11 @@ export async function getOpenPositionsEnriched(stateBets = []) {
             entryPrice = derived;
             console.log(`  📊 bodDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
           }
+        }
+        // Try entryPriceCache from recent trade activities
+        if (!entryPrice && entryPriceCache[slug]) {
+          entryPrice = entryPriceCache[slug];
+          console.log(`  📊 CacheDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
         }
         if (!entryPrice) {
           console.log(`  ❌ No entry price: ${slug.slice(0,40)} cost=${costBasis} qty=${qty}`);
