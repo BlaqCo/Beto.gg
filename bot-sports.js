@@ -16,8 +16,8 @@ import { fetchSportsMoneylines, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 5;       // flat $5 per bet
-const BET_MIN       = 5;
+const BET_SIZE      = 3;       // flat $5 per bet
+const BET_MIN       = 3;
 const FAV_MIN       = 0.60;    // 60¢ minimum edge
 const FAV_MAX       = 0.70;    // skip near-decided games
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
