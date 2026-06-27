@@ -183,7 +183,7 @@ export async function runScanCycle() {
   // ── In dry run: skip BBO check, paper fill at est price ────────
   let candidates;
   if (DRY_RUN) {
-    candidates = pool.slice(0, 16).map(m => ({
+    candidates = pool.slice(0, 30).map(m => ({
       ...m,
       ask: m.ask ?? m.est ?? 0.65,
       bid: m.bid ?? (m.est ? m.est - 0.02 : 0.63),
@@ -193,21 +193,29 @@ export async function runScanCycle() {
     // Live: verify real orderbook
     // Tennis/esports markets are less liquid — allow up to 10¢ spread
     // UFC/soccer/MLB etc: standard 6¢ max
-    const checks = await Promise.all(pool.slice(0, 16).map(async c => {
+    const checks = await Promise.all(pool.slice(0, 30).map(async c => {
       const bbo = await getBBO(c.slug);
       if (!bbo?.bid || !bbo?.ask) return null;
       const spread = bbo.ask - bbo.bid;
       const league = (c.league || "").toUpperCase();
       // Determine max spread by league
       // Individual sports (tennis, UFC, combat) tend to have wider books
-      const isCombat  = ["UFC","MMA","BOXING","SPORT"].includes(league);
-      const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league);
-      const isEsports = ["ESPORTS"].includes(league);
-      const maxSpread = (isTennis || isEsports) ? 0.10
-                      : isCombat                ? 0.08
-                      :                           0.06;
+      // Detect sport from question text since league tag is often "SPORT" for everything
+      const qLow = (c.question || "").toLowerCase();
+      const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league)
+                     || /\batp\b|\bwta\b|\bitf\b|challenger|open\b|slam/i.test(qLow);
+      const isEsports = ["ESPORTS"].includes(league)
+                     || /esport|cs2|valorant|dota|legend/i.test(qLow);
+      const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(qLow);
+
+      // Spread limits — tennis in-play can have 10-15¢ spread naturally
+      const maxSpread = isTennis  ? 0.15
+                      : isEsports ? 0.12
+                      : isCombat  ? 0.10
+                      :             0.08;
+
       if (spread > maxSpread) {
-        console.log(`  ⚠️ Spread too wide: ${(spread*100).toFixed(0)}¢ > ${maxSpread*100}¢ | ${c.question?.slice(0,35)}`);
+        console.log(`  ⚠️ Spread too wide: ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ | ${c.question?.slice(0,35)}`);
         return null;
       }
       return { ...c, ask: bbo.ask, bid: bbo.bid };
