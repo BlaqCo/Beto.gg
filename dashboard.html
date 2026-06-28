@@ -70,6 +70,24 @@ body::before{
   font-family:var(--mono);font-size:9px;letter-spacing:2px;
   padding:5px 10px;border:1px solid var(--border-bright);
   background:var(--green-faint);color:var(--green-dim);
+  cursor:pointer;user-select:none;
+  transition:border-color .2s,box-shadow .2s,background .2s;
+  -webkit-appearance:none;appearance:none;
+}
+.status-pill:hover{
+  border-color:var(--green);
+  box-shadow:0 0 10px rgba(46,255,123,0.2);
+  background:rgba(46,255,123,0.08);
+}
+.status-pill:active{transform:scale(0.97)}
+.status-pill.offline{
+  border-color:rgba(255,69,96,0.35);
+  background:rgba(255,69,96,0.06);
+  color:rgba(255,69,96,0.7);
+}
+.status-pill.offline:hover{
+  border-color:var(--red);
+  box-shadow:0 0 10px rgba(255,69,96,0.2);
 }
 .status-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s ease-in-out infinite}
 .status-dot.off{background:var(--red);box-shadow:0 0 6px var(--red);animation:none}
@@ -324,12 +342,28 @@ canvas#pnl-chart{width:100%;height:100%}
   </div>
   <div class="hdr-right">
     <div class="clock" id="clock">—</div>
-    <div class="status-pill">
+    <button class="status-pill" id="power-btn" onclick="openPowerModal()" title="Toggle bot">
       <div class="status-dot" id="sdot"></div>
       <span id="stxt">CONNECTING</span>
-    </div>
+      <svg id="power-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;opacity:0.6"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+    </button>
   </div>
 </header>
+
+<!-- POWER MODAL -->
+<div id="power-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);align-items:center;justify-content:center">
+  <div style="background:#0a1209;border:1px solid var(--border-bright);padding:28px 24px;max-width:320px;width:90%;position:relative">
+    <!-- Warning stripe -->
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent,var(--green),transparent)" id="modal-stripe"></div>
+    <div style="font-family:var(--mono);font-size:7px;letter-spacing:3px;color:var(--green-dim);text-transform:uppercase;margin-bottom:14px" id="modal-title">CONFIRM ACTION</div>
+    <div style="font-family:var(--sans);font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px;line-height:1.4" id="modal-headline">Shut down bot?</div>
+    <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.7;margin-bottom:24px" id="modal-body">The bot will stop scanning and placing bets. Open positions will remain open until settled. You can restart at any time.</div>
+    <div style="display:flex;gap:10px">
+      <button onclick="closePowerModal()" style="flex:1;font-family:var(--mono);font-size:8px;letter-spacing:2px;padding:10px;background:transparent;border:1px solid var(--border-bright);color:var(--text-dim);cursor:pointer;transition:all .15s">CANCEL</button>
+      <button id="modal-confirm" onclick="confirmPower()" style="flex:1;font-family:var(--mono);font-size:8px;letter-spacing:2px;padding:10px;background:var(--green-faint);border:1px solid var(--green);color:var(--green);cursor:pointer;transition:all .15s;font-weight:600">CONFIRM</button>
+    </div>
+  </div>
+</div>
 
 <!-- HERO METRICS -->
 <div class="hero-metrics">
@@ -1035,9 +1069,88 @@ window.addEventListener('resize',()=>{
   startDotPulse(canvas,lx,ly,lastVal>=0?'#2eff7b':'#ff4560');
 });
 
-// Boot
-setInterval(refresh,4000);
-refresh();
+// ── Power toggle modal ────────────────────────────────────────────
+let _botRunning = true; // tracks current state
+
+function openPowerModal(){
+  const modal    = $('power-modal');
+  const headline = $('modal-headline');
+  const body     = $('modal-body');
+  const confirm  = $('modal-confirm');
+  const stripe   = $('modal-stripe');
+
+  if(_botRunning){
+    $('modal-title').textContent    = '⚠ CONFIRM SHUTDOWN';
+    headline.textContent            = 'Shut down the bot?';
+    body.textContent                = 'The bot will stop scanning and placing new bets. Any open positions will remain open until settled by the market. You can restart at any time.';
+    confirm.textContent             = 'SHUT DOWN';
+    confirm.style.background        = 'rgba(255,69,96,0.08)';
+    confirm.style.borderColor       = '#ff4560';
+    confirm.style.color             = '#ff4560';
+    stripe.style.background         = 'linear-gradient(90deg,transparent,#ff4560,transparent)';
+  } else {
+    $('modal-title').textContent    = '⚡ CONFIRM START';
+    headline.textContent            = 'Start the bot?';
+    body.textContent                = 'The bot will resume scanning markets and placing bets according to your configured strategy. Make sure your settings are correct before starting.';
+    confirm.textContent             = 'START BOT';
+    confirm.style.background        = 'rgba(46,255,123,0.06)';
+    confirm.style.borderColor       = '#2eff7b';
+    confirm.style.color             = '#2eff7b';
+    stripe.style.background         = 'linear-gradient(90deg,transparent,#2eff7b,transparent)';
+  }
+
+  modal.style.display = 'flex';
+  // Prevent body scroll while modal open
+  document.body.style.overflow = 'hidden';
+}
+
+function closePowerModal(){
+  $('power-modal').style.display = 'none';
+  document.body.style.overflow   = '';
+}
+
+async function confirmPower(){
+  closePowerModal();
+  const btn  = $('power-btn');
+  const dot  = $('sdot');
+  const stxt = $('stxt');
+
+  // Optimistic UI update
+  _botRunning = !_botRunning;
+
+  if(_botRunning){
+    dot.className  = 'status-dot';
+    stxt.textContent = 'ONLINE';
+    btn.className    = 'status-pill';
+  } else {
+    dot.className  = 'status-dot off';
+    stxt.textContent = 'OFFLINE';
+    btn.className    = 'status-pill offline';
+  }
+
+  // Call backend — POST /api/bot/toggle
+  // Your index.js should handle this: req.body.running = true/false
+  // then call bot.start() or bot.stop() accordingly
+  try {
+    await fetch('/api/bot/toggle', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({running: _botRunning})
+    });
+  } catch(e){
+    // Silently fail — status will self-correct on next poll
+  }
+}
+
+// Close modal on backdrop click
+$('power-modal').addEventListener('click', function(e){
+  if(e.target === this) closePowerModal();
+});
+
+// Close on Escape key
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape') closePowerModal();
+});
 
 // ── Chart drag-to-inspect ─────────────────────────────────────────
 (function(){
