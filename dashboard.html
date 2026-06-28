@@ -70,24 +70,6 @@ body::before{
   font-family:var(--mono);font-size:9px;letter-spacing:2px;
   padding:5px 10px;border:1px solid var(--border-bright);
   background:var(--green-faint);color:var(--green-dim);
-  cursor:pointer;user-select:none;
-  transition:border-color .2s,box-shadow .2s,background .2s;
-  -webkit-appearance:none;appearance:none;
-}
-.status-pill:hover{
-  border-color:var(--green);
-  box-shadow:0 0 10px rgba(46,255,123,0.2);
-  background:rgba(46,255,123,0.08);
-}
-.status-pill:active{transform:scale(0.97)}
-.status-pill.offline{
-  border-color:rgba(255,69,96,0.35);
-  background:rgba(255,69,96,0.06);
-  color:rgba(255,69,96,0.7);
-}
-.status-pill.offline:hover{
-  border-color:var(--red);
-  box-shadow:0 0 10px rgba(255,69,96,0.2);
 }
 .status-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s ease-in-out infinite}
 .status-dot.off{background:var(--red);box-shadow:0 0 6px var(--red);animation:none}
@@ -1036,16 +1018,6 @@ window.addEventListener('resize',()=>{
   const {lx,ly}=drawCurve(ctx,chartData,W,H,coords,1);
   const lastVal=chartData[chartData.length-1];
   startDotPulse(canvas,lx,ly,lastVal>=0?'#2eff7b':'#ff4560');
-});
-
-  } catch(e){
-    // Silently fail — status will self-correct on next poll
-  }
-}
-
-// Close modal on backdrop click
-
-document.addEventListener('keydown', e=>{
 });
 
 // ── Chart drag-to-inspect ─────────────────────────────────────────
