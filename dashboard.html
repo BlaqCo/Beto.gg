@@ -961,7 +961,12 @@ let _chartDrawn = false;
 
 async function refresh(){
   try{
-    const [logR, posR, histR, statsR, mktR] = await Promise.allSettled([
+    const [rootR, logR, posR, histR, statsR, mktR] = await Promise.allSettled([
+      fetch('/').then(r=>{
+        const ct = r.headers.get('content-type')||'';
+        if(ct.includes('application/json')) return r.json();
+        return r.json().catch(()=>null);
+      }),
       fetch('/log').then(r=>r.json()),
       fetch('/api/positions').then(r=>r.json()),
       fetch('/api/history').then(r=>r.json()),
@@ -969,50 +974,50 @@ async function refresh(){
       fetch('/markets').then(r=>r.json()),
     ]);
 
-    // Mark ONLINE as long as stats endpoint responded
-    const connected = statsR.status==='fulfilled';
-    if(connected && _botRunning){
+    // Mark ONLINE if any data endpoint responded
+    const anyOk = [logR,posR,histR,statsR,mktR].some(r=>r.status==='fulfilled');
+    if(anyOk && _botRunning){
       $('sdot').className      = 'status-dot';
       $('stxt').textContent    = 'ONLINE';
       $('power-btn').className = 'status-pill';
-    } else if(!connected){
+    } else if(!anyOk){
       throw new Error('no connection');
     }
 
-    // ── Stats — balance + record + win rate ───────────────────────
-    if(statsR.status==='fulfilled' && statsR.value){
-      const st    = statsR.value;
-      const isDry = st.dryRun !== false;
+    // ── Balance from root (original pattern) or fallback to stats ─
+    const root = (rootR.status==='fulfilled' && rootR.value && typeof rootR.value==='object') ? rootR.value : null;
+    const st   = (statsR.status==='fulfilled' && statsR.value) ? statsR.value : null;
 
-      // Balance
-      const bp = isDry
-        ? parseFloat(st.dryBalance ?? st.balance ?? 0)
-        : parseFloat(st.liveBalance ?? st.buyingPower ?? st.balance ?? 0);
-      const balEl = $('balance');
-      balEl.textContent = '$' + bp.toFixed(2);
-      balEl.className   = 'metric-value ' + (isDry ? 'c-yellow' : 'c-blue');
-      $('bal-sub').textContent = isDry ? 'paper balance' : 'polymarket';
+    // Balance — root.stats has it, or top-level stats
+    const s    = root?.stats || st || {};
+    const isDry = root?.settings?.dryRun !== false;
+    const bp   = isDry
+      ? parseFloat(s.dryBalance ?? s.balance ?? 0)
+      : parseFloat(s.liveBalance ?? s.buyingPower ?? s.balance ?? 0);
+    const balEl = $('balance');
+    balEl.textContent = '$' + bp.toFixed(2);
+    balEl.className   = 'metric-value ' + (isDry ? 'c-yellow' : 'c-blue');
+    $('bal-sub').textContent = isDry ? 'paper balance' : 'polymarket';
 
-      // P/L
-      const totalPnl = parseFloat(st.totalPnl ?? 0);
-      const pnlEl    = $('pnl');
-      pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
-      pnlEl.className   = 'metric-value ' + pnlCls(totalPnl);
-      $('pnl-sub').textContent = 'settled bets';
+    // P/L
+    const totalPnl = parseFloat(s.totalPnl ?? 0);
+    const pnlEl = $('pnl');
+    pnlEl.textContent = (totalPnl>=0?'+':'')+'$'+Math.abs(totalPnl).toFixed(2);
+    pnlEl.className   = 'metric-value '+pnlCls(totalPnl);
+    $('pnl-sub').textContent = 'settled bets';
 
-      // Record + win rate
-      const w = st.wins || 0, l = st.losses || 0, total = w + l;
-      $('record').textContent       = w + 'W / ' + l + 'L';
-      $('win-rate').textContent     = total > 0 ? Math.round(w / total * 100) + '%' : '—%';
-      $('win-rate').className       = 'sm-value ' + (total > 0 && w / total >= 0.5 ? 'c-green' : 'c-neutral');
-      $('win-rate-sub').textContent = 'of ' + total + ' settled';
+    // Record + win rate
+    const w = s.wins||0, l = s.losses||0, total = w+l;
+    $('record').textContent       = w+'W / '+l+'L';
+    $('win-rate').textContent     = total>0 ? Math.round(w/total*100)+'%' : '—%';
+    $('win-rate').className       = 'sm-value '+(total>0&&w/total>=0.5?'c-green':'c-neutral');
+    $('win-rate-sub').textContent = 'of '+total+' settled';
 
-      // Avg bet
-      const waged  = parseFloat(st.totalWagered ?? 0);
-      const avgBet = st.totalBets > 0 ? waged / st.totalBets : 0;
-      $('avg-bet').textContent          = st.totalBets > 0 ? '$' + avgBet.toFixed(2) : '$—';
-      $('total-wagered-sub').textContent = '$' + waged.toFixed(0) + ' total wagered';
-    }
+    // Avg bet
+    const waged  = parseFloat(s.totalWagered??0);
+    const avgBet = s.totalBets>0 ? waged/s.totalBets : 0;
+    $('avg-bet').textContent          = s.totalBets>0 ? '$'+avgBet.toFixed(2) : '$—';
+    $('total-wagered-sub').textContent = '$'+waged.toFixed(0)+' total wagered';
 
     // Positions
     const positions=posR.status==='fulfilled'?(posR.value||[]):[];
