@@ -243,14 +243,14 @@ canvas#pnl-chart{width:100%;height:100%}
 /* ── Log ── */
 .log-section{border:1px solid var(--border);background:var(--surface)}
 .log-body{
-  height:200px;overflow-y:auto;padding:10px 14px;
-  font-family:var(--mono);
+  height:160px;overflow-y:auto;overflow-x:hidden;padding:6px 10px;
+  font-family:var(--mono);font-size:7px;line-height:1.6;
 }
 .log-body::-webkit-scrollbar{width:2px}
 .log-body::-webkit-scrollbar-thumb{background:var(--border-bright)}
-.log-line{display:flex;gap:4px;line-height:1.3;margin-bottom:0}
-.log-ts{font-size:3.5px;color:var(--text-muted);flex-shrink:0;padding-top:1px;letter-spacing:0;min-width:34px}
-.log-msg{font-size:4.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log-line{display:flex;gap:6px;min-height:0;overflow:hidden}
+.log-ts{font-size:7px;color:var(--text-muted);flex-shrink:0;white-space:nowrap;opacity:0.5}
+.log-msg{font-size:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;flex:1;min-width:0}
 .log-ok{color:var(--green)}
 .log-err{color:var(--red)}
 .log-warn{color:var(--yellow)}
@@ -911,7 +911,9 @@ function renderLog(logs){
   if(!logs||!logs.length) return;
   el.innerHTML=[...logs].reverse().map(l=>{
     const ts=(l.ts||'').slice(11,19)||'--:--:--';
-    const msg='> '+(l.msg||'').slice(0,120);
+    const raw='> '+(l.msg||'').slice(0,160);
+    // Strip emoji — they force full-size fallback fonts regardless of CSS font-size
+    const msg=raw.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]/gu,'').replace(/\s{2,}/g,' ').trim();
     const cls='log-'+(l.type||'info');
     return `<div class="log-line"><span class="log-ts">[${ts}]</span><span class="${cls}">${msg}</span></div>`;
   }).join('');
