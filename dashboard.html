@@ -1133,6 +1133,10 @@ window.addEventListener('resize',()=>{
   wrap.addEventListener('mouseleave',  hide);
   wrap.style.cursor = 'crosshair';
 })();
+
+// ── Boot — START POLLING ──────────────────────────────────────────
+refresh();
+setInterval(refresh, 4000);
 </script>
 </body>
 </html>
