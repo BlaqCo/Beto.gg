@@ -227,36 +227,46 @@ export async function fetchSportsMoneylines() {
   // gameStartTime via endDateMin/endDateMax
   // volumeNumMin to filter out dead markets
   const now = Date.now();
-  const in12h = new Date(now + 12 * 3_600_000).toISOString();
-  const BASE = `${GATEWAY}/v1/markets?active=true&closed=false&archived=false`;
+
+  // NOTE: We deliberately use TWO bases:
+  // - ACTIVE: active=true&closed=false — normal upcoming/open markets
+  // - LIVE:   active=true ONLY (no closed filter) — in-play markets where
+  //   Polymarket US sometimes flips `closed` mid-game. This is the key to
+  //   catching live tennis/MLB/WNBA/esports the offset sweep was missing.
+  const ACTIVE = `${GATEWAY}/v1/markets?active=true&closed=false&archived=false`;
+  const LIVE   = `${GATEWAY}/v1/markets?active=true&archived=false`;
+  const ANY    = `${GATEWAY}/v1/markets?archived=false`;
+
+  // Per-sport tag sweeps — moneyline-type tag returns 0, so we fetch by sport.
+  const SPORT_TAGS = ["MLB","WNBA","NBA","NFL","NHL","Tennis","Esports",
+                      "CS2","Valorant","Soccer","UFC","MMA","Cricket","Golf"];
 
   const urls = [
-    // ✅ Primary: official moneyline filter (game winners only)
-    `${BASE}&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE&limit=200`,
-    `${BASE}&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE&limit=200&offset=200`,
+    // ── LIVE in-play markets (no closed filter, ordered to surface live) ──
+    `${LIVE}&categories=sports&limit=200&orderBy=gameStartTime&orderDirection=desc`,
+    `${LIVE}&categories=sports&limit=200&orderBy=volume24hr&orderDirection=desc`,
+    `${LIVE}&categories=sports&limit=200&offset=0`,
+    `${LIVE}&categories=sports&limit=200&offset=200`,
+    `${LIVE}&categories=sports&limit=200&offset=400`,
+    `${LIVE}&limit=200&orderBy=gameStartTime&orderDirection=desc`,
 
-    // ✅ Sports category with moneyline (catches everything tagged sports)
-    `${BASE}&categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE&limit=200`,
+    // ── Per-sport tag fetches (most reliable for in-play games) ──
+    ...SPORT_TAGS.map(t => `${LIVE}&tags=${encodeURIComponent(t)}&limit=100`),
+    ...SPORT_TAGS.map(t => `${ACTIVE}&tags=${encodeURIComponent(t)}&limit=100`),
 
-    // ✅ Live games specifically (no endDateMin so we catch currently live)
-    `${BASE}&categories=sports&limit=200&orderBy=gameStartTime&orderDirection=asc`,
+    // ── Standard active/upcoming sweep ──
+    `${ACTIVE}&categories=sports&limit=200&offset=0`,
+    `${ACTIVE}&categories=sports&limit=200&offset=200`,
+    `${ACTIVE}&categories=sports&limit=200&offset=400`,
+    `${ACTIVE}&categories=sports&volumeNumMin=50&limit=200&orderBy=volume24hr&orderDirection=desc`,
 
-    // ✅ Broad sports sweep paginated — catches WNBA, Tennis, Esports
-    `${BASE}&categories=sports&limit=200&offset=0`,
-    `${BASE}&categories=sports&limit=200&offset=200`,
-    `${BASE}&categories=sports&limit=200&offset=400`,
-
-    // ✅ High volume filter — active liquid markets
-    `${BASE}&categories=sports&volumeNumMin=100&limit=200&orderBy=volume24hr&orderDirection=desc`,
-
-    // ✅ Broad offset sweep — catches anything not in sports category
-    `${BASE}&limit=200&offset=0`,
-    `${BASE}&limit=200&offset=200`,
-    `${BASE}&limit=200&offset=400`,
-    `${BASE}&limit=200&offset=600`,
-    `${BASE}&limit=200&offset=800`,
-    `${BASE}&limit=200&offset=1000`,
-    `${BASE}&limit=200&offset=1200`,
+    // ── Broad offset sweep across everything ──
+    `${ACTIVE}&limit=200&offset=0`,
+    `${ACTIVE}&limit=200&offset=200`,
+    `${ACTIVE}&limit=200&offset=400`,
+    `${ACTIVE}&limit=200&offset=600`,
+    `${ACTIVE}&limit=200&offset=800`,
+    `${ACTIVE}&limit=200&offset=1000`,
   ];
 
   const results = await Promise.allSettled(
@@ -284,6 +294,27 @@ export async function fetchSportsMoneylines() {
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
   console.log(`📡 [sports API] ${raw.length} unique markets | ${sportsCatCount} sports-cat | ${moneylineCount} moneyline-tagged`);
+
+  // ── RAW DIAGNOSTIC: dump the FULL field shape of markets we KNOW are live ──
+  // This reveals exactly what active/closed/sportsMarketTypeV2/gameStartTime/
+  // category look like for in-play games, so we stop guessing.
+  const liveTeamRe = /white sox|royals|reds|pirates|cubs|mets|brewers|blue jays|astros|rangers|phoenix|mercury|toronto|valkyries|nguyen|vagramov|micic|aksu|ahn|acend|echo|wnba|cs2|valorant/i;
+  const diagSample = raw.filter(m => liveTeamRe.test((m.question||m.title||"") + " " + (m.slug||""))).slice(0, 3);
+  if (diagSample.length) {
+    for (const m of diagSample) {
+      console.log(`🔬 RAW LIVE MKT: ${JSON.stringify({
+        slug: m.slug, title: m.title || m.question,
+        active: m.active, closed: m.closed, archived: m.archived, resolved: m.resolved,
+        cat: m.category, sub: m.subcategory, league: m.league,
+        smtV2: m.sportsMarketTypeV2, smt: m.sportsMarketType,
+        gameStart: m.gameStartTime, startDate: m.startDate, endDate: m.endDate,
+        bestAsk: m.bestAsk, bestBid: m.bestBid, outcomePrices: m.outcomePrices,
+        marketSides: m.marketSides ? "present" : "absent"
+      }).slice(0, 500)}`);
+    }
+  } else {
+    console.log(`🔬 No known live teams found in ${raw.length} fetched markets — live markets are NOT being returned by the API endpoints.`);
+  }
 
   // ── Build output ─────────────────────────────────────────────
   const out = [];
