@@ -970,13 +970,34 @@ async function refresh(){
       fetch('/markets').then(r=>r.json()),
     ]);
 
-    $('sdot').className='status-dot';
-    $('stxt').textContent='ONLINE';
+    // Connection dot — only update text/dot if bot is running
+    if(_botRunning){
+      $('sdot').className  = 'status-dot';
+      $('stxt').textContent = 'ONLINE';
+      $('power-btn').className = 'status-pill';
+    }
 
     // Root — balance + mode
     if(rootR.status==='fulfilled'){
       const root  = rootR.value;
       const isDry = root.settings?.dryRun!==false;
+      // Sync bot running state from server
+      const serverRunning = root.botRunning !== false;
+      if(serverRunning !== _botRunning){
+        _botRunning = serverRunning;
+        const btn = $('power-btn');
+        const dot = $('sdot');
+        const stxt = $('stxt');
+        if(_botRunning){
+          dot.className  = 'status-dot';
+          stxt.textContent = 'ONLINE';
+          btn.className  = 'status-pill';
+        } else {
+          dot.className  = 'status-dot off';
+          stxt.textContent = 'OFFLINE';
+          btn.className  = 'status-pill offline';
+        }
+      }
 
       const s  = root.stats||{};
       const bp = isDry
@@ -1039,6 +1060,7 @@ async function refresh(){
   } catch(e){
     $('sdot').className='status-dot off';
     $('stxt').textContent='OFFLINE';
+    $('power-btn').className='status-pill offline';
   }
 }
 
