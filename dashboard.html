@@ -928,7 +928,7 @@ let _chartDrawn = false;
 async function refresh(){
   try{
     const [rootR, logR, posR, histR, statsR, mktR] = await Promise.allSettled([
-      fetch('/').then(r=>r.json()),
+      fetch('/').then(r=>r.json()).catch(()=>null),
       fetch('/log').then(r=>r.json()),
       fetch('/api/positions').then(r=>r.json()),
       fetch('/api/history').then(r=>r.json()),
@@ -939,40 +939,57 @@ async function refresh(){
     $('sdot').className   = 'status-dot';
     $('stxt').textContent = 'ONLINE';
 
-    if(rootR.status==='fulfilled' && rootR.value){
-      const root  = rootR.value;
-      const isDry = root.settings?.dryRun !== false;
-      const s     = root.stats || {};
-      const bp    = isDry ? parseFloat(s.dryBalance??0) : parseFloat(s.liveBalance??s.buyingPower??0);
-      const balEl = $('balance');
-      balEl.textContent = '$'+bp.toFixed(2);
-      balEl.className   = 'metric-value '+(isDry?'c-yellow':'c-blue');
-      $('bal-sub').textContent = isDry?'paper balance':'polymarket';
-    }
+    // Root — try / first, it may return JSON with stats nested inside
+    const root = (rootR.status==='fulfilled' && rootR.value && typeof rootR.value==='object') ? rootR.value : {};
+    // Stats — either from /api/stats or nested in root
+    const st = (statsR.status==='fulfilled' && statsR.value && typeof statsR.value==='object')
+      ? statsR.value
+      : (root.stats || root);
 
-    if(statsR.status==='fulfilled' && statsR.value){
-      const st = statsR.value;
-      const totalPnl = parseFloat(st.totalPnl??0);
-      const pnlEl = $('pnl');
-      pnlEl.textContent = (totalPnl>=0?'+':'')+'$'+Math.abs(totalPnl).toFixed(2);
-      pnlEl.className   = 'metric-value '+pnlCls(totalPnl);
-      $('pnl-sub').textContent = 'settled bets';
-      const w=st.wins||0,l=st.losses||0,total=w+l;
-      $('record').textContent       = w+'W / '+l+'L';
-      $('win-rate').textContent     = total>0?Math.round(w/total*100)+'%':'—%';
-      $('win-rate').className       = 'sm-value '+(total>0&&w/total>=0.5?'c-green':'c-neutral');
-      $('win-rate-sub').textContent = 'of '+total+' settled';
-      const waged=parseFloat(st.totalWagered??0);
-      const avgBet=st.totalBets>0?waged/st.totalBets:0;
-      $('avg-bet').textContent           = st.totalBets>0?'$'+avgBet.toFixed(2):'$—';
-      $('total-wagered-sub').textContent = '$'+waged.toFixed(0)+' total wagered';
-    }
+    const isDry = root.settings?.dryRun !== false;
 
-    const positions=posR.status==='fulfilled'?(posR.value||[]):[];
+    // Balance
+    const bp = isDry
+      ? parseFloat(st.dryBalance ?? root.stats?.dryBalance ?? 0)
+      : parseFloat(st.liveBalance ?? st.buyingPower ?? root.stats?.liveBalance ?? root.stats?.buyingPower ?? 0);
+    const balEl = $('balance');
+    balEl.textContent = '$'+bp.toFixed(2);
+    balEl.className   = 'metric-value '+(isDry?'c-yellow':'c-blue');
+    $('bal-sub').textContent = isDry?'paper balance':'polymarket';
+
+    // P/L
+    const totalPnl = parseFloat(st.totalPnl ?? st.pnl ?? 0);
+    const pnlEl = $('pnl');
+    pnlEl.textContent = (totalPnl>=0?'+':'')+'$'+Math.abs(totalPnl).toFixed(2);
+    pnlEl.className   = 'metric-value '+pnlCls(totalPnl);
+    $('pnl-sub').textContent = 'settled bets';
+
+    // Record + win rate
+    const w=st.wins||0, l=st.losses||0, total=w+l;
+    $('record').textContent       = w+'W / '+l+'L';
+    $('win-rate').textContent     = total>0?Math.round(w/total*100)+'%':'—%';
+    $('win-rate').className       = 'sm-value '+(total>0&&w/total>=0.5?'c-green':'c-neutral');
+    $('win-rate-sub').textContent = 'of '+total+' settled';
+
+    // Avg bet
+    const waged   = parseFloat(st.totalWagered ?? st.wagered ?? 0);
+    const avgBet  = st.totalBets>0 ? waged/st.totalBets : 0;
+    $('avg-bet').textContent           = st.totalBets>0?'$'+avgBet.toFixed(2):'$—';
+    $('total-wagered-sub').textContent = '$'+waged.toFixed(0)+' total wagered';
+
+    // Open P/L — from positions or stats
+    const openPnl = parseFloat(st.openPnl ?? 0);
+    const openEl  = $('open-pnl');
+    openEl.textContent = (openPnl>=0?'+':'')+'$'+Math.abs(openPnl).toFixed(2);
+    openEl.className   = 'metric-value '+pnlCls(openPnl);
+
+    // Positions
+    const positions = posR.status==='fulfilled'?(posR.value||[]):[];
     renderPositions(positions);
 
-    const hist=histR.status==='fulfilled'?(histR.value||[]):[];
-    const hHash=hist.length+'-'+(hist[0]?.createTime||'')+(hist[hist.length-1]?.createTime||'');
+    // History
+    const hist  = histR.status==='fulfilled'?(histR.value||[]):[];
+    const hHash = hist.length+'-'+(hist[0]?.createTime||'')+(hist[hist.length-1]?.createTime||'');
     if(hHash!==_histHash){
       _histHash=hHash;
       renderHistory(hist);
@@ -988,8 +1005,8 @@ async function refresh(){
     if(logR.status==='fulfilled') renderLog((logR.value||[]).slice(0,100));
 
   } catch(e){
-    $('sdot').className='status-dot off';
-    $('stxt').textContent='OFFLINE';
+    $('sdot').className   = 'status-dot off';
+    $('stxt').textContent = 'OFFLINE';
   }
 }
 
