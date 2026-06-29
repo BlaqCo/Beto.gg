@@ -313,13 +313,9 @@ export async function fetchSportsMoneylines() {
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
-    if (!est) {
-      const cat = (m.category || "").toLowerCase();
-      if (cat.includes("baseball") || cat.includes("basketball") || cat.includes("mlb") || cat.includes("nba") || cat.includes("wnba") || cat.includes("tennis")) {
-        console.log(`  ⚠️ No price: ${cat} | ${q.slice(0,50)} | ask=${JSON.stringify(m.bestAsk)} outP=${m.outcomePrices}`);
-      }
-      continue;
-    }
+    // Don't reject markets without prices — market list may not populate prices
+    // Bot's scan loop will fetch BBO and check if edge meets requirements
+    // Use est for fallback display/sorting, default to 0.50 if missing
 
     // Time gate:
     // - Markets from LIVE endpoint: NO time filtering (trust Polymarket, it's returning active markets)
@@ -351,9 +347,10 @@ export async function fetchSportsMoneylines() {
     const isLive    = source.isLiveEndpoint || (startMs && startMs <= now);
     const hoursUntil = isLive ? 0 : (startMs ? Math.round((startMs - now) / 3_600_000 * 10) / 10 : null);
 
-    // Compute ask/bid from available fields
-    const ask = amountVal(m.bestAsk) ?? est;
-    const bid = amountVal(m.bestBid) ?? (est - 0.02 > 0 ? est - 0.02 : null);
+    // Compute ask/bid from available fields (est may be null)
+    const displayPrice = est ?? 0.50; // default for sorting/display
+    const ask = est ?? amountVal(m.bestAsk) ?? 0.50;
+    const bid = amountVal(m.bestBid) ?? (est && est - 0.02 > 0 ? est - 0.02 : 0.48);
 
     out.push({
       slug, question: q,
