@@ -308,6 +308,12 @@ export async function fetchSportsMoneylines() {
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
     if (!isGameMarket(m)) {
+      // DEBUG: log why markets are rejected
+      const smtV2 = (m.sportsMarketTypeV2 || "").trim().toUpperCase();
+      const smt = (m.sportsMarketType || m.smt || "").trim().toUpperCase();
+      if (out.length < 3) { // only log first 3 rejections to avoid spam
+        console.log(`  ❌ REJECTED: ${m.title?.slice(0,40)} | active=${m.active} resolved=${m.resolved} smt=${smtV2}||${smt}`);
+      }
       continue;
     }
 
