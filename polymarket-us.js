@@ -175,7 +175,9 @@ const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|n
 
 function isGameMarket(m) {
   const q = (m.question || m.title || "").trim();
-  if (!q || m.active === false || m.closed === true || m.resolved === true) return false;
+  if (!q || m.active === false || m.resolved === true) return false;
+  // NOTE: Polymarket US returns active:true, closed:true on live tradeable markets.
+  // Do NOT filter by closed field — it's unreliable. active:true is the source of truth.
   if (SUB_PERIOD.test(q)) return false;
   if (SEASON_FUTURE.test(q)) return false;
 
@@ -316,7 +318,7 @@ export async function fetchSportsMoneylines() {
     console.log(`🔬 No known live teams found in ${raw.length} fetched markets — live markets are NOT being returned by the API endpoints.`);
   }
 
-  // ── Build output ─────────────────────────────────────────────
+  // ── Build output ─────────────────────────────────────────
   const out = [];
 
   for (const m of raw) {
@@ -329,11 +331,10 @@ export async function fetchSportsMoneylines() {
         const q2 = m.question || m.title || "";
         const why = !q2 ? "no question"
           : m.active === false ? "inactive"
-          : m.closed === true  ? "closed"
           : m.resolved === true ? "resolved"
-          : /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1/i.test(q2) ? "SUB_PERIOD"
+          : /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1/i.test(q2) ? "SUB_PERIOD"
           : /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|over\/under \d+ wins/i.test(q2) ? "SEASON_FUTURE"
-          : m.sportsMarketTypeV2 !== "MONEYLINE" && m.sportsMarketType !== "SPORTS_MARKET_TYPE_MONEYLINE" && !/vs\.?|at|will .+ win|will .+ (beat|defeat)/i.test(q2) ? "no GAME_VS"
+          : m.sportsMarketTypeV2 !== "MONEYLINE" && m.sportsMarketType !== "SPORTS_MARKET_TYPE_MONEYLINE" && !/vs\.?|at|will .+ win|will .+ (beat|defeat)/i.test(q2) ? "no GAME_VS"
           : "category";
         console.log(`  🔍 Rejected(${why}): ${q2.slice(0,50)}`);
       }
