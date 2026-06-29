@@ -187,25 +187,16 @@ export async function runScanCycle() {
     console.log(`  Top: ${candidates.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
     console.log(`📗 ${candidates.length} dry candidates`);
   } else {
-    // Use results from BBO fetch above
-
-    const pool = bboResults
-      .filter(c => c && c.px >= FAV_MIN && c.px <= FAV_MAX)
-      .sort((a, b) => {
-        if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
-        return b.px - a.px;
-      });
-
-    const lc = pool.filter(m => m.isLive).length;
-    if (pool.length) {
-      console.log(`🏆 ${pool.length} favorites (${lc} 🔴 live, ${pool.length-lc} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
-      console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
-      console.log(`📗 ${pool.length} verified: ${pool.slice(0,3).map(c => `${cents(c.ask)} ${c.question.slice(0,24)}`).join(" · ")}`);
+    // FORCE: try to place a bet on the FIRST market, regardless of price
+    // Just to test if betting works at all
+    const firstMarket = bboResults.find(c => c);
+    if (firstMarket) {
+      console.log(`🔥 FORCE BET TEST: attempting bet on ${firstMarket.question?.slice(0,40)} @ ${cents(firstMarket.ask)}`);
+      candidates = [firstMarket];
     } else {
-      const sample = candidatePool.slice(0,5).map(m=>`${cents(m.ask??m.est)} ${m.question?.slice(0,20)}`).join(" | ");
-      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} after BBO. Pool: ${sample}`);
+      console.log(`❌ No markets available at all`);
+      candidates = [];
     }
-    candidates = pool;
   }
   // ── Entry loop ─────────────────────────────────────────────────
   let betsPlaced = 0;
