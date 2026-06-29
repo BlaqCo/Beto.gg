@@ -160,58 +160,51 @@ function detectLeague(m) {
 }
 
 // ── Game market filter ───────────────────────────────────────────
-// Official API: sportsMarketTypeV2 = "MONEYLINE" is the game winner
-// Question formats on polymarket.us:
-//   "Will [Team] win against [Team]?"  ← most common
-//   "Will [Team] beat [Team]?"
-//   "[Team] vs [Team]"
-//   "[Team] at [Team]"
-// Polymarket.us MLB/WNBA: "Will [Team] win?" (no opponent listed)
-// Soccer/Tennis: "Will [Team] win against [Team]?"  
-// Also: "[Team] vs [Team]", "[Team] at [Team]"
-const GAME_VS = /\bvs\.?\b|\bat\b|\bwill .+ win\b|\bwill .+ (beat|defeat)/i;
-const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1\b/i;
-const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|over\/under \d+ wins)\b/i;
+// DEAD SIMPLE: 
+// - Only accept markets with sportsMarketTypeV2 = "SPORTS_MARKET_TYPE_MONEYLINE"
+// - Reject sub-period props, season futures, player props
+// - Polymarket.us returns active:true, closed:true on live tradeable markets
+//   → DO NOT FILTER BY CLOSED FIELD
+// - DO NOT use GAME_VS regex for rejection
 
 function isGameMarket(m) {
   const q = (m.question || m.title || "").trim();
-  if (!q || m.active === false || m.closed === true || m.resolved === true) return false;
-  if (SUB_PERIOD.test(q)) return false;
-  if (SEASON_FUTURE.test(q)) return false;
+  
+  // MUST be active and NOT resolved
+  if (!q || m.active !== true || m.resolved === true) return false;
 
-  // ✅ Strongest signal: sportsMarketTypeV2 = MONEYLINE
-  if (m.sportsMarketTypeV2 === "MONEYLINE") return true;
-  if (m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE") return true;
-
-  // Must look like a head-to-head matchup
-  if (!GAME_VS.test(q)) return false;
-
-  // Category check — be very permissive
-  // Many markets have category="sports" or subcategory="WNBA"/"MLB" etc.
-  // Some have no category at all but still pass GAME_VS
-  const cat = (m.category || "").toLowerCase();
-  const sub = (m.subcategory || "").toLowerCase();
-  const league = (m.league || "").toLowerCase();
-  const combined = cat + " " + sub + " " + league;
-
-  // Accept if ANY sports keyword present, OR if category is just "sports"
-  const SPORTS_KEYWORDS = ["sports","baseball","basketball","tennis","esports",
-    "soccer","football","hockey","wnba","nba","nfl","mlb","nhl",
-    "atp","wta","itf","cricket","volleyball","rugby","mma","ufc",
-    "boxing","golf","racing","cycling"];
-
-  const isSports = SPORTS_KEYWORDS.some(s => combined.includes(s));
-
-  // Also accept if question looks like a player/team matchup with no category
-  // (some markets have empty category but are clearly sports)
-  if (!isSports && !cat && !sub) {
-    // Accept if it has "vs" and looks like a sports name pattern
-    // e.g. "A. Nguyen vs. A. Vagramov" — two proper nouns with vs
-    const looksLikeSports = /^[A-Z][\w\s\.]+ vs\.? [A-Z][\w\s\.]+$/.test(q.trim());
-    if (looksLikeSports) return true;
+  // REJECT: sub-period props (first half, 1st inning, first quarter, etc)
+  if (/first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h\b|h1\b|halftime|period\d|quarter\d/i.test(q)) {
+    return false;
   }
 
-  return isSports;
+  // REJECT: season/futures (champion, pennant, world series, MVP, etc)
+  if (/champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|season record|playoff|postseason/i.test(q)) {
+    return false;
+  }
+
+  // REJECT: player props (hitting, scoring, passing, etc)
+  if (/will (score|throw|catch|run|make|hit|pass|strikeout|homerun|touchdown|goal|assist|rebound|block|steal|point|basket|field goal|extra point)/i.test(q)) {
+    return false;
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // CORE RULE: ONLY accept if sportsMarketTypeV2 = MONEYLINE
+  // ════════════════════════════════════════════════════════════════
+  // Polymarket.us structure: sportsMarketTypeV2 is the authoritative field
+  const smtV2 = (m.sportsMarketTypeV2 || "").trim().toUpperCase();
+  
+  if (smtV2 === "SPORTS_MARKET_TYPE_MONEYLINE") {
+    return true;
+  }
+
+  // Fallback: also accept if smt field matches MONEYLINE
+  const smt = (m.sportsMarketType || "").trim().toUpperCase();
+  if (smt === "MONEYLINE" || smt.includes("MONEYLINE")) {
+    return true;
+  }
+
+  return false;
 }
 
 // ── Main fetch ───────────────────────────────────────────────────
@@ -295,28 +288,22 @@ export async function fetchSportsMoneylines() {
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
   console.log(`📡 [sports API] ${raw.length} unique markets | ${sportsCatCount} sports-cat | ${moneylineCount} moneyline-tagged`);
 
-  // ── RAW DIAGNOSTIC: dump the FULL field shape of markets we KNOW are live ──
-  // This reveals exactly what active/closed/sportsMarketTypeV2/gameStartTime/
-  // category look like for in-play games, so we stop guessing.
-  const liveTeamRe = /white sox|royals|reds|pirates|cubs|mets|brewers|blue jays|astros|rangers|phoenix|mercury|toronto|valkyries|nguyen|vagramov|micic|aksu|ahn|acend|echo|wnba|cs2|valorant/i;
+  // ── RAW DIAGNOSTIC: log the shape of markets we're fetching ──
+  const liveTeamRe = /atp|wta|itf|tennis|mlb|wnba|nba|nfl|ufc|mma|cs2|valorant|esports|kbo|npb/i;
   const diagSample = raw.filter(m => liveTeamRe.test((m.question||m.title||"") + " " + (m.slug||""))).slice(0, 3);
   if (diagSample.length) {
     for (const m of diagSample) {
       console.log(`🔬 RAW LIVE MKT: ${JSON.stringify({
         slug: m.slug, title: m.title || m.question,
-        active: m.active, closed: m.closed, archived: m.archived, resolved: m.resolved,
-        cat: m.category, sub: m.subcategory, league: m.league,
+        active: m.active, closed: m.closed, resolved: m.resolved,
+        cat: m.category, sub: m.subcategory,
         smtV2: m.sportsMarketTypeV2, smt: m.sportsMarketType,
-        gameStart: m.gameStartTime, startDate: m.startDate, endDate: m.endDate,
-        bestAsk: m.bestAsk, bestBid: m.bestBid, outcomePrices: m.outcomePrices,
-        marketSides: m.marketSides ? "present" : "absent"
-      }).slice(0, 500)}`);
+        gameStart: m.gameStartTime
+      })}`);
     }
-  } else {
-    console.log(`🔬 No known live teams found in ${raw.length} fetched markets — live markets are NOT being returned by the API endpoints.`);
   }
 
-  // ── Build output ─────────────────────────────────────────────
+  // ── Build output ─────────────────────────────────────────
   const out = [];
 
   for (const m of raw) {
@@ -329,11 +316,10 @@ export async function fetchSportsMoneylines() {
         const q2 = m.question || m.title || "";
         const why = !q2 ? "no question"
           : m.active === false ? "inactive"
-          : m.closed === true  ? "closed"
           : m.resolved === true ? "resolved"
-          : /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1/i.test(q2) ? "SUB_PERIOD"
+          : /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1/i.test(q2) ? "SUB_PERIOD"
           : /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|over\/under \d+ wins/i.test(q2) ? "SEASON_FUTURE"
-          : m.sportsMarketTypeV2 !== "MONEYLINE" && m.sportsMarketType !== "SPORTS_MARKET_TYPE_MONEYLINE" && !/vs\.?|at|will .+ win|will .+ (beat|defeat)/i.test(q2) ? "no GAME_VS"
+          : m.sportsMarketTypeV2 !== "MONEYLINE" && m.sportsMarketType !== "SPORTS_MARKET_TYPE_MONEYLINE" && !/vs\.?|at|will .+ win|will .+ (beat|defeat)/i.test(q2) ? "no GAME_VS"
           : "category";
         console.log(`  🔍 Rejected(${why}): ${q2.slice(0,50)}`);
       }
