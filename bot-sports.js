@@ -18,7 +18,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 12;      // flat $12 per bet
 const BET_MIN       = 12;
-const FAV_MIN       = 0.55;    // 55¢ minimum (catch more tennis/esports)
+const FAV_MIN       = 0.60;    // 60¢ minimum edge (keep edge high)
 const FAV_MAX       = 0.78;    // up to 78¢ (high-confidence favorites)
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 12;      // 12 concurrent slots
