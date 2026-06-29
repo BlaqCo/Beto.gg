@@ -331,10 +331,6 @@ canvas#pnl-chart{width:100%;height:100%}
   </div>
 </header>
 
-<!-- DEBUG PANEL (tap to reveal raw API data) -->
-<button onclick="window._DEBUG_API=!window._DEBUG_API; this.textContent=window._DEBUG_API?'HIDE DEBUG':'SHOW API DEBUG';" style="font-family:var(--mono);font-size:8px;letter-spacing:2px;padding:6px 12px;background:rgba(88,196,246,0.08);border:1px solid rgba(88,196,246,0.3);color:#58c4f6;cursor:pointer;margin-bottom:4px">SHOW API DEBUG</button>
-<pre id="debug-panel" style="display:none;font-family:var(--mono);font-size:9px;color:#58c4f6;background:#0a1209;border:1px solid rgba(88,196,246,0.3);padding:12px;overflow-x:auto;max-height:300px;white-space:pre-wrap;word-break:break-all;margin-bottom:8px"></pre>
-
 <!-- HERO METRICS -->
 <div class="hero-metrics">
   <div class="metric">
@@ -939,22 +935,6 @@ async function refresh(){
       fetch('/api/stats').then(r=>r.json()),
       fetch('/markets').then(r=>r.json()),
     ]);
-
-    // ── DEBUG: dump raw responses so we can see real field names ──
-    if(window._DEBUG_API){
-      const dbg = {
-        root:  rootR.status==='fulfilled'  ? rootR.value  : 'FAILED: '+rootR.reason,
-        stats: statsR.status==='fulfilled' ? statsR.value : 'FAILED: '+statsR.reason,
-        positions: posR.status==='fulfilled' ? posR.value : 'FAILED: '+posR.reason,
-        history: histR.status==='fulfilled' ? histR.value : 'FAILED: '+histR.reason,
-      };
-      console.log('=== API DEBUG ===', dbg);
-      const el = $('debug-panel');
-      if(el){
-        el.style.display='block';
-        el.textContent = JSON.stringify(dbg, null, 2);
-      }
-    }
 
     $('sdot').className   = 'status-dot';
     $('stxt').textContent = 'ONLINE';
