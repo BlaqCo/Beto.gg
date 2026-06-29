@@ -322,27 +322,29 @@ export async function fetchSportsMoneylines() {
     }
 
     // Time gate:
-    // - If gameStartTime exists: live (started) OR starting within 48h
-    // - If NO gameStartTime (MLB/WNBA/Tennis set endDate to end-of-season):
-    //   ACCEPT — the market is active, isGameMarket passed, trust it.
-    //   MLB endDate is often weeks away; using it as a time gate kills live games.
+    // - Markets from LIVE endpoint: NO time filtering (trust Polymarket, it's returning active markets)
+    // - Markets from ACTIVE endpoint: standard time checks
     const gameStart = m.gameStartTime || m.startDate || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
+    const source = marketSource.get(slug) || { isLiveEndpoint: false };
 
-    if (startMs) {
-      const hoursOut = (startMs - now) / 3_600_000;
-      // Accept: live games (hoursOut < 0) or starting within 48h
-      // Reject: started more than 24h ago (game definitely over)
-      if (hoursOut > 48 || hoursOut < -24) continue;
-    } else {
-      // No gameStartTime — only reject if market is already resolved/closed
-      if (endMs && endMs < now - 3_600_000) continue; // ended >1h ago, skip
-      // Otherwise: ACCEPT. Live MLB games show as active with no gameStartTime.
+    // LIVE endpoint markets: skip time checks entirely
+    if (!source.isLiveEndpoint) {
+      // ACTIVE endpoint only: apply time gates
+      if (startMs) {
+        const hoursOut = (startMs - now) / 3_600_000;
+        // Accept: live games (hoursOut < 0) or starting within 48h
+        // Reject: starting >48h in future or >24h in past
+        if (hoursOut > 48 || hoursOut < -24) continue;
+      } else {
+        // No gameStartTime in ACTIVE: only reject if market already ended
+        if (endMs && endMs < now - 3_600_000) continue;
+      }
     }
+    // LIVE endpoint markets pass through regardless of time
 
     const league    = detectLeague(m);
-    const source    = marketSource.get(slug) || { isLiveEndpoint: false };
     // A market is LIVE if:
     // 1. It came from the LIVE endpoint (no closed=false filter), OR
     // 2. It has a gameStartTime in the past (started < now)
