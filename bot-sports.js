@@ -1,8 +1,8 @@
 /**
- * bot-sports.js — BETO.GG Sports v4.2 (polymarket.us native)
+ * bot-sports.js — BETO.GG Sports v4.3 (polymarket.us native)
  *
- * Strategy: BUY YES on moneyline favorites 60-70¢ (live or starting within 12h)
- *           Flat $10 bets. HOLD TO RESOLUTION — no TP/SL, settlement only.
+ * Strategy: BUY YES on moneyline favorites 55-78¢ (live or starting within 12h)
+ *           Flat $12 bets. HOLD TO RESOLUTION — no TP/SL, settlement only.
  * DRY:  paper fills at estimated price (no BBO required)
  * LIVE: FOK limit entries via signed REST
  */
@@ -16,13 +16,13 @@ import { fetchSportsMoneylines, getBBO, getSettlement,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 5;       // flat $5 per bet
-const BET_MIN       = 5;
-const FAV_MIN       = 0.60;    // 60¢ minimum edge
-const FAV_MAX       = 0.70;    // skip near-decided games
+const BET_SIZE      = 12;      // flat $12 per bet
+const BET_MIN       = 12;
+const FAV_MIN       = 0.55;    // 55¢ minimum (catch more tennis/esports)
+const FAV_MAX       = 0.78;    // up to 78¢ (high-confidence favorites)
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 10;      // 10 concurrent slots
-const ENTRIES_SCAN  = 10;      // up to 10 entries per scan
+const MAX_CONC      = 12;      // 12 concurrent slots
+const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ export async function runScanCycle() {
     console.log(`💰 Paper: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
   }
 
-  // ── Entry candidates: favorites 60-70¢ ──────────────────────────
+  // ── Entry candidates: favorites 55-78¢ ──────────────────────────
   // polymarket-us.js already handles all time filtering.
   // Here we ONLY filter by price range and reject already-ended markets.
   const now = Date.now();
@@ -191,7 +191,7 @@ export async function runScanCycle() {
         // Spread check by sport type
         const q = (m.question || "").toLowerCase();
         const league = (m.league || "").toUpperCase();
-        const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
+        const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
         const isEsports = ["ESPORTS"].includes(league) || /esport|cs2|valorant|dota/i.test(q);
         const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(q);
         const maxSpread = isTennis ? 0.18 : isEsports ? 0.14 : isCombat ? 0.12 : 0.09;
