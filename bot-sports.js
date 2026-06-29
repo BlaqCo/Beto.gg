@@ -148,67 +148,46 @@ export async function runScanCycle() {
   // Here we ONLY filter by price range and reject already-ended markets.
   const now = Date.now();
 
-  console.log(`  📋 Raw markets from fetch: ${markets.length} | checking price range ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+  // ── CRITICAL FIX: Market list prices are USELESS (mostly 100¢ defaults) ──
+  // Skip pre-filter entirely. Fetch BBO for all markets to get REAL current prices.
+  
+  const candidatePool = markets.slice(0, 200); // check all 200, already sorted live-first
+  console.log(`📋 Fetching BBO for ${candidatePool.length} markets (no pre-filter)`);
 
-  // ── KEY FIX: Market list prices are STALE for in-play markets ──
-  // Accept ANYTHING with a price to test betting mechanism
-  // Pre-filter ultra-wide to ensure we find candidates
-  const WIDE_MIN = 0.20, WIDE_MAX = 0.95;
+  // Fetch live BBO for ALL candidates
+  const bboResults = await Promise.all(candidatePool.map(async m => {
+    try {
+      const bbo = await getBBO(m.slug);
+      if (!bbo?.bid || !bbo?.ask) return null;
+      const livePx = bbo.ask;
+      const spread = bbo.ask - bbo.bid;
 
-  const widePool = markets
-    .filter(m => {
-      const px = m.ask ?? m.est;
-      if (!px || px < WIDE_MIN || px > WIDE_MAX) return false;
-      if (m.endIso && new Date(m.endIso).getTime() < now - 3_600_000) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
-      return (b.ask ?? b.est ?? 0) - (a.ask ?? a.est ?? 0);
-    })
-    .slice(0, 150); // check up to 150 markets - MAXIMUM COVERAGE
+      // Spread check by sport type - VERY RELAXED
+      const q = (m.question || "").toLowerCase();
+      const league = (m.league || "").toUpperCase();
+      const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
+      const isEsports = ["ESPORTS"].includes(league) || /esport|cs2|valorant|dota/i.test(q);
+      const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(q);
+      const maxSpread = isTennis ? 0.30 : isEsports ? 0.25 : isCombat ? 0.20 : 0.15;
+
+      if (spread > maxSpread) {
+        console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ (accepting anyway) | ${m.question?.slice(0,35)}`);
+      }
+      return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
+    } catch { return null; }
+  }));
 
   let candidates;
   if (DRY_RUN) {
-    candidates = widePool
-      .map(m => ({ ...m, px: m.ask ?? m.est, ask: m.ask ?? m.est ?? 0.65, bid: m.bid ?? (m.est ? m.est - 0.02 : 0.63) }))
-      .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
+    candidates = bboResults
+      .filter(m => m && m.px >= FAV_MIN && m.px <= FAV_MAX)
       .slice(0, 30);
     const lc = candidates.filter(m => m.isLive).length;
-    console.log(`🏆 ${candidates.length} favorites (${lc} 🔴 live, ${candidates.length-lc} ⏳ pre-game) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+    console.log(`🏆 ${candidates.length} favorites (${lc} 🔴 live, ${candidates.length-lc} ⏳) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
     console.log(`  Top: ${candidates.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
     console.log(`📗 ${candidates.length} dry candidates`);
   } else {
-    // Fetch live BBO for all wide-pool markets in parallel
-    // This gives us the REAL current price, not the stale listing price
-    const bboResults = await Promise.all(widePool.map(async m => {
-      try {
-        const bbo = await getBBO(m.slug);
-        if (!bbo?.bid || !bbo?.ask) return null;
-        const livePx = bbo.ask; // price we'd pay
-        const spread = bbo.ask - bbo.bid;
-
-        // Spread check by sport type - VERY RELAXED FOR TESTING
-        const q = (m.question || "").toLowerCase();
-        const league = (m.league || "").toUpperCase();
-        const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
-        const isEsports = ["ESPORTS"].includes(league) || /esport|cs2|valorant|dota/i.test(q);
-        const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(q);
-        const maxSpread = isTennis ? 0.30 : isEsports ? 0.25 : isCombat ? 0.20 : 0.15;
-
-        if (spread > maxSpread) {
-          // Just log, don't reject
-          console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ (accepting anyway) | ${m.question?.slice(0,35)}`);
-          // return null;  ← DISABLED - allow ANY spread
-        }
-        // Log if a stale-filtered market is now in range (tennis drift detection)
-        const stalePx = m.ask ?? m.est ?? 0;
-        if (stalePx < FAV_MIN && livePx >= FAV_MIN) {
-          console.log(`  📈 Drifted IN: stale=${cents(stalePx)} live=${cents(livePx)} | ${m.question?.slice(0,35)}`);
-        }
-        return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
-      } catch { return null; }
-    }));
+    // Use results from BBO fetch above
 
     const pool = bboResults
       .filter(c => c && c.px >= FAV_MIN && c.px <= FAV_MAX)
@@ -223,8 +202,8 @@ export async function runScanCycle() {
       console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
       console.log(`📗 ${pool.length} verified: ${pool.slice(0,3).map(c => `${cents(c.ask)} ${c.question.slice(0,24)}`).join(" · ")}`);
     } else {
-      const sample = widePool.slice(0,5).map(m=>`${cents(m.ask??m.est)} ${m.question?.slice(0,20)}`).join(" | ");
-      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} after BBO. Wide pool: ${sample}`);
+      const sample = candidatePool.slice(0,5).map(m=>`${cents(m.ask??m.est)} ${m.question?.slice(0,20)}`).join(" | ");
+      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)} after BBO. Pool: ${sample}`);
     }
     candidates = pool;
   }
