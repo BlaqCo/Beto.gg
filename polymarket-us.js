@@ -198,9 +198,9 @@ function isGameMarket(m) {
     return true;
   }
 
-  // Fallback: also accept if smt field matches MONEYLINE
-  const smt = (m.sportsMarketType || "").trim().toUpperCase();
-  if (smt === "MONEYLINE" || smt.includes("MONEYLINE")) {
+  // Fallback: also accept if smt field matches MONEYLINE (lowercase format)
+  const smt = (m.sportsMarketType || m.smt || "").trim().toUpperCase();
+  if (smt === "MONEYLINE" || smt === "SPORTS_MARKET_TYPE_MONEYLINE") {
     return true;
   }
 
@@ -226,40 +226,32 @@ export async function fetchSportsMoneylines() {
   // - LIVE:   active=true ONLY (no closed filter) — in-play markets where
   //   Polymarket US sometimes flips `closed` mid-game. This is the key to
   //   catching live tennis/MLB/WNBA/esports the offset sweep was missing.
-  const ACTIVE = `${GATEWAY}/v1/markets?active=true&closed=false&archived=false`;
-  const LIVE   = `${GATEWAY}/v1/markets?active=true&archived=false`;
-  const ANY    = `${GATEWAY}/v1/markets?archived=false`;
+  // ALL: Filter directly by sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE at API level
+  const ACTIVE = `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE`;
+  const LIVE   = `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE`;
+  const ANY    = `${GATEWAY}/v1/markets?archived=false&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE`;
 
   // Per-sport tag sweeps — moneyline-type tag returns 0, so we fetch by sport.
   const SPORT_TAGS = ["MLB","WNBA","NBA","NFL","NHL","Tennis","Esports",
                       "CS2","Valorant","Soccer","UFC","MMA","Cricket","Golf"];
 
   const urls = [
-    // ── LIVE in-play markets (no closed filter, ordered to surface live) ──
-    `${LIVE}&categories=sports&limit=200&orderBy=gameStartTime&orderDirection=desc`,
-    `${LIVE}&categories=sports&limit=200&orderBy=volume24hr&orderDirection=desc`,
-    `${LIVE}&categories=sports&limit=200&offset=0`,
-    `${LIVE}&categories=sports&limit=200&offset=200`,
-    `${LIVE}&categories=sports&limit=200&offset=400`,
+    // ── Priority: LIVE in-play markets (highest volume, sorted by gameStartTime) ──
+    `${LIVE}&limit=200&orderBy=volume24hr&orderDirection=desc`,
     `${LIVE}&limit=200&orderBy=gameStartTime&orderDirection=desc`,
+    `${LIVE}&limit=200&offset=0`,
+    `${LIVE}&limit=200&offset=200`,
 
-    // ── Per-sport tag fetches (most reliable for in-play games) ──
-    ...SPORT_TAGS.map(t => `${LIVE}&tags=${encodeURIComponent(t)}&limit=100`),
-    ...SPORT_TAGS.map(t => `${ACTIVE}&tags=${encodeURIComponent(t)}&limit=100`),
-
-    // ── Standard active/upcoming sweep ──
-    `${ACTIVE}&categories=sports&limit=200&offset=0`,
-    `${ACTIVE}&categories=sports&limit=200&offset=200`,
-    `${ACTIVE}&categories=sports&limit=200&offset=400`,
-    `${ACTIVE}&categories=sports&volumeNumMin=50&limit=200&orderBy=volume24hr&orderDirection=desc`,
-
-    // ── Broad offset sweep across everything ──
+    // ── Secondary: upcoming markets within 48h ──
+    `${ACTIVE}&limit=200&orderBy=gameStartTime&orderDirection=asc`,
+    `${ACTIVE}&limit=200&orderBy=volume24hr&orderDirection=desc`,
     `${ACTIVE}&limit=200&offset=0`,
     `${ACTIVE}&limit=200&offset=200`,
     `${ACTIVE}&limit=200&offset=400`,
-    `${ACTIVE}&limit=200&offset=600`,
-    `${ACTIVE}&limit=200&offset=800`,
-    `${ACTIVE}&limit=200&offset=1000`,
+
+    // ── Sport-specific fallback (in case API filtering misses some) ──
+    ...SPORT_TAGS.map(t => `${LIVE}&tags=${encodeURIComponent(t)}&limit=100`),
+    ...SPORT_TAGS.map(t => `${ACTIVE}&tags=${encodeURIComponent(t)}&limit=100`),
   ];
 
   const results = await Promise.allSettled(
@@ -267,6 +259,7 @@ export async function fetchSportsMoneylines() {
   );
 
   const seenKeys = new Set();
+  const marketSource = new Map(); // Track which endpoint returned each market
   let raw = [];
   let sportsCatCount = 0;
   let moneylineCount = 0;
@@ -275,13 +268,18 @@ export async function fetchSportsMoneylines() {
     const r = results[i];
     if (r.status !== "fulfilled") continue;
     const arr = r.value?.data?.markets || [];
+    // Determine if this batch is from LIVE or ACTIVE endpoint
+    const urlUsed = urls[i] || "";
+    const isLiveEndpoint = urlUsed.includes("?active=true&archived=false") && !urlUsed.includes("closed=false");
+    
     for (const m of arr) {
       const key = m.slug || m.id;
       if (!key || seenKeys.has(key)) continue;
       seenKeys.add(key);
+      marketSource.set(key, { isLiveEndpoint });
       raw.push(m);
       if ((m.category || "").toLowerCase().includes("sports")) sportsCatCount++;
-      if (m.sportsMarketTypeV2 === "MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE") moneylineCount++;
+      if (m.sportsMarketTypeV2 === "SPORTS_MARKET_TYPE_MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE" || m.smt === "moneyline") moneylineCount++;
     }
   }
 
@@ -310,19 +308,6 @@ export async function fetchSportsMoneylines() {
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
     if (!isGameMarket(m)) {
-      // Log rejected WNBA/MLB/Tennis/Esports to diagnose misses
-      const qd = (m.question || m.title || "").toLowerCase();
-      if (/wnba|toronto|phoenix|mercury|valkyries|blue jays|rangers|yankees|dodgers|cubs|mets|brewers|reds|pirates|royals|white sox|tennis|atp|wta|itf|challenger|cs2|valorant|esport/i.test(qd)) {
-        const q2 = m.question || m.title || "";
-        const why = !q2 ? "no question"
-          : m.active === false ? "inactive"
-          : m.resolved === true ? "resolved"
-          : /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h |h1/i.test(q2) ? "SUB_PERIOD"
-          : /champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|over\/under \d+ wins/i.test(q2) ? "SEASON_FUTURE"
-          : m.sportsMarketTypeV2 !== "MONEYLINE" && m.sportsMarketType !== "SPORTS_MARKET_TYPE_MONEYLINE" && !/vs\.?|at|will .+ win|will .+ (beat|defeat)/i.test(q2) ? "no GAME_VS"
-          : "category";
-        console.log(`  🔍 Rejected(${why}): ${q2.slice(0,50)}`);
-      }
       continue;
     }
 
@@ -357,7 +342,11 @@ export async function fetchSportsMoneylines() {
     }
 
     const league    = detectLeague(m);
-    const isLive    = startMs ? startMs <= now : false;
+    const source    = marketSource.get(slug) || { isLiveEndpoint: false };
+    // A market is LIVE if:
+    // 1. It came from the LIVE endpoint (no closed=false filter), OR
+    // 2. It has a gameStartTime in the past (started < now)
+    const isLive    = source.isLiveEndpoint || (startMs && startMs <= now);
     const hoursUntil = isLive ? 0 : (startMs ? Math.round((startMs - now) / 3_600_000 * 10) / 10 : null);
 
     // Compute ask/bid from available fields
