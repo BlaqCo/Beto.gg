@@ -189,22 +189,9 @@ function isGameMarket(m) {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // CORE RULE: ONLY accept if sportsMarketTypeV2 = MONEYLINE
+  // ACCEPT ALL ACTIVE MARKETS — find the 2 live ones
   // ════════════════════════════════════════════════════════════════
-  // Polymarket.us structure: sportsMarketTypeV2 is the authoritative field
-  const smtV2 = (m.sportsMarketTypeV2 || "").trim().toUpperCase();
-  
-  if (smtV2 === "SPORTS_MARKET_TYPE_MONEYLINE") {
-    return true;
-  }
-
-  // Fallback: also accept if smt field matches MONEYLINE (lowercase format)
-  const smt = (m.sportsMarketType || m.smt || "").trim().toUpperCase();
-  if (smt === "MONEYLINE" || smt === "SPORTS_MARKET_TYPE_MONEYLINE") {
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
 // ── Main fetch ───────────────────────────────────────────────────
@@ -423,12 +410,20 @@ export async function getBBO(slug) {
     const { data } = await axios.get(
       `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/bbo`, { timeout: 8_000 });
     const d = data?.marketData || data || {};
-    return {
+    const result = {
       bid:  amountVal(d.bestBid),
       ask:  amountVal(d.bestAsk),
       last: amountVal(d.lastTradePx) ?? amountVal(d.currentPx),
     };
-  } catch { return null; }
+    // DEBUG: log if BBO is suspiciously high
+    if (result.ask >= 0.95) {
+      console.log(`⚠️ [getBBO] HIGH ASK=${result.ask} | slug=${slug} | raw=${JSON.stringify({bid: d.bestBid, ask: d.bestAsk})}`);
+    }
+    return result;
+  } catch (err) {
+    console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
+    return null;
+  }
 }
 
 // ── getSettlement ────────────────────────────────────────────────
