@@ -18,8 +18,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 12;      // flat $12 per bet
 const BET_MIN       = 12;
-const FAV_MIN       = 0.60;    // 60¢ minimum
-const FAV_MAX       = 0.74;    // up to 74¢
+const FAV_MIN       = 0.35;    // 35¢ minimum - VERY loose
+const FAV_MAX       = 0.90;    // up to 90¢ - catch anything with edge
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 12;      // 12 concurrent slots
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
@@ -151,9 +151,9 @@ export async function runScanCycle() {
   console.log(`  📋 Raw markets from fetch: ${markets.length} | checking price range ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
 
   // ── KEY FIX: Market list prices are STALE for in-play markets ──
-  // A tennis match listed at 60% may now be 70% live in-play.
-  // Pre-filter wide (50-80¢ stale), then use LIVE BBO for the real range check.
-  const WIDE_MIN = 0.50, WIDE_MAX = 0.80;
+  // Accept ANYTHING with a price to test betting mechanism
+  // Pre-filter ultra-wide to ensure we find candidates
+  const WIDE_MIN = 0.20, WIDE_MAX = 0.95;
 
   const widePool = markets
     .filter(m => {
@@ -166,7 +166,7 @@ export async function runScanCycle() {
       if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
       return (b.ask ?? b.est ?? 0) - (a.ask ?? a.est ?? 0);
     })
-    .slice(0, 75); // check up to 75 LIVE markets via BBO
+    .slice(0, 150); // check up to 150 markets - MAXIMUM COVERAGE
 
   let candidates;
   if (DRY_RUN) {
@@ -188,17 +188,18 @@ export async function runScanCycle() {
         const livePx = bbo.ask; // price we'd pay
         const spread = bbo.ask - bbo.bid;
 
-        // Spread check by sport type
+        // Spread check by sport type - VERY RELAXED FOR TESTING
         const q = (m.question || "").toLowerCase();
         const league = (m.league || "").toUpperCase();
         const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
         const isEsports = ["ESPORTS"].includes(league) || /esport|cs2|valorant|dota/i.test(q);
         const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(q);
-        const maxSpread = isTennis ? 0.18 : isEsports ? 0.14 : isCombat ? 0.12 : 0.09;
+        const maxSpread = isTennis ? 0.30 : isEsports ? 0.25 : isCombat ? 0.20 : 0.15;
 
         if (spread > maxSpread) {
-          console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ | ${m.question?.slice(0,35)}`);
-          return null;
+          // Just log, don't reject
+          console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ (accepting anyway) | ${m.question?.slice(0,35)}`);
+          // return null;  ← DISABLED - allow ANY spread
         }
         // Log if a stale-filtered market is now in range (tennis drift detection)
         const stalePx = m.ask ?? m.est ?? 0;
