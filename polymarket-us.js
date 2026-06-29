@@ -349,14 +349,16 @@ export async function fetchSportsMoneylines() {
 
     // Compute ask/bid from available fields (est may be null)
     const displayPrice = est ?? 0.50; // default for sorting/display
-    const ask = est ?? amountVal(m.bestAsk) ?? 0.50;
-    const bid = amountVal(m.bestBid) ?? (est && est - 0.02 > 0 ? est - 0.02 : 0.48);
+    const ask = (est ?? amountVal(m.bestAsk) ?? 0.50) || 0.50;
+    const bid = (amountVal(m.bestBid) ?? (est && est - 0.02 > 0 ? est - 0.02 : 0.48)) || 0.48;
 
     out.push({
       slug, question: q,
       subtitle: m.description?.slice(0, 80) || null,
       league,
-      ask, bid, est,
+      ask: Math.min(Math.max(ask, 0.01), 0.99), // ensure 0.01 - 0.99
+      bid: Math.min(Math.max(bid, 0.01), 0.99),
+      est: est || displayPrice,
       tick:   num(m.orderPriceMinTickSize) || 0.01,
       minQty: num(m.minimumTradeQty) || 1,
       gameStartIso: gameStart,
