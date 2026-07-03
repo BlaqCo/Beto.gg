@@ -143,22 +143,27 @@ export async function runScanCycle() {
     console.log(`💰 Paper: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
   }
 
-  // ── Entry candidates: favorites 55-78¢ ──────────────────────────
-  // polymarket-us.js already handles all time filtering.
-  // Here we ONLY filter by price range and reject already-ended markets.
+  // ── Entry candidates ──────────────────────────
   const now = Date.now();
-
-  // ── CRITICAL FIX: Market list prices are USELESS (mostly 100¢ defaults) ──
-  // Skip pre-filter entirely. Fetch BBO for all markets to get REAL current prices.
   
-  const candidatePool = markets.slice(0, 200); // check all 200, already sorted live-first
-  console.log(`📋 Fetching BBO for ${candidatePool.length} markets (no pre-filter)`);
+  console.log(`📡 Received ${markets.length} markets from API`);
+  if (markets.length === 0) {
+    console.log("❌ NO MARKETS AVAILABLE — API returned empty list");
+  } else {
+    console.log(`  Top 3: ${markets.slice(0, 3).map(m => m.question?.slice(0, 40)).join(" | ")}`);
+  }
+  
+  const candidatePool = markets.slice(0, 200); // check all 200
+  console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
 
   // Fetch live BBO for ALL candidates
   const bboResults = await Promise.all(candidatePool.map(async m => {
     try {
       const bbo = await getBBO(m.slug);
-      if (!bbo?.bid || !bbo?.ask) return null;
+      if (!bbo?.bid || !bbo?.ask) {
+        console.log(`  ❌ No BBO: ${m.question?.slice(0, 35)}`);
+        return null;
+      }
       const livePx = bbo.ask;
       const spread = bbo.ask - bbo.bid;
 
@@ -174,8 +179,14 @@ export async function runScanCycle() {
         console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ (accepting anyway) | ${m.question?.slice(0,35)}`);
       }
       return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
-    } catch { return null; }
+    } catch (e) {
+      console.log(`  ❌ BBO error for ${m.slug}: ${e.message}`);
+      return null;
+    }
   }));
+  
+  const bbosWithData = bboResults.filter(b => b != null);
+  console.log(`✅ ${bbosWithData.length}/${candidatePool.length} markets have BBO data`);
 
   let candidates;
   if (DRY_RUN) {
@@ -199,6 +210,13 @@ export async function runScanCycle() {
     }
   }
   // ── Entry loop ─────────────────────────────────────────────────
+  console.log(`🎯 ${candidates.length} candidates ready for entry`);
+  if (candidates.length === 0) {
+    console.log("❌ NO CANDIDATES — nothing to bet on");
+  } else {
+    console.log(`  First candidate: ${candidates[0].question?.slice(0, 50)} @ ${cents(candidates[0].px)}`);
+  }
+  
   let betsPlaced = 0;
   let attempts   = 0;
   const MAX_ATTEMPTS = 12;
