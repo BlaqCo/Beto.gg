@@ -208,22 +208,24 @@ export async function fetchSportsMoneylines() {
   // volumeNumMin to filter out dead markets
   const now = Date.now();
 
-  // FIX: The API ignores orderBy and keeps returning the same 1000 stale
-  // Nov-2025 markets. Force server-side DATE filtering instead:
-  // stale games have endDate in the past; live/upcoming games end in the future.
-  const endMin   = new Date(now - 12 * 3600_000).toISOString(); // ended within last 12h or later
-  const startMin = new Date(now - 24 * 3600_000).toISOString(); // started within last 24h or later
-  const startMax = new Date(now + 48 * 3600_000).toISOString(); // starts within next 48h
+  // OFFICIAL API PARAMS (docs.polymarket.us): date filters are
+  // startDateMin/startDateMax/endDateMin/endDateMax (ISO 8601).
+  // endDateMin=now-12h excludes stale resolved games SERVER-SIDE.
+  // sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE = moneylines only (NO PROPS).
+  const endMin   = new Date(now - 12 * 3600_000).toISOString();
+  const startMin = new Date(now - 24 * 3600_000).toISOString();
+  const startMax = new Date(now + 48 * 3600_000).toISOString();
+  const ML = "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE";
 
   const urls = [
-    // Primary: markets ending in the future (live + upcoming)
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&endDateMin=${encodeURIComponent(endMin)}`,
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&endDateMin=${encodeURIComponent(endMin)}&orderBy=volume24hr&orderDirection=desc`,
-    // Alternate param names in case the API uses start-date filters
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}`,
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&gameStartTimeMin=${encodeURIComponent(startMin)}&gameStartTimeMax=${encodeURIComponent(startMax)}`,
-    // No category filter, in case live markets are categorized differently
-    `${GATEWAY}/v1/markets?active=true&archived=false&limit=500&endDateMin=${encodeURIComponent(endMin)}`,
+    // Primary: open moneyline markets ending in the future
+    `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
+    // In-play markets sometimes flip closed=true mid-game — same query without closed filter
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
+    // Start-date window variant (live + next 48h)
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}&limit=500`,
+    // Safety net: no moneyline filter in case field is missing on some markets (client filter catches props)
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
   ];
 
   const results = await Promise.allSettled(
@@ -279,6 +281,14 @@ export async function fetchSportsMoneylines() {
     // Ignore closed field — polymarket.us marks live markets as closed=true
     if (m.active !== true) continue;
     if (m.resolved === true) continue;
+
+    // ── NO PROPS: moneylines only ──
+    // Reject SPREAD / TOTAL / PROP typed markets outright
+    const smt = (m.sportsMarketTypeV2 || m.sportsMarketType || "").toUpperCase();
+    if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") continue;
+    // Text-based prop rejection for markets missing the type field
+    const qText = m.question || m.title || "";
+    if (/first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|will .* (score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|over\/under|\bspread\b|\btotal\b|player prop/i.test(qText)) continue;
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
