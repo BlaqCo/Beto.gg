@@ -208,37 +208,11 @@ export async function fetchSportsMoneylines() {
   // volumeNumMin to filter out dead markets
   const now = Date.now();
 
-  // NOTE: We deliberately use TWO bases:
-  // - ACTIVE: active=true&closed=false — normal upcoming/open markets
-  // - LIVE:   active=true ONLY (no closed filter) — in-play markets where
-  //   Polymarket US sometimes flips `closed` mid-game. This is the key to
-  //   catching live tennis/MLB/WNBA/esports the offset sweep was missing.
-  // ALL: Filter directly by sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE at API level
-  const ACTIVE = `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE`;
-  const LIVE   = `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE`;
-  const ANY    = `${GATEWAY}/v1/markets?archived=false&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE`;
-
-  // Per-sport tag sweeps — moneyline-type tag returns 0, so we fetch by sport.
-  const SPORT_TAGS = ["MLB","WNBA","NBA","NFL","NHL","Tennis","Esports",
-                      "CS2","Valorant","Soccer","UFC","MMA","Cricket","Golf"];
-
+  // SIMPLE: Just fetch active sports markets, no type filter
+  // Let the API return everything, we'll filter by price/liquidity instead
   const urls = [
-    // ── Priority: LIVE in-play markets (highest volume, sorted by gameStartTime) ──
-    `${LIVE}&limit=200&orderBy=volume24hr&orderDirection=desc`,
-    `${LIVE}&limit=200&orderBy=gameStartTime&orderDirection=desc`,
-    `${LIVE}&limit=200&offset=0`,
-    `${LIVE}&limit=200&offset=200`,
-
-    // ── Secondary: upcoming markets within 48h ──
-    `${ACTIVE}&limit=200&orderBy=gameStartTime&orderDirection=asc`,
-    `${ACTIVE}&limit=200&orderBy=volume24hr&orderDirection=desc`,
-    `${ACTIVE}&limit=200&offset=0`,
-    `${ACTIVE}&limit=200&offset=200`,
-    `${ACTIVE}&limit=200&offset=400`,
-
-    // ── Sport-specific fallback (in case API filtering misses some) ──
-    ...SPORT_TAGS.map(t => `${LIVE}&tags=${encodeURIComponent(t)}&limit=100`),
-    ...SPORT_TAGS.map(t => `${ACTIVE}&tags=${encodeURIComponent(t)}&limit=100`),
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&limit=500`,
   ];
 
   const results = await Promise.allSettled(
@@ -271,21 +245,11 @@ export async function fetchSportsMoneylines() {
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`📡 [sports API] ${raw.length} unique markets | ${sportsCatCount} sports-cat | ${moneylineCount} moneyline-tagged`);
+  console.log(`📡 [sports API] ${raw.length} total markets fetched`);
 
-  // ── RAW DIAGNOSTIC: log the shape of markets we're fetching ──
-  const liveTeamRe = /atp|wta|itf|tennis|mlb|wnba|nba|nfl|ufc|mma|cs2|valorant|esports|kbo|npb/i;
-  const diagSample = raw.filter(m => liveTeamRe.test((m.question||m.title||"") + " " + (m.slug||""))).slice(0, 3);
-  if (diagSample.length) {
-    for (const m of diagSample) {
-      console.log(`🔬 RAW LIVE MKT: ${JSON.stringify({
-        slug: m.slug, title: m.title || m.question,
-        active: m.active, closed: m.closed, resolved: m.resolved,
-        cat: m.category, sub: m.subcategory,
-        smtV2: m.sportsMarketTypeV2, smt: m.sportsMarketType,
-        gameStart: m.gameStartTime
-      })}`);
-    }
+  // ── LOG ALL MARKETS to see what's actually available ──
+  for (const m of raw.slice(0, 10)) {
+    console.log(`  🎯 ${m.closed ? "❌ CLOSED" : "✅ OPEN"} | ${m.title || m.question} | closed=${m.closed} active=${m.active} resolved=${m.resolved}`);
   }
 
   // ── Build output ─────────────────────────────────────────
@@ -294,15 +258,11 @@ export async function fetchSportsMoneylines() {
   for (const m of raw) {
     const slug = m.slug || m.id || m.marketId;
     if (!slug) continue;
-    if (!isGameMarket(m)) {
-      // DEBUG: log why markets are rejected
-      const smtV2 = (m.sportsMarketTypeV2 || "").trim().toUpperCase();
-      const smt = (m.sportsMarketType || m.smt || "").trim().toUpperCase();
-      if (out.length < 3) { // only log first 3 rejections to avoid spam
-        console.log(`  ❌ REJECTED: ${m.title?.slice(0,40)} | active=${m.active} resolved=${m.resolved} smt=${smtV2}||${smt}`);
-      }
-      continue;
-    }
+    
+    // SIMPLE: Accept if active and not resolved
+    // Ignore closed field — polymarket.us marks live markets as closed=true
+    if (m.active !== true) continue;
+    if (m.resolved === true) continue;
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
