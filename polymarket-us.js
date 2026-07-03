@@ -208,12 +208,22 @@ export async function fetchSportsMoneylines() {
   // volumeNumMin to filter out dead markets
   const now = Date.now();
 
-  // FIX: Sort NEWEST first — API defaults to oldest-first, so live games
-  // (today) were buried behind 400 stale Nov-2025 markets and never fetched.
+  // FIX: The API ignores orderBy and keeps returning the same 1000 stale
+  // Nov-2025 markets. Force server-side DATE filtering instead:
+  // stale games have endDate in the past; live/upcoming games end in the future.
+  const endMin   = new Date(now - 12 * 3600_000).toISOString(); // ended within last 12h or later
+  const startMin = new Date(now - 24 * 3600_000).toISOString(); // started within last 24h or later
+  const startMax = new Date(now + 48 * 3600_000).toISOString(); // starts within next 48h
+
   const urls = [
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&orderBy=gameStartTime&orderDirection=desc`,
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&orderBy=volume24hr&orderDirection=desc`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&limit=500&orderBy=gameStartTime&orderDirection=desc`,
+    // Primary: markets ending in the future (live + upcoming)
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&endDateMin=${encodeURIComponent(endMin)}`,
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&endDateMin=${encodeURIComponent(endMin)}&orderBy=volume24hr&orderDirection=desc`,
+    // Alternate param names in case the API uses start-date filters
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}`,
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&gameStartTimeMin=${encodeURIComponent(startMin)}&gameStartTimeMax=${encodeURIComponent(startMax)}`,
+    // No category filter, in case live markets are categorized differently
+    `${GATEWAY}/v1/markets?active=true&archived=false&limit=500&endDateMin=${encodeURIComponent(endMin)}`,
   ];
 
   const results = await Promise.allSettled(
@@ -228,9 +238,14 @@ export async function fetchSportsMoneylines() {
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
-    if (r.status !== "fulfilled") continue;
+    if (r.status !== "fulfilled") {
+      console.log(`  🌐 URL#${i} FAILED: ${r.reason?.message?.slice(0,80)}`);
+      continue;
+    }
     const arr = r.value?.data?.markets || [];
-    // Determine if this batch is from LIVE or ACTIVE endpoint
+    // Log what each URL returned so we know which date filter works
+    const first = arr[0];
+    console.log(`  🌐 URL#${i} → ${arr.length} markets | first: ${first?.title?.slice(0,30) || "-"} | gameStart=${first?.gameStartTime || first?.startDate || "-"} closed=${first?.closed}`);
     const urlUsed = urls[i] || "";
     const isLiveEndpoint = urlUsed.includes("?active=true&archived=false") && !urlUsed.includes("closed=false");
     
