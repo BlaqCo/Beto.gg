@@ -208,11 +208,12 @@ export async function fetchSportsMoneylines() {
   // volumeNumMin to filter out dead markets
   const now = Date.now();
 
-  // SIMPLE: Just fetch active sports markets, no type filter
-  // Let the API return everything, we'll filter by price/liquidity instead
+  // FIX: Sort NEWEST first — API defaults to oldest-first, so live games
+  // (today) were buried behind 400 stale Nov-2025 markets and never fetched.
   const urls = [
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&limit=500`,
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&orderBy=gameStartTime&orderDirection=desc`,
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&limit=500&orderBy=volume24hr&orderDirection=desc`,
+    `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&limit=500&orderBy=gameStartTime&orderDirection=desc`,
   ];
 
   const results = await Promise.allSettled(
@@ -270,28 +271,21 @@ export async function fetchSportsMoneylines() {
     // Bot's scan loop will fetch BBO and check if edge meets requirements
     // Use est for fallback display/sorting, default to 0.50 if missing
 
-    // Time gate:
-    // - Markets from LIVE endpoint: NO time filtering (trust Polymarket, it's returning active markets)
-    // - Markets from ACTIVE endpoint: standard time checks
+    // ── HARD DATE GATE (applies to ALL markets, every endpoint) ──
+    // This is what removes the stale Nov-2025 resolved games.
+    // Keep only: games that started within the last 24h (live) or start within 48h (upcoming).
     const gameStart = m.gameStartTime || m.startDate || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
     const source = marketSource.get(slug) || { isLiveEndpoint: false };
 
-    // LIVE endpoint markets: skip time checks entirely
-    if (!source.isLiveEndpoint) {
-      // ACTIVE endpoint only: apply time gates
-      if (startMs) {
-        const hoursOut = (startMs - now) / 3_600_000;
-        // Accept: live games (hoursOut < 0) or starting within 48h
-        // Reject: starting >48h in future or >24h in past
-        if (hoursOut > 48 || hoursOut < -24) continue;
-      } else {
-        // No gameStartTime in ACTIVE: only reject if market already ended
-        if (endMs && endMs < now - 3_600_000) continue;
-      }
+    if (startMs) {
+      const hoursOut = (startMs - now) / 3_600_000;
+      if (hoursOut < -24) continue;   // game started >24h ago → stale, skip
+      if (hoursOut > 48)  continue;   // starts >48h away → too far out, skip
+    } else if (endMs && endMs < now) {
+      continue;                       // no start time but already ended → skip
     }
-    // LIVE endpoint markets pass through regardless of time
 
     const league    = detectLeague(m);
     // A market is LIVE if:
