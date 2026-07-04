@@ -18,7 +18,7 @@ import axios from "axios";
 import crypto from "crypto";
 
 // ── VERSION BANNER: confirms which build is live ──
-console.log("🔖 polymarket-us.js v9-DATE-FILTER loaded — date-filtered discovery, fixed gameStart gate");
+console.log("🔖 polymarket-us.js v10-V2-EVENTS loaded — official v2 sports/league events discovery");
 
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
@@ -220,22 +220,24 @@ export async function fetchSportsMoneylines() {
   const startMax = new Date(now + 48 * 3600_000).toISOString();
   const ML = "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE";
 
-  // ★★★ THE FIX — RESTORED FROM THE WORKING VERSION (June 29) ★★★
-  // Proof from live trade history: every filled bet (tennis, UFC, KBO, MLB,
-  // soccer, esports) was discovered via PER-SPORT TAG queries.
-  // The generic categories=sports listing returns a stale NFL dump — broken
-  // on Polymarket's side. Tag queries return CURRENT markets. Tag sweeps are
-  // the primary discovery mechanism; everything else is fallback.
-  const LIVE_BASE = `${GATEWAY}/v1/markets?active=true&archived=false`;
-  const SPORT_TAGS = ["MLB","WNBA","NBA","NFL","NHL","Tennis","Esports",
-                      "CS2","Valorant","Soccer","UFC","MMA","Cricket","Golf",
-                      "KBO","NPB","Darts","Boxing","Hockey","Baseball","Basketball"];
+  // ★★★ v10: OFFICIAL v2 SPORTS API (docs.polymarket.us/api-reference/sports) ★★★
+  // GET /v2/leagues/{slug}/events and /v2/sports/{slug}/events — this is what
+  // powers the app's league tabs (MLB, Esports, Golf, World Cup...).
+  // type=sport (default) = actual games, NOT futures. Events contain their markets.
+  // The old v1 tag sweeps are DEAD — the API now ignores tags= and returns the
+  // same stale Nov-2025 dump for every tag (proven in logs).
+  const LEAGUES = ["mlb","nba","nfl","nhl","wnba","epl","la-liga","serie-a",
+                   "bundesliga","ligue-1","mls","ucl","world-cup","kbo","npb",
+                   "atp","wta","itf","ufc","cs2","valorant","lol","dota-2"];
+  const SPORTS  = ["baseball","basketball","football","hockey","soccer","tennis",
+                   "mma","boxing","cricket","golf","esports","darts","table-tennis",
+                   "motorsports","rugby","volleyball","handball"];
 
   const urls = [
-    // ── PRIMARY: per-sport tag sweeps (this is what worked) ──
-    ...SPORT_TAGS.map(t => `${LIVE_BASE}&tags=${encodeURIComponent(t)}&limit=100`),
-    // ── Fallbacks: newest-first + date-filtered category queries ──
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=createdAt&orderDirection=desc&limit=500`,
+    // ── PRIMARY: v2 sports/league event sweeps (what the app itself uses) ──
+    ...SPORTS.map(s  => `${GATEWAY}/v2/sports/${s}/events?limit=50`),
+    ...LEAGUES.map(l => `${GATEWAY}/v2/leagues/${l}/events?limit=50`),
+    // ── Fallback: v1 date-filtered market queries (returned 5 real markets) ──
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}&limit=500`,
   ];
@@ -249,19 +251,52 @@ export async function fetchSportsMoneylines() {
   let raw = [];
   let sportsCatCount = 0;
   let moneylineCount = 0;
+  let shapeDumped = false;
+
+  // Normalize any response shape (v2 events / v1 markets) into market objects
+  const extractMarkets = (data) => {
+    const events = data?.events || (Array.isArray(data) ? data : null);
+    if (events && Array.isArray(events)) {
+      const mkts = [];
+      for (const ev of events) {
+        const evMarkets = ev?.markets || ev?.market ? (ev.markets || [ev.market]) : [];
+        for (const m of evMarkets) {
+          // Inherit game timing/live info from the parent event when missing
+          if (!m.gameStartTime) m.gameStartTime = ev.gameStartTime || ev.startTime || ev.startDate || null;
+          if (!m.endDate)       m.endDate       = ev.endDate || ev.endTime || null;
+          if (m.eventLive === undefined) m.eventLive = ev.live ?? ev.isLive ?? undefined;
+          if (!m.question)      m.question      = m.title || ev.title || ev.name || null;
+          mkts.push(m);
+        }
+        // Some responses may put markets fields directly on the event
+        if (!evMarkets.length && (ev?.slug || ev?.id) && (ev?.outcomePrices || ev?.bestAsk || ev?.marketSides)) {
+          mkts.push(ev);
+        }
+      }
+      return mkts;
+    }
+    return data?.markets || [];
+  };
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (r.status !== "fulfilled") continue;
-    const arr = r.value?.data?.markets || [];
-    // Only log non-empty responses (tag sweeps for out-of-season sports return 0)
+    const data = r.value?.data;
+    const arr = extractMarkets(data);
+    const label = (urls[i].match(/\/v2\/(?:sports|leagues)\/([^/]+)\//) || [])[1]
+               || ((urls[i].match(/tags=([^&]*)/) || [])[1])
+               || "v1-datefilter";
     if (arr.length) {
       const first = arr[0];
-      const tag = (urls[i].match(/tags=([^&]*)/) || [])[1] || "category";
-      console.log(`  🌐 ${decodeURIComponent(tag)} → ${arr.length} | first: ${first?.title?.slice(0,30) || "-"} | start=${first?.gameStartTime || first?.startDate || "-"}`);
+      console.log(`  🌐 ${decodeURIComponent(label)} → ${arr.length} | ${first?.question?.slice(0,30) || first?.slug || "-"} | start=${first?.gameStartTime || "-"}`);
+      // 🔬 Dump ONE raw sample so the exact v2 shape is visible in logs
+      if (!shapeDumped && urls[i].includes("/v2/")) {
+        shapeDumped = true;
+        console.log(`  🔬 V2 RAW SAMPLE: ${JSON.stringify(data).slice(0, 1200)}`);
+      }
     }
     const urlUsed = urls[i] || "";
-    const isLiveEndpoint = urlUsed.includes("?active=true&archived=false") && !urlUsed.includes("closed=false");
+    const isLiveEndpoint = true; // v2 events endpoints serve current/live events
     
     for (const m of arr) {
       const key = m.slug || m.id;
@@ -275,7 +310,7 @@ export async function fetchSportsMoneylines() {
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`🔖 v9-DATE-FILTER | 📡 ${raw.length} markets from tag sweeps (pre-filter)`);
+  console.log(`🔖 v10-V2-EVENTS | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
 
   // ── LOG ALL MARKETS to see what's actually available ──
   for (const m of raw.slice(0, 10)) {
@@ -284,48 +319,46 @@ export async function fetchSportsMoneylines() {
 
   // ── Build output ─────────────────────────────────────────
   const out = [];
+  const rej = { noslug: 0, active: 0, resolved: 0, prop: 0, stale: 0, faroff: 0, nodates: 0 };
 
   for (const m of raw) {
     const slug = m.slug || m.id || m.marketId;
-    if (!slug) continue;
+    if (!slug) { rej.noslug++; continue; }
     
-    // SIMPLE: Accept if active and not resolved
-    // Ignore closed field — polymarket.us marks live markets as closed=true
-    if (m.active !== true) continue;
-    if (m.resolved === true) continue;
+    // Relaxed: only reject when explicitly inactive/resolved.
+    // v2 event markets may omit these fields entirely.
+    if (m.active === false) { rej.active++; continue; }
+    if (m.resolved === true || m.closed === true && m.eventLive === false) { rej.resolved++; continue; }
 
     // ── NO PROPS: moneylines only ──
-    // Reject SPREAD / TOTAL / PROP typed markets outright
     const smt = (m.sportsMarketTypeV2 || m.sportsMarketType || "").toUpperCase();
-    if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") continue;
+    if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") { rej.prop++; continue; }
     // Text-based prop rejection for markets missing the type field
     const qText = m.question || m.title || "";
-    if (/first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|will .* (score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|over\/under|\bspread\b|\btotal\b|player prop/i.test(qText)) continue;
+    if (/first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|will .* (score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|over\/under|\bspread\b|\btotal\b|player prop/i.test(qText)) { rej.prop++; continue; }
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
-    // Don't reject markets without prices — market list may not populate prices
-    // Bot's scan loop will fetch BBO and check if edge meets requirements
-    // Use est for fallback display/sorting, default to 0.50 if missing
 
-    // ── HARD DATE GATE (v9) ──
-    // CRITICAL: only gameStartTime is the actual game time. startDate is when
-    // the MARKET was created (can be weeks earlier) — v8 wrongly used it as a
-    // fallback and rejected the only 5 real current markets in the batch.
+    // ── DATE GATE (v10) ──
+    // Only gameStartTime is real game time. Markets whose parent event is
+    // flagged live bypass the gate entirely.
     const gameStart = m.gameStartTime || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
     const source = marketSource.get(slug) || { isLiveEndpoint: false };
+    const evLive = m.eventLive === true;
 
-    if (startMs) {
-      const hoursOut = (startMs - now) / 3_600_000;
-      if (hoursOut < -8)  continue;   // game started >8h ago → over, skip
-      if (hoursOut > 24)  continue;   // starts >24h away → skip
-    } else {
-      // No gameStartTime → judge by endDate only:
-      if (endMs && endMs < now) continue;              // already ended → skip
-      if (!endMs) continue;                            // no dates at all → can't verify freshness, skip
-      if (endMs - now > 14 * 24 * 3_600_000) continue; // ends >2wks out → season-long future, not a game
+    if (!evLive) {
+      if (startMs) {
+        const hoursOut = (startMs - now) / 3_600_000;
+        if (hoursOut < -8)  { rej.stale++;  continue; }  // started >8h ago → over
+        if (hoursOut > 24)  { rej.faroff++; continue; }  // starts >24h away
+      } else {
+        if (endMs && endMs < now) { rej.stale++; continue; }  // already ended
+        if (!endMs) { rej.nodates++; continue; }              // no dates → unverifiable
+        // ends in the future & no gameStart → keep (live games; book-state check guards entry)
+      }
     }
 
     const league    = detectLeague(m);
@@ -372,6 +405,7 @@ export async function fetchSportsMoneylines() {
 
   const liveCount = out.filter(x => x.isLive).length;
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} 🔴 live, ${out.length - liveCount} ⏳ upcoming)`);
+  console.log(`  ⛔ rejected: inactive=${rej.active} resolved=${rej.resolved} prop=${rej.prop} stale=${rej.stale} faroff=${rej.faroff} nodates=${rej.nodates}`);
   for (const s of out.slice(0, 8)) {
     console.log(`  ✅ SURVIVOR: ${s.slug} | ${s.question?.slice(0,35) || "-"} | gameStart=${s.gameStartTime || "-"} end=${s.endDate || "-"}`);
   }
