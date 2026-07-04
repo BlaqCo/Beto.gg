@@ -340,9 +340,9 @@ export async function fetchSportsMoneylines() {
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
 
-    // ── DATE GATE (IMPROVED) ──
-    // Focus on LIVE games (started within last 30 min) and UPCOMING games (next 2 hours)
-    // Reject: games that started >30 min ago, games starting >2 hours away
+    // ── DATE GATE (v10) ──
+    // Only gameStartTime is real game time. Markets whose parent event is
+    // flagged live bypass the gate entirely.
     const gameStart = m.gameStartTime || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
@@ -352,25 +352,20 @@ export async function fetchSportsMoneylines() {
     if (!evLive) {
       if (startMs) {
         const hoursOut = (startMs - now) / 3_600_000;
-        const minutesOut = hoursOut * 60;
-        
-        // REJECT: games that started >30 minutes ago (stale, likely over or deep in play)
-        if (minutesOut < -30) { rej.stale++; continue; }
-        
-        // REJECT: games starting >2 hours away (too far out, prices unstable)
-        if (hoursOut > 2) { rej.faroff++; continue; }
+        if (hoursOut < -8)  { rej.stale++;  continue; }  // started >8h ago → over
+        if (hoursOut > 24)  { rej.faroff++; continue; }  // starts >24h away
       } else {
         if (endMs && endMs < now) { rej.stale++; continue; }  // already ended
         if (!endMs) { rej.nodates++; continue; }              // no dates → unverifiable
+        // ends in the future & no gameStart → keep (live games; book-state check guards entry)
       }
     }
 
     const league    = detectLeague(m);
     // A market is LIVE if:
-    // 1. It came from the LIVE endpoint, OR
+    // 1. It came from the LIVE endpoint (no closed=false filter), OR
     // 2. It has a gameStartTime in the past (started < now)
-    // 3. It started within the last 30 minutes (actively playing)
-    const isLive    = source.isLiveEndpoint || (startMs && startMs <= now && (now - startMs) < 30 * 60_000);
+    const isLive    = source.isLiveEndpoint || (startMs && startMs <= now);
     const hoursUntil = isLive ? 0 : (startMs ? Math.round((startMs - now) / 3_600_000 * 10) / 10 : null);
 
     // Compute ask/bid from available fields (est may be null)
@@ -530,7 +525,9 @@ export async function getBuyingPower() {
 // ── buyYesFOK ────────────────────────────────────────────────────
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
   const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
-  const qty   = Math.floor(sizeUsd / limit);
+  let qty     = Math.floor(sizeUsd / limit);
+  // HARD CAP: whole contracts, total cost can NEVER exceed sizeUsd
+  while (qty > 0 && qty * limit > sizeUsd + 1e-9) qty--;
   if (qty < 1) return { filled: false, error: `size $${sizeUsd} < 1 contract @ ${limit.toFixed(2)}` };
   try {
     const order = await signedRequest("POST", "/v1/orders", {
