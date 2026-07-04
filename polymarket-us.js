@@ -17,6 +17,9 @@
 import axios from "axios";
 import crypto from "crypto";
 
+// ── VERSION BANNER: confirms which build is live ──
+console.log("🔖 polymarket-us.js v7-TAG-SWEEP loaded — per-sport tag discovery + book-state check");
+
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
 
