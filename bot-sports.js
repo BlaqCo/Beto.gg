@@ -16,10 +16,10 @@ import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 12;      // flat $12 per bet
-const BET_MIN       = 12;
-const FAV_MIN       = 0.35;    // 35¢ minimum - VERY loose
-const FAV_MAX       = 0.90;    // up to 90¢ - catch anything with edge
+const BET_SIZE      = 15;      // flat $15 per bet
+const BET_MIN       = 15;
+const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
+const FAV_MAX       = 0.74;    // PRODUCTION: 74¢ maximum favorite
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 12;      // 12 concurrent slots
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
@@ -176,7 +176,7 @@ export async function runScanCycle() {
       const maxSpread = isTennis ? 0.30 : isEsports ? 0.25 : isCombat ? 0.20 : 0.15;
 
       if (spread > maxSpread) {
-        console.log(`  ⚠️ Spread ${(spread*100).toFixed(0)}¢ > ${(maxSpread*100).toFixed(0)}¢ (accepting anyway) | ${m.question?.slice(0,35)}`);
+        return null; // PRODUCTION: reject wide spreads — poor liquidity, bad fills
       }
       return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
     } catch (e) {
