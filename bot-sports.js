@@ -9,7 +9,7 @@
 
 import { recordBet, hasActiveBet, getStats, getAllActiveBets,
          closeBet, getDryBalance, countBetsForMarket } from "./state.js";
-import { fetchSportsMoneylines, getBBO, getSettlement,
+import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
          buyYesFOK, getBuyingPower, getOpenPositions,
          preflightUS } from "./polymarket-us.js";
 
@@ -242,6 +242,21 @@ export async function runScanCycle() {
     let entryPrice = m.ask;
     let betSize    = BET_SIZE;
     let orderId    = `dry_${Date.now()}`;
+
+    // ── GROUND TRUTH CHECK: market must be genuinely OPEN for trading ──
+    // Official market state from the order book. Stale/resolved markets
+    // report EXPIRED/TERMINATED here even when list metadata says active.
+    const book = await getBookState(m.slug);
+    if (!book.isOpen) {
+      console.log(`  ⛔ Not tradeable (state=${book.state}) | ${m.question?.slice(0, 40)}`);
+      continue;
+    }
+    // Use live book ask if available (fresher than BBO from seconds ago)
+    if (book.bestAsk && book.bestAsk > 0.01 && book.bestAsk < 0.99) {
+      entryPrice = book.bestAsk;
+      m.ask = book.bestAsk;
+    }
+    console.log(`  ✅ Market OPEN | ask=${cents(m.ask)} askQty=${book.askQty} | ${m.question?.slice(0, 40)}`);
 
     if (!DRY_RUN) {
       attempts++;
