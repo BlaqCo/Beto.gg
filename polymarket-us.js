@@ -18,7 +18,7 @@ import axios from "axios";
 import crypto from "crypto";
 
 // ── VERSION BANNER: confirms which build is live ──
-console.log("🔖 polymarket-us.js v8-LIVE-ONLY loaded — tag sweeps, live+24h window, book-state check");
+console.log("🔖 polymarket-us.js v9-DATE-FILTER loaded — date-filtered discovery, fixed gameStart gate");
 
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
@@ -275,7 +275,7 @@ export async function fetchSportsMoneylines() {
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`🔖 v8-LIVE-ONLY | 📡 ${raw.length} markets from tag sweeps (pre-filter)`);
+  console.log(`🔖 v9-DATE-FILTER | 📡 ${raw.length} markets from tag sweeps (pre-filter)`);
 
   // ── LOG ALL MARKETS to see what's actually available ──
   for (const m of raw.slice(0, 10)) {
@@ -308,20 +308,24 @@ export async function fetchSportsMoneylines() {
     // Bot's scan loop will fetch BBO and check if edge meets requirements
     // Use est for fallback display/sorting, default to 0.50 if missing
 
-    // ── HARD DATE GATE (applies to ALL markets, every endpoint) ──
-    // This is what removes the stale Nov-2025 resolved games.
-    // Keep only: games that started within the last 24h (live) or start within 48h (upcoming).
-    const gameStart = m.gameStartTime || m.startDate || null;
+    // ── HARD DATE GATE (v9) ──
+    // CRITICAL: only gameStartTime is the actual game time. startDate is when
+    // the MARKET was created (can be weeks earlier) — v8 wrongly used it as a
+    // fallback and rejected the only 5 real current markets in the batch.
+    const gameStart = m.gameStartTime || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
     const source = marketSource.get(slug) || { isLiveEndpoint: false };
 
     if (startMs) {
       const hoursOut = (startMs - now) / 3_600_000;
-      if (hoursOut < -8)  continue;   // started >8h ago → game is over, skip (LIVE ONLY)
-      if (hoursOut > 24)  continue;   // starts >24h away → too far out, skip
-    } else if (endMs && endMs < now) {
-      continue;                       // no start time but already ended → skip
+      if (hoursOut < -8)  continue;   // game started >8h ago → over, skip
+      if (hoursOut > 24)  continue;   // starts >24h away → skip
+    } else {
+      // No gameStartTime → judge by endDate only:
+      if (endMs && endMs < now) continue;              // already ended → skip
+      if (!endMs) continue;                            // no dates at all → can't verify freshness, skip
+      if (endMs - now > 14 * 24 * 3_600_000) continue; // ends >2wks out → season-long future, not a game
     }
 
     const league    = detectLeague(m);
@@ -368,6 +372,9 @@ export async function fetchSportsMoneylines() {
 
   const liveCount = out.filter(x => x.isLive).length;
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} 🔴 live, ${out.length - liveCount} ⏳ upcoming)`);
+  for (const s of out.slice(0, 8)) {
+    console.log(`  ✅ SURVIVOR: ${s.slug} | ${s.question?.slice(0,35) || "-"} | gameStart=${s.gameStartTime || "-"} end=${s.endDate || "-"}`);
+  }
   if (out.length > 0) {
     console.log("  Top markets: " + out.slice(0, 8).map(m =>
       `${m.isLive ? "🔴" : "⏳"} ${m.league} ${(m.est * 100).toFixed(0)}¢ ${m.question.slice(0, 40)}`
