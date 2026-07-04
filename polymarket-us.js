@@ -217,21 +217,24 @@ export async function fetchSportsMoneylines() {
   const startMax = new Date(now + 48 * 3600_000).toISOString();
   const ML = "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE";
 
+  // ★★★ THE FIX — RESTORED FROM THE WORKING VERSION (June 29) ★★★
+  // Proof from live trade history: every filled bet (tennis, UFC, KBO, MLB,
+  // soccer, esports) was discovered via PER-SPORT TAG queries.
+  // The generic categories=sports listing returns a stale NFL dump — broken
+  // on Polymarket's side. Tag queries return CURRENT markets. Tag sweeps are
+  // the primary discovery mechanism; everything else is fallback.
+  const LIVE_BASE = `${GATEWAY}/v1/markets?active=true&archived=false`;
+  const SPORT_TAGS = ["MLB","WNBA","NBA","NFL","NHL","Tennis","Esports",
+                      "CS2","Valorant","Soccer","UFC","MMA","Cricket","Golf",
+                      "KBO","NPB","Darts","Boxing","Hockey","Baseball","Basketball"];
+
   const urls = [
-    // ★ KEY FIX: orderBy=createdAt desc is a DOCUMENTED sort field.
-    // Today's games were created recently → they come FIRST.
-    // (Our earlier orderBy=gameStartTime was an invalid field — silently ignored,
-    //  so the API kept returning the oldest 1000 markets.)
+    // ── PRIMARY: per-sport tag sweeps (this is what worked) ──
+    ...SPORT_TAGS.map(t => `${LIVE_BASE}&tags=${encodeURIComponent(t)}&limit=100`),
+    // ── Fallbacks: newest-first + date-filtered category queries ──
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=createdAt&orderDirection=desc&limit=500`,
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=createdAt&orderDirection=desc&limit=500&offset=500`,
-    // volume24hr ordering — live games have today's volume (volumeNum is documented)
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=volumeNum&orderDirection=desc&limit=500`,
-    // Server-side date filters (documented): only markets ending in the future
-    `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}&limit=500`,
-    // Safety net: newest markets with no moneyline filter (client filter catches props)
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&orderBy=createdAt&orderDirection=desc&limit=500`,
   ];
 
   const results = await Promise.allSettled(
@@ -246,14 +249,14 @@ export async function fetchSportsMoneylines() {
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
-    if (r.status !== "fulfilled") {
-      console.log(`  🌐 URL#${i} FAILED: ${r.reason?.message?.slice(0,80)}`);
-      continue;
-    }
+    if (r.status !== "fulfilled") continue;
     const arr = r.value?.data?.markets || [];
-    // Log what each URL returned so we know which date filter works
-    const first = arr[0];
-    console.log(`  🌐 URL#${i} → ${arr.length} markets | first: ${first?.title?.slice(0,30) || "-"} | gameStart=${first?.gameStartTime || first?.startDate || "-"} closed=${first?.closed}`);
+    // Only log non-empty responses (tag sweeps for out-of-season sports return 0)
+    if (arr.length) {
+      const first = arr[0];
+      const tag = (urls[i].match(/tags=([^&]*)/) || [])[1] || "category";
+      console.log(`  🌐 ${decodeURIComponent(tag)} → ${arr.length} | first: ${first?.title?.slice(0,30) || "-"} | start=${first?.gameStartTime || first?.startDate || "-"}`);
+    }
     const urlUsed = urls[i] || "";
     const isLiveEndpoint = urlUsed.includes("?active=true&archived=false") && !urlUsed.includes("closed=false");
     
