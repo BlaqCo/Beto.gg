@@ -82,6 +82,22 @@ body::before{
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 
 /* ── Hero metrics ── */
+.verdict{
+  display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+  padding:14px 18px;margin:0 0 1px 0;
+  background:var(--panel);border:1px solid var(--border);
+  border-left:3px solid #5a6572;
+}
+.verdict.up{border-left-color:#2eff7b;box-shadow:inset 0 0 40px rgba(46,255,123,.04)}
+.verdict.down{border-left-color:#ff4560;box-shadow:inset 0 0 40px rgba(255,69,96,.04)}
+.verdict-word{font-family:var(--mono,monospace);font-weight:800;font-size:20px;letter-spacing:.14em}
+.verdict.up .verdict-word{color:#2eff7b;text-shadow:0 0 14px rgba(46,255,123,.45)}
+.verdict.down .verdict-word{color:#ff4560;text-shadow:0 0 14px rgba(255,69,96,.45)}
+.verdict-amt{font-family:var(--mono,monospace);font-weight:700;font-size:20px}
+.verdict.up .verdict-amt{color:#2eff7b}
+.verdict.down .verdict-amt{color:#ff4560}
+.verdict-detail{font-size:11px;color:#5a6572;letter-spacing:.06em;margin-left:auto}
+@media(max-width:640px){.verdict-detail{margin-left:0;width:100%}}
 .hero-metrics{
   display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;
   background:var(--border);
@@ -331,6 +347,13 @@ canvas#pnl-chart{width:100%;height:100%}
   </div>
 </header>
 
+<!-- NET VERDICT — the one-glance answer: up or down? -->
+<div class="verdict" id="verdict">
+  <span class="verdict-word" id="verdict-word">—</span>
+  <span class="verdict-amt" id="verdict-amt"></span>
+  <span class="verdict-detail" id="verdict-detail">calculating…</span>
+</div>
+
 <!-- HERO METRICS -->
 <div class="hero-metrics">
   <div class="metric">
@@ -467,8 +490,24 @@ tick(); setInterval(tick,1000);
 const $  = id => document.getElementById(id);
 const pnlCls = n => n>0?'c-green':n<0?'c-red':'c-neutral';
 const fmt$ = n => '$'+Math.abs(parseFloat(n)||0).toFixed(2);
-const fmtPnl = n => { const v=parseFloat(n)||0; return (v>=0?'+':'')+fmt$(v); };
+const fmtPnl = n => { const v=parseFloat(n)||0; return (v>=0?'+':'−')+fmt$(v); };
+const pnlArrow = n => { const v=parseFloat(n)||0; return v>0?'▲ ':v<0?'▼ ':''; };
 const cleanQ = q => (q||'').replace(/^\[.*?\]\s*/,'');
+
+// ── Net verdict: settled + open, in plain English ───────────────
+function renderVerdict(){
+  const settled = window._settledPnl, open = window._openPnl;
+  if (settled === undefined && open === undefined) return;
+  const net = (settled||0) + (open||0);
+  const el = $('verdict'); if(!el) return;
+  el.className = 'verdict ' + (net>0.005?'up':net<-0.005?'down':'');
+  $('verdict-word').textContent = net>0.005?'▲ UP':net<-0.005?'▼ DOWN':'● FLAT';
+  $('verdict-amt').textContent  = fmtPnl(net);
+  const parts = [];
+  if (settled !== undefined) parts.push('settled '+fmtPnl(settled));
+  if (open    !== undefined) parts.push('open '+fmtPnl(open));
+  $('verdict-detail').textContent = 'net of ' + parts.join(' · ');
+}
 
 function sport(q){
   const s=(q||'').toLowerCase();
@@ -753,7 +792,8 @@ function drawChart(data){
   _chartAnim = requestAnimationFrame(frame);
 
   $('chart-meta').textContent =
-    (lastVal >= 0 ? '+' : '') + '$' + Math.abs(lastVal).toFixed(2) + ' cumulative';
+    pnlArrow(lastVal) + fmtPnl(lastVal) + ' cumulative (settled)';
+  $('chart-meta').className = 'section-meta ' + pnlCls(lastVal);
 }
 
 // ── Sport breakdown ───────────────────────────────────────────────
@@ -779,7 +819,7 @@ function renderSportBreakdown(history){
     const total  = v.w + v.l;
     const barPct = total > 0 ? (total / maxGames) * 100 : 0;
     const winning = v.pnl >= 0;
-    const pnlStr  = (v.pnl>=0?'+':'') + v.pnl.toFixed(2);
+    const pnlStr  = fmtPnl(v.pnl);
     return `<div class="sport-row">
       <span class="sport-tag">${sp}</span>
       <div class="sport-bar-wrap">
@@ -788,7 +828,7 @@ function renderSportBreakdown(history){
              style="width:0%"></div>
       </div>
       <span class="sport-stat">${v.w}W/${v.l}L</span>
-      <span class="sport-pnl ${winning?'c-green':'c-red'}">${pnlStr}</span>
+      <span class="sport-pnl ${pnlCls(v.pnl)}">${pnlStr}</span>
     </div>`;
   }).join('');
 
@@ -842,8 +882,10 @@ function renderPositions(positions){
 
   const liveSum = positions.reduce((a,p)=>a+parseFloat(p.openPnl||0),0);
   const lpEl=$('open-pnl');
-  lpEl.textContent=(liveSum>=0?'+':'')+'$'+Math.abs(liveSum).toFixed(2);
+  lpEl.textContent=pnlArrow(liveSum)+fmtPnl(liveSum);
   lpEl.className='metric-value '+pnlCls(liveSum);
+  const osEl=$('open-sub'); if(osEl) osEl.textContent='unrealized · '+positions.length+' open position'+(positions.length===1?'':'s');
+  window._openPnl = liveSum; renderVerdict();
 
   $('pos-list').innerHTML = positions.map(p=>{
     const rawQ = p.question||p.slug||'Unknown';
@@ -899,7 +941,7 @@ function renderHistory(data){
     return `<div class="hist-row">
       <span class="hist-result ${won?'hist-win':'hist-loss'}">${won?'WIN':'LOSS'}</span>
       <span class="hist-q">> ${q.slice(0,60)}</span>
-      <span class="hist-pnl ${pnlCls(pl)}">${(pl>=0?'+':'')+fmt$(pl)}</span>
+      <span class="hist-pnl ${pnlCls(pl)}">${fmtPnl(pl)}</span>
       <span class="hist-date">${date}</span>
     </div>`;
   }).join('');
@@ -960,9 +1002,10 @@ async function refresh(){
     // P/L
     const totalPnl = parseFloat(st.totalPnl ?? st.pnl ?? 0);
     const pnlEl = $('pnl');
-    pnlEl.textContent = (totalPnl>=0?'+':'')+'$'+Math.abs(totalPnl).toFixed(2);
+    pnlEl.textContent = pnlArrow(totalPnl)+fmtPnl(totalPnl);
     pnlEl.className   = 'metric-value '+pnlCls(totalPnl);
-    $('pnl-sub').textContent = 'settled bets';
+    $('pnl-sub').textContent = 'realized · settled bets';
+    window._settledPnl = totalPnl; renderVerdict();
 
     // Record + win rate
     const w=st.wins||0, l=st.losses||0, total=w+l;
@@ -980,8 +1023,9 @@ async function refresh(){
     // Open P/L — from positions or stats
     const openPnl = parseFloat(st.openPnl ?? 0);
     const openEl  = $('open-pnl');
-    openEl.textContent = (openPnl>=0?'+':'')+'$'+Math.abs(openPnl).toFixed(2);
+    openEl.textContent = pnlArrow(openPnl)+fmtPnl(openPnl);
     openEl.className   = 'metric-value '+pnlCls(openPnl);
+    if(window._openPnl===undefined){ window._openPnl = openPnl; renderVerdict(); }
 
     // Positions
     const positions = posR.status==='fulfilled'?(posR.value||[]):[];
