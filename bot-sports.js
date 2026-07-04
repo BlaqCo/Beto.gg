@@ -13,6 +13,7 @@ import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
          buyYesFOK, getBuyingPower, getOpenPositions,
          preflightUS } from "./polymarket-us.js";
 
+const everBet = new Set();  // slugs bet at least once — never re-enter
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
@@ -239,11 +240,17 @@ export async function runScanCycle() {
     }
   }
 
+  // ── ONE BET PER MARKET, EVER (no stacking) ──
+  // Permanent per-process record of every slug the bot has entered, seeded
+  // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
+  for (const b of getAllActiveBets()) everBet.add(b.slug);
+
   let entryErrors = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (getAllActiveBets().length >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
+    if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
     if (hasActiveBet(m.slug)) continue;
     if (!DRY_RUN && ownedSlugs.has(m.slug)) {
       console.log(`  ⏭ Already holding ${m.slug.slice(0, 24)} on Polymarket`);
@@ -313,6 +320,7 @@ export async function runScanCycle() {
       direction:          m.question.slice(0, 30),
     });
 
+    everBet.add(m.slug);   // permanent: this market can never be bet again
     betsPlaced++;
     const payout = (betSize / entryPrice).toFixed(2);
     console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
