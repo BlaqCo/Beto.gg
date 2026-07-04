@@ -18,7 +18,7 @@ import axios from "axios";
 import crypto from "crypto";
 
 // ── VERSION BANNER: confirms which build is live ──
-console.log("🔖 polymarket-us.js v7-TAG-SWEEP loaded — per-sport tag discovery + book-state check");
+console.log("🔖 polymarket-us.js v8-LIVE-ONLY loaded — tag sweeps, live+24h window, book-state check");
 
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
@@ -275,7 +275,7 @@ export async function fetchSportsMoneylines() {
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`📡 [sports API] ${raw.length} total markets fetched`);
+  console.log(`🔖 v8-LIVE-ONLY | 📡 ${raw.length} markets from tag sweeps (pre-filter)`);
 
   // ── LOG ALL MARKETS to see what's actually available ──
   for (const m of raw.slice(0, 10)) {
@@ -318,8 +318,8 @@ export async function fetchSportsMoneylines() {
 
     if (startMs) {
       const hoursOut = (startMs - now) / 3_600_000;
-      if (hoursOut < -24) continue;   // game started >24h ago → stale, skip
-      if (hoursOut > 48)  continue;   // starts >48h away → too far out, skip
+      if (hoursOut < -8)  continue;   // started >8h ago → game is over, skip (LIVE ONLY)
+      if (hoursOut > 24)  continue;   // starts >24h away → too far out, skip
     } else if (endMs && endMs < now) {
       continue;                       // no start time but already ended → skip
     }
