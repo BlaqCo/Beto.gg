@@ -584,7 +584,9 @@ async function loadBots() {
 }
 
 (async () => {
-  await state.ready;
+  // Load state in background (don't block scan loop startup)
+  state.ready.catch(err => console.error("⚠️ State load error:", err.message));
+  
   await loadBots();
 
   // ── Load bet history into log on boot (LIVE mode only) ──────────
