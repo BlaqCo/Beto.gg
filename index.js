@@ -688,11 +688,18 @@ async function loadBots() {
   }
 
   // Sports scanner — 3s interval
+  let scanCount = 0;
   setInterval(async () => {
     try {
-      if (sportsBot?.runScanCycle) await sportsBot.runScanCycle();
+      scanCount++;
+      if (scanCount % 10 === 1) console.log(`[DEBUG] Sports scan cycle #${scanCount} — sportsBot loaded: ${!!sportsBot}, has runScanCycle: ${!!(sportsBot?.runScanCycle)}`);
+      if (sportsBot?.runScanCycle) {
+        await sportsBot.runScanCycle();
+      } else {
+        if (scanCount === 1) console.error("[ERROR] sportsBot not loaded or runScanCycle not found");
+      }
     } catch (err) {
-      console.error("Sports scan error:", err.message);
+      console.error("Sports scan error:", err.message, err.stack?.split('\n')[1]);
     }
   }, 3000);
 
