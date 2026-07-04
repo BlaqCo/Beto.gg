@@ -256,20 +256,25 @@ export async function runScanCycle() {
     let betSize    = BET_SIZE;
     let orderId    = `dry_${Date.now()}`;
 
-    // ── GROUND TRUTH CHECK: market must be genuinely OPEN for trading ──
-    // Official market state from the order book. Stale/resolved markets
-    // report EXPIRED/TERMINATED here even when list metadata says active.
+    // ── Book-state check (ADVISORY, fail-open) ──
+    // Only hard-skip on EXPLICIT dead states. If the endpoint errors or the
+    // shape is unknown, proceed — the FOK order is self-protecting: it either
+    // fills at our price on a live book or does nothing.
     const book = await getBookState(m.slug);
-    if (!book.isOpen) {
-      console.log(`  ⛔ Not tradeable (state=${book.state}) | ${m.question?.slice(0, 40)}`);
+    const st = String(book.state || "").toUpperCase();
+    if (/EXPIRED|TERMINATED|RESOLVED|SETTLED|CLOSED|HALT|SUSPEND|PAUSED|CANCEL/.test(st)) {
+      console.log(`  ⛔ Dead market (state=${st}) | ${m.question?.slice(0, 40)}`);
       continue;
+    }
+    if (!/OPEN/.test(st)) {
+      console.log(`  ⚠️ Book state=${st || "?"} — proceeding, FOK protects | ${m.question?.slice(0, 35)}`);
     }
     // Use live book ask if available (fresher than BBO from seconds ago)
     if (book.bestAsk && book.bestAsk > 0.01 && book.bestAsk < 0.99) {
       entryPrice = book.bestAsk;
       m.ask = book.bestAsk;
     }
-    console.log(`  ✅ Market OPEN | ask=${cents(m.ask)} askQty=${book.askQty} | ${m.question?.slice(0, 40)}`);
+    console.log(`  ✅ Attempting entry | ask=${cents(m.ask)}${book.askQty ? ` askQty=${book.askQty}` : ""} | ${m.question?.slice(0, 40)}`);
 
     if (!DRY_RUN) {
       attempts++;
