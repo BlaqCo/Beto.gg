@@ -218,14 +218,20 @@ export async function fetchSportsMoneylines() {
   const ML = "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE";
 
   const urls = [
-    // Primary: open moneyline markets ending in the future
+    // ★ KEY FIX: orderBy=createdAt desc is a DOCUMENTED sort field.
+    // Today's games were created recently → they come FIRST.
+    // (Our earlier orderBy=gameStartTime was an invalid field — silently ignored,
+    //  so the API kept returning the oldest 1000 markets.)
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=createdAt&orderDirection=desc&limit=500`,
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=createdAt&orderDirection=desc&limit=500&offset=500`,
+    // volume24hr ordering — live games have today's volume (volumeNum is documented)
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&orderBy=volumeNum&orderDirection=desc&limit=500`,
+    // Server-side date filters (documented): only markets ending in the future
     `${GATEWAY}/v1/markets?active=true&closed=false&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
-    // In-play markets sometimes flip closed=true mid-game — same query without closed filter
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
-    // Start-date window variant (live + next 48h)
     `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}&limit=500`,
-    // Safety net: no moneyline filter in case field is missing on some markets (client filter catches props)
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
+    // Safety net: newest markets with no moneyline filter (client filter catches props)
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&orderBy=createdAt&orderDirection=desc&limit=500`,
   ];
 
   const results = await Promise.allSettled(
@@ -402,6 +408,28 @@ export async function getBBO(slug) {
   } catch (err) {
     console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
     return null;
+  }
+}
+
+// ── getBookState ─────────────────────────────────────────────────
+// GROUND TRUTH tradeability check (official docs): the /book endpoint
+// returns state = MARKET_STATE_OPEN only if the market is trading NOW.
+// Stale/resolved markets return EXPIRED / TERMINATED / HALTED.
+export async function getBookState(slug) {
+  try {
+    const { data } = await axios.get(
+      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/book`, { timeout: 8_000 });
+    const d = data?.marketData || {};
+    return {
+      state: d.state || "UNKNOWN",
+      isOpen: d.state === "MARKET_STATE_OPEN",
+      bestBid: amountVal(d.bids?.[0]?.px),
+      bestAsk: amountVal(d.offers?.[0]?.px),
+      bidQty:  Number(d.bids?.[0]?.qty || 0),
+      askQty:  Number(d.offers?.[0]?.qty || 0),
+    };
+  } catch (err) {
+    return { state: "ERROR", isOpen: false, bestBid: null, bestAsk: null, bidQty: 0, askQty: 0 };
   }
 }
 
