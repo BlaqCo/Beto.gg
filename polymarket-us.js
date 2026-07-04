@@ -462,21 +462,28 @@ export async function getBBO(slug) {
 // GROUND TRUTH tradeability check (official docs): the /book endpoint
 // returns state = MARKET_STATE_OPEN only if the market is trading NOW.
 // Stale/resolved markets return EXPIRED / TERMINATED / HALTED.
+let _bookShapeLogged = false;
 export async function getBookState(slug) {
   try {
     const { data } = await axios.get(
       `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/book`, { timeout: 8_000 });
-    const d = data?.marketData || {};
+    if (!_bookShapeLogged) {
+      _bookShapeLogged = true;
+      console.log(`  🔬 BOOK RAW SAMPLE (${slug}): ${JSON.stringify(data).slice(0, 500)}`);
+    }
+    const d = data?.marketData || data || {};
+    const state = d.state || d.status || d.marketState || "UNKNOWN";
     return {
-      state: d.state || "UNKNOWN",
-      isOpen: d.state === "MARKET_STATE_OPEN",
-      bestBid: amountVal(d.bids?.[0]?.px),
-      bestAsk: amountVal(d.offers?.[0]?.px),
+      state,
+      isOpen: /OPEN/i.test(String(state)),
+      bestBid: amountVal(d.bids?.[0]?.px) ?? amountVal(d.bestBid),
+      bestAsk: amountVal(d.offers?.[0]?.px) ?? amountVal(d.asks?.[0]?.px) ?? amountVal(d.bestAsk),
       bidQty:  Number(d.bids?.[0]?.qty || 0),
-      askQty:  Number(d.offers?.[0]?.qty || 0),
+      askQty:  Number(d.offers?.[0]?.qty || d.asks?.[0]?.qty || 0),
     };
   } catch (err) {
-    return { state: "ERROR", isOpen: false, bestBid: null, bestAsk: null, bidQty: 0, askQty: 0 };
+    // Network/404 → state UNKNOWN (fail-open); NOT a dead-market signal
+    return { state: "UNKNOWN", isOpen: false, bestBid: null, bestAsk: null, bidQty: 0, askQty: 0 };
   }
 }
 
