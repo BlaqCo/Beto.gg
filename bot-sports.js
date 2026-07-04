@@ -226,6 +226,19 @@ export async function runScanCycle() {
   let attempts   = 0;
   const MAX_ATTEMPTS = 12;
 
+  // ── Restore: fetch positions already held on Polymarket (prevents double-betting).
+  // null = couldn't verify → in live mode we skip entries this scan (safe default).
+  let ownedSlugs = null;
+  if (!DRY_RUN && candidates.length) {
+    try {
+      const positions = await getOpenPositions();
+      ownedSlugs = new Set((positions || []).map(p => p.slug || p.marketSlug || p.market?.slug).filter(Boolean));
+    } catch (e) {
+      console.log(`  ⚠️ Could not fetch open positions (${e.message}) — skipping entries this scan`);
+      ownedSlugs = null;
+    }
+  }
+
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (getAllActiveBets().length >= MAX_CONC) break;
