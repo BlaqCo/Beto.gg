@@ -168,16 +168,12 @@ export async function runScanCycle() {
       const livePx = bbo.ask;
       const spread = bbo.ask - bbo.bid;
 
-      // Spread check by sport type - VERY RELAXED
-      const q = (m.question || "").toLowerCase();
-      const league = (m.league || "").toUpperCase();
-      const isTennis  = ["TENNIS","ITF","ATP","WTA"].includes(league) || /atp|wta|itf|challenger/i.test(q);
-      const isEsports = ["ESPORTS"].includes(league) || /esport|cs2|valorant|dota/i.test(q);
-      const isCombat  = /ufc|mma|boxing|fight|round|knockout/i.test(q);
-      const maxSpread = isTennis ? 0.30 : isEsports ? 0.25 : isCombat ? 0.20 : 0.15;
+      // v11: TIGHT spread caps — we pay the ask, so the spread is a direct
+      // cost. Old caps (15-30¢) were bleeding up to ~15¢ of edge per entry.
+      const maxSpread = m.isLive ? 0.06 : 0.04;
 
       if (spread > maxSpread) {
-        return null; // PRODUCTION: reject wide spreads — poor liquidity, bad fills
+        return null; // illiquid book — entering at the ask would burn the edge
       }
       return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
     } catch (e) {
@@ -199,9 +195,12 @@ export async function runScanCycle() {
     console.log(`  Top: ${candidates.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
     console.log(`📗 ${candidates.length} dry candidates`);
   } else {
-    // LIVE: bet on any market in price range, live games first
+    // LIVE: live games ALWAYS eligible (even mid-game); pre-game only if
+    // starting within 6h so capital isn't parked half a day before tip-off.
+    const UPCOMING_MAX_H = 6;
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
+      .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
       .sort((a, b) => {
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return b.px - a.px;
