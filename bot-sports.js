@@ -14,13 +14,36 @@ import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
          preflightUS } from "./polymarket-us.js";
 
 const everBet = new Set();  // slugs bet at least once — never re-enter
+
+// ── CALIBRATION LEDGER: realized win rate per league + entry-price bucket ──
+// The only way to know WHERE the strategy actually beats the price.
+const calib = {};  // key "LEAGUE|64-67" → { w, l }
+const calBucket = p => { const c = Math.floor(p * 100 / 4) * 4; return `${c}-${c + 3}`; };
+function calRecord(league, entryPrice, won) {
+  const key = `${(league || "?").toUpperCase()}|${calBucket(entryPrice)}`;
+  (calib[key] ||= { w: 0, l: 0 })[won ? "w" : "l"]++;
+}
+function calReport() {
+  const rows = Object.entries(calib).map(([k, v]) => {
+    const [lg, bucket] = k.split("|");
+    const n = v.w + v.l, rate = v.w / n;
+    const be = (parseInt(bucket) + 2 + 2) / 100; // bucket mid + ~2% fee
+    return { lg, bucket, n, rate, be, edge: rate - be };
+  }).filter(r => r.n >= 3).sort((a, b) => b.edge - a.edge);
+  if (!rows.length) return;
+  console.log("📐 CALIBRATION (realized win rate vs break-even):");
+  for (const r of rows.slice(0, 12)) {
+    const flag = r.edge >= 0 ? "🟢" : "🔴";
+    console.log(`  ${flag} ${r.lg} ${r.bucket}¢: ${(r.rate*100).toFixed(0)}% over ${r.n} bets (need ${(r.be*100).toFixed(0)}%) → edge ${(r.edge*100).toFixed(1)}%`);
+  }
+}
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 15;      // flat $15 per bet
 const BET_MIN       = 15;
 const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
-const FAV_MAX       = 0.74;    // PRODUCTION: 74¢ maximum favorite
+const FAV_MAX       = 0.68;    // trimmed from 74¢ — high buckets must EARN their way back via calibration data
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 14;      // 14 concurrent slots
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
@@ -86,6 +109,8 @@ async function processExits() {
       }
 
       closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
+      calRecord(league, bet.entryPrice, won);
+      calReport();
       liveMarks.delete(slug);
       exits.push({ pnl, won, reason: "expiry", question: q, league });
       continue;
@@ -281,6 +306,14 @@ export async function runScanCycle() {
     }
     if (!/OPEN/.test(st)) {
       console.log(`  ⚠️ Book state=${st || "?"} — proceeding, FOK protects | ${m.question?.slice(0, 35)}`);
+    }
+    // ── DEPTH FLOOR: top of book must absorb the whole bet at this price ──
+    // Thin books = worst fills and least reliable prices. Skip when we can
+    // SEE there isn't enough size (unknown depth stays fail-open, FOK protects).
+    const contractsNeeded = Math.floor(BET_SIZE / Math.max(0.01, m.ask));
+    if (book.askQty > 0 && book.askQty < contractsNeeded) {
+      console.log(`  💧 Thin book (${book.askQty}/${contractsNeeded} contracts) | ${m.question?.slice(0, 38)}`);
+      continue;
     }
     // Use live book ask if available (fresher than BBO from seconds ago)
     if (book.bestAsk && book.bestAsk > 0.01 && book.bestAsk < 0.99) {
