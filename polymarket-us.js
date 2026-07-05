@@ -18,7 +18,7 @@ import axios from "axios";
 import crypto from "crypto";
 
 // ── VERSION BANNER: confirms which build is live ──
-console.log("🔖 polymarket-us.js v10-V2-EVENTS loaded — official v2 sports/league events discovery");
+console.log("🔖 polymarket-us.js v11-STRATEGY loaded — true-live priority, tight spreads");
 
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
@@ -310,7 +310,7 @@ export async function fetchSportsMoneylines() {
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`🔖 v10-V2-EVENTS | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
+  console.log(`🔖 v11-STRATEGY | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
 
   // ── LOG ALL MARKETS to see what's actually available ──
   for (const m of raw.slice(0, 10)) {
@@ -365,7 +365,11 @@ export async function fetchSportsMoneylines() {
     // A market is LIVE if:
     // 1. It came from the LIVE endpoint (no closed=false filter), OR
     // 2. It has a gameStartTime in the past (started < now)
-    const isLive    = source.isLiveEndpoint || (startMs && startMs <= now);
+    // LIVE = the event is actually in progress: API live flag, or game
+    // started within the last 8h. (v11 fix: previously EVERY v2 market was
+    // flagged live, so live-first prioritization did nothing.)
+    const isLive    = m.eventLive === true ||
+                      (startMs && startMs <= now && (now - startMs) < 8 * 3_600_000);
     const hoursUntil = isLive ? 0 : (startMs ? Math.round((startMs - now) / 3_600_000 * 10) / 10 : null);
 
     // Compute ask/bid from available fields (est may be null)
