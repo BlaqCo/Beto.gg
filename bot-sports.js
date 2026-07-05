@@ -22,7 +22,7 @@ const BET_MIN       = 15;
 const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
 const FAV_MAX       = 0.74;    // PRODUCTION: 74¢ maximum favorite
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 12;      // 12 concurrent slots
+const MAX_CONC      = 14;      // 14 concurrent slots
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
@@ -233,8 +233,14 @@ export async function runScanCycle() {
   let ownedSlugs = new Set();
   if (!DRY_RUN && candidates.length) {
     try {
+      // getOpenPositions returns an OBJECT keyed by slug: { "slug": {qtyBought, netPosition}, ... }
       const positions = await getOpenPositions();
-      ownedSlugs = new Set((positions || []).map(p => p.slug || p.marketSlug || p.market?.slug).filter(Boolean));
+      ownedSlugs = new Set(
+        Object.entries(positions || {})
+          .filter(([, p]) => (p?.netPosition > 0 || p?.qtyBought > 0))
+          .map(([slug]) => slug)
+      );
+      if (ownedSlugs.size) console.log(`  🔒 Holding ${ownedSlugs.size} positions on Polymarket — excluded from entry`);
     } catch (e) {
       console.log(`  ⚠️ Positions fetch failed (${e.message}) — proceeding with bot-state dedupe only`);
     }
