@@ -331,6 +331,18 @@ export async function runScanCycle() {
       entryPrice = book.bestAsk;
       m.ask = book.bestAsk;
     }
+    // ── FINAL-PRICE REVALIDATION (v14): the live book price must pass the
+    // SAME rules the candidate qualified under. Without this, a 67¢ pick
+    // whose price spiked to 85¢ between BBO and book got bought at 86¢ —
+    // systematically buying tops after moves. Range + spread, re-checked.
+    if (entryPrice < FAV_MIN || entryPrice > FAV_MAX) {
+      console.log(`  🚫 Price moved out of range (${cents(entryPrice)}) since BBO | ${m.question?.slice(0, 38)}`);
+      continue;
+    }
+    if (book.bestBid && (entryPrice - book.bestBid) > 0.06) {
+      console.log(`  🚫 Book spread widened to ${((entryPrice - book.bestBid) * 100).toFixed(0)}¢ | ${m.question?.slice(0, 38)}`);
+      continue;
+    }
     console.log(`  ✅ Attempting entry | ask=${cents(m.ask)}${book.askQty ? ` askQty=${book.askQty}` : ""} | ${m.question?.slice(0, 40)}`);
 
     if (!DRY_RUN) {
