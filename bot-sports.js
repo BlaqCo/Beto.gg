@@ -256,6 +256,7 @@ export async function runScanCycle() {
   // FAIL-OPEN: if this fails, proceed with what the bot's own state knows
   // (hasActiveBet) rather than silently skipping every entry.
   let ownedSlugs = new Set();
+  let slotsUsed  = getAllActiveBets().length;  // bot memory (resets on restart)
   if (!DRY_RUN && candidates.length) {
     // Any slug present in the portfolio = we've bet it. Blacklist ALL keys,
     // regardless of quantity parsing — maximum stacking protection.
@@ -267,7 +268,16 @@ export async function runScanCycle() {
       candidates = [];
     } else {
       ownedSlugs = new Set(Object.keys(positions));
-      if (ownedSlugs.size) console.log(`  🔒 Holding ${ownedSlugs.size} positions on Polymarket — excluded from entry`);
+      // ── RESTART-PROOF SLOT CAP: slots = REAL open positions on Polymarket.
+      // Bot memory resets on every restart; the exchange doesn't. (v13 fix:
+      // restarts saw 0/14 and stacked a fresh book on top of the old one.)
+      const liveCount = Object.values(positions).filter(p => p.qtyBought > 0).length;
+      slotsUsed = Math.max(slotsUsed, liveCount);
+      if (ownedSlugs.size) console.log(`  🔒 Holding ${ownedSlugs.size} positions (${liveCount} open) — slots ${slotsUsed}/${MAX_CONC}`);
+      if (slotsUsed >= MAX_CONC) {
+        console.log(`  ⏸ All ${MAX_CONC} slots filled by REAL positions — no entries until settlements free slots`);
+        candidates = [];
+      }
     }
   }
 
@@ -279,7 +289,7 @@ export async function runScanCycle() {
   let entryErrors = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
-    if (getAllActiveBets().length >= MAX_CONC) break;
+    if (slotsUsed + betsPlaced >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
     if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
     if (hasActiveBet(m.slug)) continue;
