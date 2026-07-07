@@ -573,10 +573,9 @@ export async function getOpenPositions() {
     const positions = data?.positions || {};
     const out = {};
     for (const [slug, p] of Object.entries(positions)) {
-      out[slug] = {
-        qtyBought:   Number(p?.qtyBought ?? 0),
-        netPosition: Number(p?.netPosition ?? 0),
-      };
+      // Same field fallbacks as getOpenPositionsEnriched (proven against live API):
+      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? p?.netPosition ?? 0);
+      out[slug] = { qtyBought: qty, netPosition: qty };
     }
     return out;
   } catch (err) {
