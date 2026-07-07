@@ -13,6 +13,7 @@ import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
          buyYesFOK, getBuyingPower, getOpenPositions,
          preflightUS } from "./polymarket-us.js";
 
+console.log(`🚀 PROCESS START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
 const everBet = new Set();  // slugs bet at least once — never re-enter
 
 // ── CALIBRATION LEDGER: realized win rate per league + entry-price bucket ──
@@ -256,17 +257,17 @@ export async function runScanCycle() {
   // (hasActiveBet) rather than silently skipping every entry.
   let ownedSlugs = new Set();
   if (!DRY_RUN && candidates.length) {
-    try {
-      // getOpenPositions returns an OBJECT keyed by slug: { "slug": {qtyBought, netPosition}, ... }
-      const positions = await getOpenPositions();
-      ownedSlugs = new Set(
-        Object.entries(positions || {})
-          .filter(([, p]) => (p?.netPosition > 0 || p?.qtyBought > 0))
-          .map(([slug]) => slug)
-      );
+    // Any slug present in the portfolio = we've bet it. Blacklist ALL keys,
+    // regardless of quantity parsing — maximum stacking protection.
+    const positions = await getOpenPositions();  // null only on error
+    if (positions === null) {
+      // FAIL CLOSED: positions are the only restart-proof dedupe layer.
+      // Without them we cannot guarantee no stacking → no entries this scan.
+      console.log("  🛑 Cannot verify Polymarket positions — NO ENTRIES this scan (anti-stacking)");
+      candidates = [];
+    } else {
+      ownedSlugs = new Set(Object.keys(positions));
       if (ownedSlugs.size) console.log(`  🔒 Holding ${ownedSlugs.size} positions on Polymarket — excluded from entry`);
-    } catch (e) {
-      console.log(`  ⚠️ Positions fetch failed (${e.message}) — proceeding with bot-state dedupe only`);
     }
   }
 
