@@ -41,8 +41,8 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 15;      // flat $15 per bet
-const BET_MIN       = 15;
+const BET_SIZE      = 25;      // flat $25 per bet
+const BET_MIN       = 25;
 const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
 const FAV_MAX       = 0.68;    // trimmed from 74¢ — high buckets must EARN their way back via calibration data
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
