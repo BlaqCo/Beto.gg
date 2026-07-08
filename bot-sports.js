@@ -41,12 +41,12 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 25;      // flat $25 per bet
-const BET_MIN       = 25;
+const BET_SIZE      = 12;      // flat $12 per bet — original production
+const BET_MIN       = 12;
 const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
-const FAV_MAX       = 0.68;    // trimmed from 74¢ — high buckets must EARN their way back via calibration data
+const FAV_MAX       = 0.74;    // original production range top
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 14;      // 14 concurrent slots
+const MAX_CONC      = 12;      // original production: 12 concurrent slots
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
