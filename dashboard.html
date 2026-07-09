@@ -155,7 +155,7 @@ canvas#pnl-chart{width:100%;height:100%}
 
 /* ── Secondary metrics row ── */
 .secondary-metrics{
-  display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:1px;
   background:var(--border);border:1px solid var(--border);overflow:hidden;
 }
 .sm{background:var(--surface);padding:13px 12px}
@@ -321,6 +321,7 @@ canvas#pnl-chart{width:100%;height:100%}
   .hero-metrics{grid-template-columns:1fr 1fr;gap:1px}
   .hero-metrics .metric:last-child{grid-column:span 2}
   .secondary-metrics{grid-template-columns:1fr 1fr}
+  .secondary-metrics .sm:nth-child(5){grid-column:span 2}
   .hist-row{grid-template-columns:auto 1fr auto}
   .hist-date{display:none}
   .hdr-right .clock{display:none}
@@ -407,7 +408,12 @@ canvas#pnl-chart{width:100%;height:100%}
   <div class="sm">
     <div class="sm-label">Avg Bet</div>
     <div class="sm-value c-neutral" id="avg-bet">$—</div>
-    <div class="sm-sub" id="total-wagered-sub">wagered</div>
+    <div class="sm-sub" id="avg-bet-sub">per fill</div>
+  </div>
+  <div class="sm">
+    <div class="sm-label">Volume</div>
+    <div class="sm-value c-neutral" id="volume">$—</div>
+    <div class="sm-sub" id="volume-sub">lifetime wagered</div>
   </div>
 </div>
 
@@ -1016,9 +1022,15 @@ async function refresh(){
 
     // Avg bet
     const waged   = parseFloat(st.totalWagered ?? st.wagered ?? 0);
-    const avgBet  = st.totalBets>0 ? waged/st.totalBets : 0;
-    $('avg-bet').textContent           = st.totalBets>0?'$'+avgBet.toFixed(2):'$—';
-    $('total-wagered-sub').textContent = '$'+waged.toFixed(0)+' total wagered';
+    const fills   = parseInt(st.totalBets ?? 0);
+    const avgBet  = fills>0 ? waged/fills : 0;
+    $('avg-bet').textContent  = fills>0?'$'+avgBet.toFixed(2):'$—';
+    const abs=$('avg-bet-sub'); if(abs) abs.textContent = 'per fill';
+    const vEl=$('volume');
+    if(vEl){
+      vEl.textContent = waged>=10000 ? '$'+(waged/1000).toFixed(1)+'k' : '$'+waged.toFixed(0);
+      const vs=$('volume-sub'); if(vs) vs.textContent = fills+' fills · lifetime';
+    }
 
     // Open P/L — from positions or stats
     const openPnl = parseFloat(st.openPnl ?? 0);
