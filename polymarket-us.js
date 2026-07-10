@@ -633,7 +633,7 @@ export async function getTradeHistory({ limit = 500 } = {}) {
         // aggressorExecution: { price: {value, currency}, quantity, ... }
         const aggEx  = t.aggressorExecution || t.aggressor_execution || {};
         const mkEx   = t.makerExecution     || t.maker_execution     || {};
-        const exPrice = amtVal(aggEx.price) ?? amtVal(mkEx.price) ?? amtVal(t.price) ?? null;
+        const exPrice = amtVal(aggEx.lastPx) ?? amtVal(aggEx.price) ?? amtVal(mkEx.lastPx) ?? amtVal(mkEx.price) ?? amtVal(t.price) ?? null;
 
         // Quantity from execution
         const exQty = parseFloat(aggEx.quantity ?? aggEx.qty ?? mkEx.quantity ?? t.qtyDecimal ?? t.qty ?? 0);
