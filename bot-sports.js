@@ -44,7 +44,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 const BET_SIZE      = 15;      // flat $15 per bet
 const BET_MIN       = 15;
 const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
-const FAV_MAX       = 0.74;    // original production range top
+const FAV_MAX       = 0.68;    // WINNING CONFIG: 68¢ cap — 69-74¢ bucket is the bleed zone, benched
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
