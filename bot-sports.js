@@ -132,7 +132,21 @@ async function processExits() {
 }
 
 // ── Main scan ────────────────────────────────────────────────────
+let _scanning = false;
 export async function runScanCycle() {
+  // ── REENTRANCY GUARD: scans take longer than the 3s interval, so they
+  // OVERLAP — two scans both pass "have I bet this?" before either records
+  // the bet → double/triple fills. One scan at a time, no exceptions.
+  if (_scanning) return;
+  _scanning = true;
+  try {
+    return await _runScanCycleInner();
+  } finally {
+    _scanning = false;
+  }
+}
+
+async function _runScanCycleInner() {
   const stats = getStats();
   console.log(`\n── SPORTS SCAN ${new Date().toISOString()} ${DRY_RUN ? "[DRY]" : "[🔴 LIVE]"} ──`);
 
@@ -299,6 +313,10 @@ export async function runScanCycle() {
     }
 
     // ── ARMORED: one candidate failing can NEVER kill the rest of the loop ──
+    // RESERVE FIRST: claim this market before any slow API call, so no
+    // concurrent code path can order it too. Released only if we don't fill.
+    everBet.add(m.slug);
+    let filledThis = false;
     try {
 
     let entryPrice = m.ask;
@@ -350,6 +368,7 @@ export async function runScanCycle() {
       const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
       if (!r.filled) {
         console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
+        everBet.delete(m.slug);  // release reservation — nothing filled
         continue;
       }
       entryPrice = r.fillPrice;
@@ -381,13 +400,14 @@ export async function runScanCycle() {
       direction:          m.question.slice(0, 30),
     });
 
-    everBet.add(m.slug);   // permanent: this market can never be bet again
+    filledThis = true;     // reservation becomes permanent
     betsPlaced++;
     const payout = (betSize / entryPrice).toFixed(2);
     console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
     } catch (err) {
       entryErrors++;
       console.log(`  💥 Entry error [${m.slug?.slice(0,28)}]: ${err.message} — continuing to next candidate`);
+      if (!filledThis) everBet.delete(m.slug);  // release reservation — nothing filled
       continue;
     }
   }
