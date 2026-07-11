@@ -43,7 +43,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 15;      // flat $15 per bet
 const BET_MIN       = 15;
-const FAV_MIN       = 0.60;    // PRODUCTION: 60¢ minimum favorite
+const FAV_MIN       = 0.62;    // raised floor: 62¢ minimum favorite
 const FAV_MAX       = 0.68;    // WINNING CONFIG: 68¢ cap — 69-74¢ bucket is the bleed zone, benched
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
@@ -348,6 +348,24 @@ async function _runScanCycleInner() {
     if (book.bestAsk && book.bestAsk > 0.01 && book.bestAsk < 0.99) {
       entryPrice = book.bestAsk;
       m.ask = book.bestAsk;
+    } else {
+      // ── STALE-QUOTE SEAL (v15): book couldn't confirm a price, and the
+      // scan-start BBO can be minutes old. A FOK limit from a stale price
+      // fills BELOW range when a favorite collapses mid-game (the 50-54%
+      // entries). Re-fetch a FRESH quote now; it must still be in range.
+      const fresh = await getBBO(m.slug);
+      if (!fresh?.ask) {
+        console.log(`  🚫 No fresh quote available — skipping | ${m.question?.slice(0, 38)}`);
+        everBet.delete(m.slug);
+        continue;
+      }
+      entryPrice = fresh.ask;
+      m.ask = fresh.ask;
+      if (fresh.bid && (fresh.ask - fresh.bid) > 0.06) {
+        console.log(`  🚫 Fresh spread ${((fresh.ask - fresh.bid) * 100).toFixed(0)}¢ too wide | ${m.question?.slice(0, 38)}`);
+        everBet.delete(m.slug);
+        continue;
+      }
     }
     // ── FINAL-PRICE REVALIDATION (v14): the live book price must pass the
     // SAME rules the candidate qualified under. Without this, a 67¢ pick
