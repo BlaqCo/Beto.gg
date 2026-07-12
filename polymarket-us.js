@@ -303,6 +303,9 @@ export async function fetchSportsMoneylines() {
       if (!key || seenKeys.has(key)) continue;
       seenKeys.add(key);
       marketSource.set(key, { isLiveEndpoint });
+      // Authoritative league from the v2 endpoint this market came from —
+      // far more reliable than guessing from question text.
+      if (label && label !== "v1-datefilter" && !m._srcLeague) m._srcLeague = label.toUpperCase();
       raw.push(m);
       if ((m.category || "").toLowerCase().includes("sports")) sportsCatCount++;
       if (m.sportsMarketTypeV2 === "SPORTS_MARKET_TYPE_MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE" || m.smt === "moneyline") moneylineCount++;
@@ -361,7 +364,8 @@ export async function fetchSportsMoneylines() {
       }
     }
 
-    const league    = detectLeague(m);
+    const detected  = detectLeague(m);
+    const league    = (detected && detected !== "SPORT") ? detected : (m._srcLeague || detected);
     // A market is LIVE if:
     // 1. It came from the LIVE endpoint (no closed=false filter), OR
     // 2. It has a gameStartTime in the past (started < now)
