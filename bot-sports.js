@@ -47,6 +47,10 @@ const FAV_MIN       = 0.62;    // raised floor: 62¢ minimum favorite
 const FAV_MAX       = 0.78;    // per request: range top 78¢ (break-even at 78¢ ≈ 80% win rate)
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
+// ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
+// Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
+// 📐 table shows which leagues actually beat their break-even.
+const LEAGUE_FOCUS  = [];
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
@@ -240,6 +244,7 @@ async function _runScanCycleInner() {
     const UPCOMING_MAX_H = 6;
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
+      .filter(m => !LEAGUE_FOCUS.length || LEAGUE_FOCUS.includes((m.league || "").toUpperCase()))
       .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
       .sort((a, b) => {
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
