@@ -18,7 +18,7 @@ import axios from "axios";
 import crypto from "crypto";
 
 // ── VERSION BANNER: confirms which build is live ──
-console.log("🔖 polymarket-us.js v11-STRATEGY loaded — true-live priority, tight spreads");
+console.log("🔖 polymarket-us.js v12-EDGE loaded — score-aware, ended-game block, discount gate support");
 
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
@@ -266,6 +266,10 @@ export async function fetchSportsMoneylines() {
           if (!m.endDate)       m.endDate       = ev.endDate || ev.endTime || null;
           if (m.eventLive === undefined) m.eventLive = ev.live ?? ev.isLive ?? undefined;
           if (!m.question)      m.question      = m.title || ev.title || ev.name || null;
+          // Live game state (Tier-1 data): score, period, finished flag
+          if (m.evScore  === undefined) m.evScore  = ev.score  ?? null;
+          if (m.evPeriod === undefined) m.evPeriod = ev.period ?? null;
+          if (m.evEnded  === undefined) m.evEnded  = ev.ended  ?? (ev.finishedTimestamp ? true : undefined);
           mkts.push(m);
         }
         // Some responses may put markets fields directly on the event
@@ -313,7 +317,7 @@ export async function fetchSportsMoneylines() {
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`🔖 v11-STRATEGY | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
+  console.log(`🔖 v12-EDGE | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
 
   // ── LOG ALL MARKETS to see what's actually available ──
   for (const m of raw.slice(0, 10)) {
@@ -331,6 +335,9 @@ export async function fetchSportsMoneylines() {
     // Relaxed: only reject when explicitly inactive/resolved.
     // v2 event markets may omit these fields entirely.
     if (m.active === false) { rej.active++; continue; }
+    // ── ENDED-GAME HARD BLOCK: the v2 feed says this game is FINISHED.
+    // Buying these is how "favorites" settle to zero minutes after entry.
+    if (m.evEnded === true || /final|^ft$|full.?time/i.test(String(m.evPeriod || ""))) { rej.stale++; continue; }
     if (m.resolved === true || m.closed === true && m.eventLive === false) { rej.resolved++; continue; }
 
     // ── NO PROPS: moneylines only ──
@@ -396,6 +403,8 @@ export async function fetchSportsMoneylines() {
       subcategory: m.subcategory || "",
       isLive,
       hoursUntil,
+      evScore:  m.evScore  ?? null,
+      evPeriod: m.evPeriod ?? null,
       volume24h: num(m.volume24hr) || 0,
       sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
     });
