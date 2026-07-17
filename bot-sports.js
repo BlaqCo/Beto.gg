@@ -43,14 +43,19 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 15;      // flat $15 per bet
 const BET_MIN       = 15;
-const FAV_MIN       = 0.62;    // raised floor: 62¢ minimum favorite
-const FAV_MAX       = 0.78;    // per request: range top 78¢ (break-even at 78¢ ≈ 80% win rate)
+const FAV_MIN       = 0.60;    // WINNING CONFIG floor: 60¢
+const FAV_MAX       = 0.68;    // WINNING CONFIG cap: 68¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
 const LEAGUE_FOCUS  = [];
+// ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
+// reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
+// their opener is the structural edge condition.
+const DISCOUNT_MIN  = 0.04;
+const openerRef     = new Map();  // slug → last pre-game price (the "opener")
 const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
@@ -242,14 +247,29 @@ async function _runScanCycleInner() {
     // LIVE: live games ALWAYS eligible (even mid-game); pre-game only if
     // starting within 6h so capital isn't parked half a day before tip-off.
     const UPCOMING_MAX_H = 6;
+    // Track opener references: keep updating while pre-game; freeze once live.
+    for (const m of bbosWithData) {
+      if (!m.isLive && m.px) openerRef.set(m.slug, m.px);
+      else if (m.isLive && m.px && !openerRef.has(m.slug)) openerRef.set(m.slug, m.px); // first sight already live → baseline
+    }
+    let discountRejects = 0;
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
       .filter(m => !LEAGUE_FOCUS.length || LEAGUE_FOCUS.includes((m.league || "").toUpperCase()))
       .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
+      .filter(m => {
+        if (!m.isLive) return true;                       // pre-game: normal rules
+        const ref = openerRef.get(m.slug);
+        if (!ref) return true;                            // no reference yet → allow
+        if (m.px <= ref - DISCOUNT_MIN) return true;      // real discount → allow
+        discountRejects++;
+        return false;                                     // live but NOT cheaper than opener → skip
+      })
       .sort((a, b) => {
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return b.px - a.px;
       });
+    if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
     const lc = pool.filter(m => m.isLive).length;
     if (pool.length) {
       console.log(`🏆 ${pool.length} favorites (${lc} 🔴 live) in ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
