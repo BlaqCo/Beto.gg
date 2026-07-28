@@ -545,7 +545,18 @@ export async function getBuyingPower() {
 }
 
 // ── buyYesFOK ────────────────────────────────────────────────────
+// ── ORDER-SIZE TRIPWIRE ──────────────────────────────────────────
+// EVERY buy passes through here. Regardless of which code path calls,
+// orders outside these bounds are refused. Raise ORDER_MAX_USD if you
+// ever intentionally raise the flat bet above $5.
+const ORDER_MIN_USD = 1.00;
+const ORDER_MAX_USD = 5.00;
+
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
+  if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
+    console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
+    return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
+  }
   const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
   let qty     = Math.floor(sizeUsd / limit);
   // HARD CAP: whole contracts, total cost can NEVER exceed sizeUsd
