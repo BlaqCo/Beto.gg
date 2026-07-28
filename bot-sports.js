@@ -43,8 +43,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 15;      // flat $15 per bet
 const BET_MIN       = 15;
-const FAV_MIN       = 0.60;    // WINNING CONFIG floor: 60¢
-const FAV_MAX       = 0.68;    // WINNING CONFIG cap: 68¢
+const FAV_MIN       = 0.65;    // floor raised to 65¢ per request
+const FAV_MAX       = 0.80;    // cap 80¢ per request (break-even at 80¢ ≈ 82% win rate)
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
