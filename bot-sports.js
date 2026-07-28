@@ -41,8 +41,8 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 15;      // flat $15 per bet
-const BET_MIN       = 15;
+const BET_SIZE      = 3;       // flat $3 per bet
+const BET_MIN       = 3;
 const FAV_MIN       = 0.65;    // floor raised to 65¢ per request
 const FAV_MAX       = 0.80;    // cap 80¢ per request (break-even at 80¢ ≈ 82% win rate)
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
