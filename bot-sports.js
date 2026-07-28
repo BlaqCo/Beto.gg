@@ -142,7 +142,10 @@ async function processExits() {
 
 // ── Main scan ────────────────────────────────────────────────────
 let _scanning = false;
+let _lastScanEnd = 0;
+const SCAN_MIN_GAP_MS = 15_000; // changelog Jul 1: tiered rate limits (~60 req/min public) — space scans out
 export async function runScanCycle() {
+  if (Date.now() - _lastScanEnd < SCAN_MIN_GAP_MS) return;
   // ── REENTRANCY GUARD: scans take longer than the 3s interval, so they
   // OVERLAP — two scans both pass "have I bet this?" before either records
   // the bet → double/triple fills. One scan at a time, no exceptions.
@@ -152,6 +155,7 @@ export async function runScanCycle() {
     return await _runScanCycleInner();
   } finally {
     _scanning = false;
+    _lastScanEnd = Date.now();
   }
 }
 
@@ -203,7 +207,16 @@ async function _runScanCycleInner() {
     console.log(`  Top 3: ${markets.slice(0, 3).map(m => m.question?.slice(0, 40)).join(" | ")}`);
   }
   
-  const candidatePool = markets.slice(0, 200); // check all 200
+  // Rate-limit hygiene: BBO only for the 60 most promising markets
+  // (in-band price estimate first, live first) instead of all 200.
+  const prioritized = [...markets].sort((a, b) => {
+    const aBand = (a.est >= 0.55 && a.est <= 0.85) ? 0 : 1;
+    const bBand = (b.est >= 0.55 && b.est <= 0.85) ? 0 : 1;
+    if (aBand !== bBand) return aBand - bBand;
+    if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
+    return 0;
+  });
+  const candidatePool = prioritized.slice(0, 60);
   console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
 
   // Fetch live BBO for ALL candidates
