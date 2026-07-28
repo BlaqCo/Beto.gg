@@ -341,7 +341,12 @@ export async function fetchSportsMoneylines() {
     if (m.resolved === true || m.closed === true && m.eventLive === false) { rej.resolved++; continue; }
 
     // ── NO PROPS: moneylines only ──
+    // Changelog Jul 9: soccer "to advance" is now ONE two-sided instrument —
+    // buying "YES" on it is NOT buying the favorite. Exclude entirely.
+    const slugL = String(slug).toLowerCase();
+    if (slugL.includes("to-advance") || slugL.includes("to_advance")) { rej.prop++; continue; }
     const smt = (m.sportsMarketTypeV2 || m.sportsMarketType || "").toUpperCase();
+    if (smt.includes("TO_ADVANCE")) { rej.prop++; continue; }
     if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") { rej.prop++; continue; }
     // Text-based prop rejection for markets missing the type field
     const qText = m.question || m.title || "";
