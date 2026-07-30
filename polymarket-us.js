@@ -552,16 +552,20 @@ export async function getBuyingPower() {
 const ORDER_MIN_USD = 4.00;   // penny/dust orders refused
 const ORDER_MAX_USD = 8.00;   // $7 flat + buffer; nothing larger can ever be ordered
 
-export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
+export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01 }) {
   if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
     return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
   }
   const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
-  let qty     = Math.floor(sizeUsd / limit);
-  // HARD CAP: whole contracts, total cost can NEVER exceed sizeUsd
-  while (qty > 0 && qty * limit > sizeUsd + 1e-9) qty--;
-  if (qty < 1) return { filled: false, error: `size $${sizeUsd} < 1 contract @ ${limit.toFixed(2)}` };
+  // PARTIAL CONTRACTS (API since Jun 8): decimal quantities allowed.
+  // Buy exactly sizeUsd worth, floored to the instrument's minQty step.
+  const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
+  let qty = Math.floor((sizeUsd / limit) / step) * step;
+  qty = Math.round(qty * 1000) / 1000;
+  // HARD CAP: cost can NEVER exceed sizeUsd
+  while (qty > step && qty * limit > sizeUsd + 1e-9) qty = Math.round((qty - step) * 1000) / 1000;
+  if (!(qty > 0)) return { filled: false, error: `size $${sizeUsd} too small @ ${limit.toFixed(3)}` };
   try {
     const order = await signedRequest("POST", "/v1/orders", {
       marketSlug: slug,
@@ -598,8 +602,16 @@ export async function closePositionLive(slug) {
 // ── getOpenPositions ─────────────────────────────────────────────
 export async function getOpenPositions() {
   try {
-    const data = await signedRequest("GET", "/v1/portfolio/positions");
-    const positions = data?.positions || {};
+    // Pagination-ready (changelog v0.0.53): follow nextCursor until eof.
+    let positions = {};
+    let cursor = null;
+    for (let page = 0; page < 20; page++) {
+      const path = "/v1/portfolio/positions" + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : "");
+      const data = await signedRequest("GET", path);
+      Object.assign(positions, data?.positions || {});
+      if (data?.eof !== false || !data?.nextCursor) break;
+      cursor = data.nextCursor;
+    }
     const out = {};
     for (const [slug, p] of Object.entries(positions)) {
       // Same field fallbacks as getOpenPositionsEnriched (proven against live API):
