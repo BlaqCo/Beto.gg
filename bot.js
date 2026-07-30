@@ -1,404 +1,476 @@
 /**
- * bot.js — PolyBettor scan engine v3
+ * bot-sports.js — BETO.GG Sports v4.3 (polymarket.us native)
  *
- * ★ VALUE MODE (env VALUE_MODE=true) — the favorite-longshot strategy ★
- * ─────────────────────────────────────────────────────────────────────
- * The single most documented edge in prediction market research:
- * high-probability "favorite" contracts are systematically UNDERPRICED
- * and longshots are systematically OVERPRICED. (Thaler & Ziemba 1988;
- * Snowberg & Wolfers 2010; confirmed on Polymarket/Kalshi 2024-2026.)
- *
- * Our own dry-run data confirms it:
- *   entries ≥50¢ → 75% wins, +$15.88
- *   entries <45¢ → 11% wins, −$19.48
- *
- * Rules:
- *   1. Price every market with Black-Scholes binary model
- *   2. ONLY buy sides whose model fair value is 65–93¢ (favorites)
- *   3. ONLY enter when fair value beats market price by ≥6¢
- *      (covers 2% fee + 0.5¢ slippage + model error)
- *   4. 10–75 min to expiry (the 15m–1h sweet spot)
- *   5. Quarter-Kelly sizing, $2–$8 per bet
- *   6. Max 2 positions per coin (diversify), 8 concurrent, 2/scan
- *   7. Hold to expiry — favorites converge to $1. Disaster stop at
- *      fair ≤40¢, profit-lock at fair ≥97¢. $50 daily loss limit.
- *
- * Mode priority: VALUE_MODE > SHARP_SHOOTER > normal
+ * Strategy: BUY YES on moneyline favorites 55-78¢ (live or starting within 12h)
+ *           Flat $12 bets. HOLD TO RESOLUTION — no TP/SL, settlement only.
+ * DRY:  paper fills at estimated price (no BBO required)
+ * LIVE: FOK limit entries via signed REST
  */
 
-import { computeSignals }                                     from "./signals.js";
-import { fetchBTCMarkets, placeOrder, getBalance }            from "./polymarket.js";
-import { recordBet, hasActiveBet, recordScan, getStats,
-         getAllActiveBets }                                    from "./state.js";
-import { checkScalpExits, filterScalpMarkets, scalpQuality,
-         priceMarket, coinFromQuestion }                       from "./scalper.js";
-import { sizeBet }                                            from "./kelly.js";
-import { scoreSentiment }                                     from "./sentiment.js";
+import { recordBet, hasActiveBet, getStats, getAllActiveBets,
+         closeBet, getDryBalance, countBetsForMarket } from "./state.js";
+import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
+         buyYesFOK, getBuyingPower, getOpenPositions,
+         preflightUS } from "./polymarket-us.js";
 
-export const botSettings = {
-  strategies:   { TREND_SCALP: true, MOMENTUM: true, MEAN_REVERT: true },
-  autoMode:     true,
-  enabled:      true,
-  dryRun:       process.env.DRY_RUN !== "false",
-  sharpShooter: process.env.SHARP_SHOOTER === "true",
-  valueMode:    process.env.VALUE_MODE === "true",
-};
+console.log(`🚀 PROCESS START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
+const everBet = new Set();  // slugs bet at least once — never re-enter
 
-// ── Normal / SharpShooter constants ──
-const NORMAL_MAX          = 3;
-const SS_MAX              = 10;
-const SS_MIN_CONFIDENCE   = 0.25;
-const SS_BET_SIZE         = 5.00;
-const SS_ENTRIES_PER_SCAN = 3;
-
-// ── VALUE strategy constants ──
-const V_MAX             = 8;     // concurrent positions
-const V_ENTRIES         = 2;     // entries per scan
-const V_MIN_EDGE        = 0.06;  // fair − price ≥ 6¢
-const V_MAX_REAL_EDGE   = 0.15;  // >15¢ "edge" vs a REAL market = our feed/strike is wrong, not the market
-const V_FAV_MIN         = 0.65;  // favorite zone floor
-const V_FAV_MAX         = 0.93;  // ceiling — above this payoff < fee+slip
-const V_MIN_MINUTES     = 10;
-const V_MAX_MINUTES     = 75;
-const V_MAX_PER_COIN    = 2;
-const V_KELLY_FRACTION  = 0.25;  // quarter Kelly
-const V_MIN_BET         = 2.00;
-const V_MAX_BET         = 8.00;
-const MAX_DAILY_LOSS    = 50;    // all modes
-
-const SLIPPAGE = 0.005;
-
-// ── VALUE scoreboard: tracks record vs breakeven, real vs synthetic ──
-const _srcByQ = new Map();   // question → true if real Polymarket market
-const _rec = { w: 0, l: 0, sumFill: 0, pnl: 0, liveW: 0, liveL: 0, synW: 0, synL: 0 };
-
-function trackValueExits(exits) {
-  for (const e of exits) {
-    if (!e.valueBet) continue;
-    const fill = Math.min(0.97, (e.entryPrice || 0.5) + SLIPPAGE);
-    _rec.sumFill += fill;
-    _rec.pnl     += e.pnl;
-    const isLive = _srcByQ.get((e.market || "").toLowerCase().trim()) === true;
-    if (e.won) { _rec.w++; isLive ? _rec.liveW++ : _rec.synW++; }
-    else       { _rec.l++; isLive ? _rec.liveL++ : _rec.synL++; }
+// ── CALIBRATION LEDGER: realized win rate per league + entry-price bucket ──
+// The only way to know WHERE the strategy actually beats the price.
+const calib = {};  // key "LEAGUE|64-67" → { w, l }
+const calBucket = p => { const c = Math.floor(p * 100 / 4) * 4; return `${c}-${c + 3}`; };
+function calRecord(league, entryPrice, won) {
+  const key = `${(league || "?").toUpperCase()}|${calBucket(entryPrice)}`;
+  (calib[key] ||= { w: 0, l: 0 })[won ? "w" : "l"]++;
+}
+function calReport() {
+  const rows = Object.entries(calib).map(([k, v]) => {
+    const [lg, bucket] = k.split("|");
+    const n = v.w + v.l, rate = v.w / n;
+    const be = (parseInt(bucket) + 2 + 2) / 100; // bucket mid + ~2% fee
+    return { lg, bucket, n, rate, be, edge: rate - be };
+  }).filter(r => r.n >= 3).sort((a, b) => b.edge - a.edge);
+  if (!rows.length) return;
+  console.log("📐 CALIBRATION (realized win rate vs break-even):");
+  for (const r of rows.slice(0, 12)) {
+    const flag = r.edge >= 0 ? "🟢" : "🔴";
+    console.log(`  ${flag} ${r.lg} ${r.bucket}¢: ${(r.rate*100).toFixed(0)}% over ${r.n} bets (need ${(r.be*100).toFixed(0)}%) → edge ${(r.edge*100).toFixed(1)}%`);
   }
 }
+const DRY_RUN = process.env.DRY_RUN !== "false";
 
-function printRecord() {
-  const n = _rec.w + _rec.l;
-  if (n === 0) return;
-  const avgFill   = _rec.sumFill / n;
-  const winRate   = (_rec.w / n) * 100;
-  const breakeven = (1 / (1 + 0.98 * (1 / avgFill - 1))) * 100; // incl 2% fee
-  const verdict   = winRate >= breakeven + 4 ? "✅ ABOVE" : winRate >= breakeven ? "⚠️ AT" : "🔻 BELOW";
-  console.log(
-    `  📈 VALUE record: ${_rec.w}W-${_rec.l}L (${winRate.toFixed(1)}%) | ` +
-    `breakeven ${breakeven.toFixed(1)}% @ avg ${(avgFill*100).toFixed(0)}¢ ${verdict} | ` +
-    `net $${_rec.pnl.toFixed(2)} | REAL-mkt: ${_rec.liveW}W-${_rec.liveL}L | synth: ${_rec.synW}W-${_rec.synL}L`
-  );
-}
+// ── Config ──────────────────────────────────────────────────────
+const BET_SIZE      = 3;       // flat $3 per bet
+const BET_MIN       = 3;
+const FAV_MIN       = 0.65;    // floor raised to 65¢ per request
+const FAV_MAX       = 0.80;    // cap 80¢ per request (break-even at 80¢ ≈ 82% win rate)
+const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
+const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
+// ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
+// Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
+// 📐 table shows which leagues actually beat their break-even.
+const LEAGUE_FOCUS  = [];
+// ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
+// reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
+// their opener is the structural edge condition.
+const DISCOUNT_MIN  = 0.04;
+const openerRef     = new Map();  // slug → last pre-game price (the "opener")
+const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
+const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
-function summary(exits, betsPlaced, maxConc) {
-  const s = getStats();
-  printRecord();
-  console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${maxConc} | P&L:$${s.pnl} | Scalps:${s.scalps} ──`);
-}
+// ── Helpers ──────────────────────────────────────────────────────
+const shares    = b  => b.betSize / b.entryPrice;
+const expiryPnl = (b, won) => won ? shares(b) * (1 - FEE) - b.betSize : -b.betSize;
+const exitPnl   = (b, px) => shares(b) * px - b.betSize;
+const pct       = x  => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+const cents     = x  => `${(x * 100).toFixed(0)}¢`;
 
-// Preflight checks on first live run
+// ── Live preflight (once per boot; 60s backoff on failure) ──────
 let _preflightDone = false;
+let _preflightNextTry = 0;
 async function ensureLiveReady() {
-  if (botSettings.dryRun || _preflightDone) return;
+  if (DRY_RUN || _preflightDone) return true;
+  if (Date.now() < _preflightNextTry) return false;
   try {
-    const { preflightCheck } = await import("./live-clob.js");
-    const check = await preflightCheck(
-      process.env.POLYMARKET_API_KEY,
-      process.env.POLYMARKET_PRIVATE_KEY
-    );
+    const check = await preflightUS();
     check.messages.forEach(m => console.log(m));
     if (!check.ok) {
-      console.error("❌ Live mode preflight FAILED — trading disabled");
-      process.exit(1);
+      _preflightNextTry = Date.now() + 60_000;
+      console.error("❌ LIVE preflight failed — retrying in 60s");
+      return false;
     }
     _preflightDone = true;
+    return true;
   } catch (err) {
-    console.error("Preflight error:", err.message);
+    console.error("❌ Preflight threw:", err.message);
+    _preflightNextTry = Date.now() + 60_000;
+    return false;
   }
 }
 
+// ── Mark-to-market cache (read by dashboard) ────────────────────
+const liveMarks = new Map();
+export function getSportsMarks() { return liveMarks; }
+
+// ── Exits: settlement only — hold to close ──────────────────────
+async function processExits() {
+  const exits = [];
+  const mine = getAllActiveBets().filter(b => b.strategy === "SPORTS_ML");
+
+  for (const bet of mine) {
+    const slug = bet.marketConditionId;
+
+    // Only exit path: market settlement
+    const settle = await getSettlement(slug);
+    if (settle !== null) {
+      const won = settle === 1;
+      const pnl = expiryPnl(bet, won);
+      const q   = (bet.marketQuestion || slug).replace(/^\[.*?\]\s*/, "").slice(0, 50);
+      const league = (bet.entryCoin || "SPORT").toUpperCase();
+
+      // Prominent settlement log — appears in dashboard System Log
+      if (won) {
+        console.log(`✅ WIN | ${league} | ${q}`);
+        console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Payout: +$${pnl.toFixed(2)} | Net P/L: +$${pnl.toFixed(2)}`);
+      } else {
+        console.log(`❌ LOSS | ${league} | ${q}`);
+        console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Lost: -$${bet.betSize.toFixed(2)} | Net P/L: -$${bet.betSize.toFixed(2)}`);
+      }
+
+      closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
+      calRecord(league, bet.entryPrice, won);
+      calReport();
+      liveMarks.delete(slug);
+      exits.push({ pnl, won, reason: "expiry", question: q, league });
+      continue;
+    }
+
+    // Not settled — mark-to-market for dashboard only, never exit early
+    const bbo = await getBBO(slug);
+    const bid = bbo?.bid ?? bbo?.last;
+    if (bid) {
+      const move = (bid - bet.entryPrice) / bet.entryPrice;
+      liveMarks.set(slug, { price: bid, pnl: +exitPnl(bet, bid).toFixed(2), movePct: move, ts: Date.now() });
+      console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | Δ${pct(move)} | holding to close | ${bet.marketQuestion?.slice(0, 40)}`);
+    } else {
+      console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} @ ${cents(bet.entryPrice)} | awaiting settlement | ${bet.marketQuestion?.slice(0, 40)}`);
+    }
+  }
+  return exits;
+}
+
+// ── Main scan ────────────────────────────────────────────────────
+let _scanning = false;
+let _lastScanEnd = 0;
+const SCAN_MIN_GAP_MS = 15_000; // changelog Jul 1: tiered rate limits (~60 req/min public) — space scans out
 export async function runScanCycle() {
-  if (!botSettings.enabled) return { signals: null, exits: [], betsPlaced: 0 };
-
-  if (!botSettings.dryRun) await ensureLiveReady();
-
-  const DRY_RUN    = botSettings.dryRun;
-  const VALUE_MODE = botSettings.valueMode;
-  const SS_MODE    = !VALUE_MODE && botSettings.sharpShooter;
-  const MAX_CONC   = VALUE_MODE ? V_MAX : SS_MODE ? SS_MAX : NORMAL_MAX;
-
-  // ── Signals ──
-  let signals;
+  if (Date.now() - _lastScanEnd < SCAN_MIN_GAP_MS) return;
+  // ── REENTRANCY GUARD: scans take longer than the 3s interval, so they
+  // OVERLAP — two scans both pass "have I bet this?" before either records
+  // the bet → double/triple fills. One scan at a time, no exceptions.
+  if (_scanning) return;
+  _scanning = true;
   try {
-    signals = await computeSignals(botSettings.strategies, botSettings.autoMode);
+    return await _runScanCycleInner();
+  } finally {
+    _scanning = false;
+    _lastScanEnd = Date.now();
+  }
+}
+
+async function _runScanCycleInner() {
+  const stats = getStats();
+  console.log(`\n── SPORTS SCAN ${new Date().toISOString()} ${DRY_RUN ? "[DRY]" : "[🔴 LIVE]"} ──`);
+
+  let markets;
+  try {
+    markets = await fetchSportsMoneylines();
   } catch (err) {
-    console.error("Signal error:", err.message);
+    console.error("polymarket.us fetch error:", err.message);
     return { signals: null, exits: [], betsPlaced: 0 };
   }
 
-  const modeTag = VALUE_MODE ? "🎯VALUE" : SS_MODE ? "⚡SHARP" : (botSettings.autoMode ? "AUTO" : "MANUAL");
-  console.log(`\n── SCAN ${new Date().toISOString()} [${modeTag}] ──`);
-  console.log(`₿ $${signals.currentPrice?.toFixed(1)} | Strategy: ${VALUE_MODE ? "VALUE" : SS_MODE ? "SHARP_SHOOTER" : signals.activeStrategy} | Bias: ${signals.bias.toFixed(3)} ${signals.bias > 0.1 ? "↑BULL" : signals.bias < -0.1 ? "↓BEAR" : "→FLAT"} | Conf: ${(signals.confidence * 100).toFixed(0)}%`);
+  console.log(`📊 polymarket.us: ${markets.length} full-game moneylines`);
 
-  recordScan();
+  const exits = await processExits();
 
-  // ── Fetch markets ──
-  let allMarkets = [];
-  try { allMarkets = await fetchBTCMarkets(); }
-  catch (err) {
-    console.error("Market fetch error:", err.message);
-    return { signals, exits: [], betsPlaced: 0 };
+  // ── Balance ──────────────────────────────────────────────────
+  let balance = getDryBalance();
+  if (!DRY_RUN) {
+    const ok = await ensureLiveReady();
+    if (!ok) {
+      console.log(`💰 Buying power: checking... | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+      const s = getStats();
+      console.log(`── +0 entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
+      return { signals: null, exits, betsPlaced: 0 };
+    }
+    try {
+      const bp = await getBuyingPower();
+      balance = bp.buyingPower;
+      console.log(`💰 Buying power: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+    } catch (err) {
+      console.error("⚠️ getBuyingPower failed:", err.message);
+      console.log(`💰 Buying power: unknown | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
+    }
+  } else {
+    console.log(`💰 Paper: $${Number(balance).toFixed(2)} | Active: ${stats.activeBets}/${MAX_CONC} | P&L: $${stats.pnl}`);
   }
 
-  // ── Exits first ──
-  let exits = [];
-  if (getAllActiveBets().length > 0) {
-    const result = await checkScalpExits(allMarkets, signals, DRY_RUN, SS_MODE);
-    exits = result.exits || [];
-    trackValueExits(exits);
+  // ── Entry candidates ──────────────────────────
+  const now = Date.now();
+  
+  console.log(`📡 Received ${markets.length} markets from API`);
+  if (markets.length === 0) {
+    console.log("❌ NO MARKETS AVAILABLE — API returned empty list");
+  } else {
+    console.log(`  Top 3: ${markets.slice(0, 3).map(m => m.question?.slice(0, 40)).join(" | ")}`);
   }
+  
+  // Rate-limit hygiene: BBO only for the 60 most promising markets
+  // (in-band price estimate first, live first) instead of all 200.
+  const prioritized = [...markets].sort((a, b) => {
+    const aBand = (a.est >= 0.55 && a.est <= 0.85) ? 0 : 1;
+    const bBand = (b.est >= 0.55 && b.est <= 0.85) ? 0 : 1;
+    if (aBand !== bBand) return aBand - bBand;
+    if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
+    return 0;
+  });
+  const candidatePool = prioritized.slice(0, 60);
+  console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
 
-  // ── Caps ──
-  if (getAllActiveBets().length >= MAX_CONC) {
-    console.log(`  ⏸ At max concurrent bets (${getAllActiveBets().length}/${MAX_CONC})`);
-    summary(exits, 0, MAX_CONC);
-    return { signals, exits, betsPlaced: 0 };
-  }
-
-  const currentPnl = parseFloat(getStats().pnl);
-  if (currentPnl < -MAX_DAILY_LOSS) {
-    console.log(`  🛑 Daily loss limit hit ($${currentPnl.toFixed(2)}) — pausing entries`);
-    summary(exits, 0, MAX_CONC);
-    return { signals, exits, betsPlaced: 0 };
-  }
-
-  // Shuffle so all 6 coins get a fair shot
-  const scalpMarkets = filterScalpMarkets(allMarkets).sort(() => Math.random() - 0.5);
-  let betsPlaced     = 0;
-  const balance      = await getBalance();
-  const maxPerScan   = VALUE_MODE ? V_ENTRIES : SS_MODE ? SS_ENTRIES_PER_SCAN : 1;
-
-  for (const market of scalpMarkets) {
-    if (betsPlaced >= maxPerScan) break;
-    if (getAllActiveBets().length >= MAX_CONC) break;
-
-    const id = market.conditionId || market.condition_id;
-    if (hasActiveBet(id)) continue;
-
-    // One position per question, any mode
-    const q = (market.question || "").toLowerCase().trim();
-    if (getAllActiveBets().some(b => (b.marketQuestion || "").toLowerCase().trim() === q)) continue;
-
-    let finalBet, decision, pricing = null;
-
-    if (VALUE_MODE) {
-      // ════════ VALUE STRATEGY ════════
-      const minLeft = market.endDateIso
-        ? (new Date(market.endDateIso) - Date.now()) / 60000 : null;
-      if (!minLeft || minLeft < V_MIN_MINUTES || minLeft > V_MAX_MINUTES) continue;
-
-      // Diversification: max 2 per coin (coin parsed from question text)
-      const coin = coinFromQuestion(market.question) || (market.coin || "BTC").toUpperCase();
-      const onCoin = getAllActiveBets().filter(b =>
-        (coinFromQuestion(b.marketQuestion) || b.entryCoin || "BTC") === coin
-      ).length;
-      if (onCoin >= V_MAX_PER_COIN) continue;
-
-      pricing = await priceMarket(market);
-      if (!pricing) continue;
-      const { probYes, strike, direction } = pricing;
-
-      // ── REALISM LAYER ──────────────────────────────────────────────
-      // Synthetic markets have static prices, which hands the bot fantasy
-      // fills (buying 90¢-fair contracts at 62¢). Real Polymarket MMs run
-      // the same Black-Scholes and quote at fair + spread. So: reprice
-      // every synthetic token the way a real MM would — fair value plus a
-      // 1.5¢ half-spread plus small quote noise. The bot now only enters
-      // when it catches a genuinely stale/mispriced quote, which is the
-      // only edge that exists live. Real CLOB markets (0x... ids) are
-      // never touched.
-      const isSynthetic = !/^0x[0-9a-f]{40,}/i.test(String(id || ""));
-      if (isSynthetic) {
-        for (const token of market.tokens || []) {
-          const sn = (token.outcome || "").toUpperCase();
-          if (sn !== "YES" && sn !== "NO") continue;
-          const fairSide  = sn === "YES" ? probYes : 1 - probYes;
-          const halfSpread = 0.015;
-          // Irwin-Hall noise: mean 0, σ ≈ 2¢, rare ±8-10¢ tails = stale quotes
-          const noise = ((Math.random() + Math.random() + Math.random() + Math.random()) - 2) / 2 * 0.10;
-          token.price = Math.min(0.97, Math.max(0.03, fairSide + halfSpread + noise));
-        }
+  // Fetch live BBO for ALL candidates
+  const bboResults = await Promise.all(candidatePool.map(async m => {
+    try {
+      const bbo = await getBBO(m.slug);
+      if (!bbo?.bid || !bbo?.ask) {
+        console.log(`  ❌ No BBO: ${m.question?.slice(0, 35)}`);
+        return null;
       }
+      const livePx = bbo.ask;
+      const spread = bbo.ask - bbo.bid;
 
-      // Evaluate both sides — pick the one with the most edge
-      let best = null;
-      for (const token of market.tokens || []) {
-        const sideName = (token.outcome || "").toUpperCase();
-        if (sideName !== "YES" && sideName !== "NO") continue;
-        let price = token.price > 1 ? token.price / 100 : token.price;
-        if (!price || price <= 0 || price >= 1) continue;
-        const sideFV = sideName === "YES" ? probYes : 1 - probYes;
-        const edge   = sideFV - (price + SLIPPAGE);
-        if (!best || edge > best.edge) best = { sideName, price, sideFV, edge, token };
+      // v11: TIGHT spread caps — we pay the ask, so the spread is a direct
+      // cost. Old caps (15-30¢) were bleeding up to ~15¢ of edge per entry.
+      const maxSpread = m.isLive ? 0.06 : 0.04;
+
+      if (spread > maxSpread) {
+        return null; // illiquid book — entering at the ask would burn the edge
       }
-      if (!best) continue;
+      return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
+    } catch (e) {
+      console.log(`  ❌ BBO error for ${m.slug}: ${e.message}`);
+      return null;
+    }
+  }));
+  
+  const bbosWithData = bboResults.filter(b => b != null);
+  console.log(`✅ ${bbosWithData.length}/${candidatePool.length} markets have BBO data`);
 
-      // FILTERS: real edge + favorite zone only. Never buy longshots.
-      if (best.edge < V_MIN_EDGE) continue;
-      if (market.live === true && best.edge > V_MAX_REAL_EDGE) {
-        console.log(`    ⚠️ +${(best.edge*100).toFixed(0)}¢ edge vs REAL market — too good to be true, skipping | ${market.question.slice(0, 45)}`);
+  let candidates;
+  if (DRY_RUN) {
+    candidates = bboResults
+      .filter(m => m && m.px >= FAV_MIN && m.px <= FAV_MAX)
+      .slice(0, 30);
+    const lc = candidates.filter(m => m.isLive).length;
+    console.log(`🏆 ${candidates.length} favorites (${lc} 🔴 live, ${candidates.length-lc} ⏳) ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+    console.log(`  Top: ${candidates.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
+    console.log(`📗 ${candidates.length} dry candidates`);
+  } else {
+    // LIVE: live games ALWAYS eligible (even mid-game); pre-game only if
+    // starting within 6h so capital isn't parked half a day before tip-off.
+    const UPCOMING_MAX_H = 6;
+    // Track opener references: keep updating while pre-game; freeze once live.
+    for (const m of bbosWithData) {
+      if (!m.isLive && m.px) openerRef.set(m.slug, m.px);
+      else if (m.isLive && m.px && !openerRef.has(m.slug)) openerRef.set(m.slug, m.px); // first sight already live → baseline
+    }
+    let discountRejects = 0;
+    const pool = bbosWithData
+      .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
+      .filter(m => !LEAGUE_FOCUS.length || LEAGUE_FOCUS.includes((m.league || "").toUpperCase()))
+      .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
+      .filter(m => {
+        if (!m.isLive) return true;                       // pre-game: normal rules
+        const ref = openerRef.get(m.slug);
+        if (!ref) return true;                            // no reference yet → allow
+        if (m.px <= ref - DISCOUNT_MIN) return true;      // real discount → allow
+        discountRejects++;
+        return false;                                     // live but NOT cheaper than opener → skip
+      })
+      .sort((a, b) => {
+        if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
+        return b.px - a.px;
+      });
+    if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
+    const lc = pool.filter(m => m.isLive).length;
+    if (pool.length) {
+      console.log(`🏆 ${pool.length} favorites (${lc} 🔴 live) in ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
+      console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
+    } else {
+      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)}. BBO sample: ${bbosWithData.slice(0,5).map(m=>`${cents(m.px)} ${m.question?.slice(0,20)}`).join(" | ")}`);
+    }
+    candidates = pool;
+  }
+  // ── Entry loop ─────────────────────────────────────────────────
+  console.log(`🎯 ${candidates.length} candidates ready for entry`);
+  if (candidates.length === 0) {
+    console.log("❌ NO CANDIDATES — nothing to bet on");
+  } else {
+    console.log(`  First candidate: ${candidates[0].question?.slice(0, 50)} @ ${cents(candidates[0].px)}`);
+  }
+  
+  let betsPlaced = 0;
+  let attempts   = 0;
+  const MAX_ATTEMPTS = 12;
+
+  // Fetch positions already held on Polymarket (prevents double-betting).
+  // FAIL-OPEN: if this fails, proceed with what the bot's own state knows
+  // (hasActiveBet) rather than silently skipping every entry.
+  let ownedSlugs = new Set();
+  let slotsUsed  = getAllActiveBets().length;  // bot memory (resets on restart)
+  if (!DRY_RUN && candidates.length) {
+    // Any slug present in the portfolio = we've bet it. Blacklist ALL keys,
+    // regardless of quantity parsing — maximum stacking protection.
+    const positions = await getOpenPositions();  // null only on error
+    if (positions === null) {
+      // FAIL CLOSED: positions are the only restart-proof dedupe layer.
+      // Without them we cannot guarantee no stacking → no entries this scan.
+      console.log("  🛑 Cannot verify Polymarket positions — NO ENTRIES this scan (anti-stacking)");
+      candidates = [];
+    } else {
+      ownedSlugs = new Set(Object.keys(positions));
+      // ── RESTART-PROOF SLOT CAP: slots = REAL open positions on Polymarket.
+      // Bot memory resets on every restart; the exchange doesn't. (v13 fix:
+      // restarts saw 0/14 and stacked a fresh book on top of the old one.)
+      const liveCount = Object.values(positions).filter(p => p.qtyBought > 0).length;
+      slotsUsed = Math.max(slotsUsed, liveCount);
+      if (ownedSlugs.size) console.log(`  🔒 Holding ${ownedSlugs.size} positions (${liveCount} open) — slots ${slotsUsed}/${MAX_CONC}`);
+      if (slotsUsed >= MAX_CONC) {
+        console.log(`  ⏸ All ${MAX_CONC} slots filled by REAL positions — no entries until settlements free slots`);
+        candidates = [];
+      }
+    }
+  }
+
+  // ── ONE BET PER MARKET, EVER (no stacking) ──
+  // Permanent per-process record of every slug the bot has entered, seeded
+  // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
+  for (const b of getAllActiveBets()) everBet.add(b.slug);
+
+  let entryErrors = 0;
+  for (const m of candidates) {
+    if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
+    if (slotsUsed + betsPlaced >= MAX_CONC) break;
+    if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
+    if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
+    if (hasActiveBet(m.slug)) continue;
+    if (!DRY_RUN && ownedSlugs.has(m.slug)) {
+      console.log(`  ⏭ Already holding ${m.slug.slice(0, 24)} on Polymarket`);
+      continue;
+    }
+
+    // ── ARMORED: one candidate failing can NEVER kill the rest of the loop ──
+    // RESERVE FIRST: claim this market before any slow API call, so no
+    // concurrent code path can order it too. Released only if we don't fill.
+    everBet.add(m.slug);
+    let filledThis = false;
+    try {
+
+    let entryPrice = m.ask;
+    let betSize    = BET_SIZE;
+    let orderId    = `dry_${Date.now()}`;
+
+    // ── Book-state check (ADVISORY, fail-open) ──
+    // Only hard-skip on EXPLICIT dead states. If the endpoint errors or the
+    // shape is unknown, proceed — the FOK order is self-protecting: it either
+    // fills at our price on a live book or does nothing.
+    const book = await getBookState(m.slug);
+    const st = String(book.state || "").toUpperCase();
+    if (/EXPIRED|TERMINATED|RESOLVED|SETTLED|CLOSED|HALT|SUSPEND|PAUSED|CANCEL/.test(st)) {
+      console.log(`  ⛔ Dead market (state=${st}) | ${m.question?.slice(0, 40)}`);
+      continue;
+    }
+    if (!/OPEN/.test(st)) {
+      console.log(`  ⚠️ Book state=${st || "?"} — proceeding, FOK protects | ${m.question?.slice(0, 35)}`);
+    }
+    // ── DEPTH FLOOR: top of book must absorb the whole bet at this price ──
+    // Thin books = worst fills and least reliable prices. Skip when we can
+    // SEE there isn't enough size (unknown depth stays fail-open, FOK protects).
+    const contractsNeeded = Math.floor(BET_SIZE / Math.max(0.01, m.ask));
+    if (book.askQty > 0 && book.askQty < contractsNeeded) {
+      console.log(`  💧 Thin book (${book.askQty}/${contractsNeeded} contracts) | ${m.question?.slice(0, 38)}`);
+      continue;
+    }
+    // Use live book ask if available (fresher than BBO from seconds ago)
+    if (book.bestAsk && book.bestAsk > 0.01 && book.bestAsk < 0.99) {
+      entryPrice = book.bestAsk;
+      m.ask = book.bestAsk;
+    } else {
+      // ── STALE-QUOTE SEAL (v15): book couldn't confirm a price, and the
+      // scan-start BBO can be minutes old. A FOK limit from a stale price
+      // fills BELOW range when a favorite collapses mid-game (the 50-54%
+      // entries). Re-fetch a FRESH quote now; it must still be in range.
+      const fresh = await getBBO(m.slug);
+      if (!fresh?.ask) {
+        console.log(`  🚫 No fresh quote available — skipping | ${m.question?.slice(0, 38)}`);
+        everBet.delete(m.slug);
         continue;
       }
-      if (best.sideFV < V_FAV_MIN || best.sideFV > V_FAV_MAX) continue;
-
-      // BTC signal veto: don't buy a favorite that momentum is attacking
-      if (coin === "BTC" && Math.abs(signals.bias) > 0.30) {
-        const isLong = (direction === "above") === (best.sideName === "YES");
-        if (( isLong && signals.bias < -0.30) ||
-            (!isLong && signals.bias >  0.30)) continue;
+      entryPrice = fresh.ask;
+      m.ask = fresh.ask;
+      if (fresh.bid && (fresh.ask - fresh.bid) > 0.06) {
+        console.log(`  🚫 Fresh spread ${((fresh.ask - fresh.bid) * 100).toFixed(0)}¢ too wide | ${m.question?.slice(0, 38)}`);
+        everBet.delete(m.slug);
+        continue;
       }
+    }
+    // ── FINAL-PRICE REVALIDATION (v14): the live book price must pass the
+    // SAME rules the candidate qualified under. Without this, a 67¢ pick
+    // whose price spiked to 85¢ between BBO and book got bought at 86¢ —
+    // systematically buying tops after moves. Range + spread, re-checked.
+    if (entryPrice < FAV_MIN || entryPrice > FAV_MAX) {
+      console.log(`  🚫 Price moved out of range (${cents(entryPrice)}) since BBO | ${m.question?.slice(0, 38)}`);
+      continue;
+    }
+    if (book.bestBid && (entryPrice - book.bestBid) > 0.06) {
+      console.log(`  🚫 Book spread widened to ${((entryPrice - book.bestBid) * 100).toFixed(0)}¢ | ${m.question?.slice(0, 38)}`);
+      continue;
+    }
+    console.log(`  ✅ Attempting entry | ask=${cents(m.ask)}${book.askQty ? ` askQty=${book.askQty}` : ""} | ${m.question?.slice(0, 40)}`);
 
-      // Quarter-Kelly sizing
-      const fill = best.price + SLIPPAGE;
-      const b    = (1 / fill) - 1;             // net odds
-      const p    = best.sideFV;
-      const fStar = (b * p - (1 - p)) / b;     // full Kelly fraction
-      if (fStar <= 0) continue;
-      
-      // Live balance check (update every entry)
-      let currentBalance = balance;
-      if (!botSettings.dryRun) {
-        try {
-          const { getWalletBalance } = await import("./live-clob.js");
-          const liveBal = await getWalletBalance(
-            process.env.POLYMARKET_API_KEY,
-            process.env.POLYMARKET_PRIVATE_KEY
-          );
-          if (liveBal !== null && liveBal > 0) {
-            currentBalance = liveBal;
-            const maxEnv = parseFloat(process.env.MAX_BET_SIZE || "10");
-            if (liveBal < maxEnv) {
-              console.log(`    ⚠️  Wallet balance $${liveBal.toFixed(2)} < MAX_BET_SIZE $${maxEnv}, skipping`);
-              continue;
-            }
-          }
-        } catch (err) {
-          // Balance check failed, use env fallback
-        }
+    if (!DRY_RUN) {
+      attempts++;
+      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
+      if (!r.filled) {
+        console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
+        everBet.delete(m.slug);  // release reservation — nothing filled
+        continue;
       }
-      
-      const maxEnv = parseFloat(process.env.MAX_BET_SIZE || "10");
-      finalBet = parseFloat(Math.min(
-        Math.max(currentBalance * fStar * V_KELLY_FRACTION, V_MIN_BET),
-        V_MAX_BET, maxEnv, currentBalance * 0.15
-      ).toFixed(2));
-      if (currentBalance < finalBet || finalBet < V_MIN_BET) continue;
-
-      decision = {
-        shouldBet:   true,
-        side:        best.sideName,
-        betSize:     finalBet,
-        edge:        best.edge,
-        trueProb:    best.sideFV,
-        impliedProb: best.price,
-        reasoning:   `🎯VALUE | fair:${(best.sideFV*100).toFixed(0)}¢ vs price:${(best.price*100).toFixed(0)}¢ | edge:+${(best.edge*100).toFixed(1)}¢ | Kelly:$${finalBet}`,
-      };
-
-    } else if (SS_MODE) {
-      // ════════ SHARP SHOOTER (fade the extreme) ════════
-      if (scalpQuality(market, signals) < 0.05) continue;
-      if (signals.confidence < SS_MIN_CONFIDENCE) continue;
-      if (Math.abs(signals.bias) < 0.10) continue;
-
-      finalBet = SS_BET_SIZE;
-      if (balance < finalBet) continue;
-
-      const ql      = q;
-      const isBullQ = ql.includes("rise above") || ql.includes("reach") ||
-                      ql.includes("hit")        || ql.includes("above");
-      const isBearQ = ql.includes("drop below") || ql.includes("fall below") ||
-                      (ql.includes("below") && !ql.includes("above"));
-      const isBear  = signals.bias < 0;
-
-      let side;
-      if (isBullQ)      side = isBear ? "NO"  : "YES";
-      else if (isBearQ) side = isBear ? "YES" : "NO";
-      else              side = isBear ? "NO"  : "YES";
-
-      decision = {
-        shouldBet: true, side, betSize: finalBet,
-        edge:        signals.confidence * Math.abs(signals.bias),
-        trueProb:    0.5 + signals.confidence * 0.4,
-        impliedProb: 0.50,
-        reasoning:   `⚡SS | bias:${signals.bias.toFixed(3)} conf:${(signals.confidence*100).toFixed(0)}%`,
-      };
-
+      entryPrice = r.fillPrice;
+      betSize    = +r.cost.toFixed(2);
+      orderId    = r.orderId;
+      balance   -= betSize;
     } else {
-      // ════════ NORMAL (Kelly + sentiment) ════════
-      if (scalpQuality(market, signals) < 0.10) continue;
-      let sentiment = { sentimentBias: 0 };
-      try { sentiment = await scoreSentiment(signals, market); } catch {}
-      decision = sizeBet(signals, sentiment, market);
-      if (!decision.shouldBet) continue;
-
-      const maxBet = parseFloat(process.env.MAX_BET_SIZE || "5");
-      finalBet = parseFloat(Math.min(decision.betSize, maxBet, balance * 0.15).toFixed(2));
-      if (finalBet < 1 || balance < finalBet) continue;
+      balance -= betSize;
     }
 
-    const token = VALUE_MODE
-      ? (market.tokens || []).find(t => (t.outcome || "").toUpperCase() === decision.side)
-      : market.tokens?.find(t => t.outcome?.toLowerCase() === decision.side.toLowerCase());
-    if (!token) continue;
+    const league = m.league || "SPORT";
+    const game   = [m.question, m.subtitle].filter(Boolean).join(" — ");
+    recordBet({
+      market:             { conditionId: m.slug, question: `[${league}] ${game}`, endDateIso: m.endIso },
+      side:               "YES",
+      betSize,
+      edge:               0,
+      trueProbability:    entryPrice,
+      impliedProbability: entryPrice,
+      orderId,
+      entryPrice,
+      strategy:           "SPORTS_ML",
+      reasoning:          `⚽ ${league} moneyline favorite @ ${cents(entryPrice)} | ${game} | flat $${betSize} | hold to close${DRY_RUN ? "" : " | LIVE FOK fill"}`,
+      entryBtcPrice:      null,
+      entryCoin:          league,
+      sharpShooter:       false,
+      valueBet:           false,
+      strike:             null,
+      direction:          m.question.slice(0, 30),
+    });
 
-    const entryPrice = token.price > 1 ? token.price / 100 : token.price;
-    const minsLeft   = market.endDateIso
-      ? ((new Date(market.endDateIso) - Date.now()) / 60000).toFixed(0)
-      : "?";
-
-    try {
-      const order = await placeOrder({
-        tokenId: token.tokenId || token.token_id,
-        side: "BUY", size: finalBet, price: entryPrice,
-        marketQuestion: market.question,
-      });
-
-      recordBet({
-        market,
-        side:               decision.side,
-        betSize:            finalBet,
-        edge:               decision.edge,
-        trueProbability:    decision.trueProb,
-        impliedProbability: decision.impliedProb,
-        orderId:            order.orderID || order.id,
-        entryPrice,
-        strategy:           VALUE_MODE ? "VALUE" : SS_MODE ? "SHARP_SHOOTER" : signals.activeStrategy,
-        reasoning:          decision.reasoning,
-        entryBtcPrice:      pricing?.spot ?? signals.currentPrice,
-        entryCoin:          pricing?.coin ?? (market.coin || "BTC"),
-        sharpShooter:       SS_MODE,
-        valueBet:           VALUE_MODE,
-        strike:             pricing?.strike    ?? null,
-        direction:          pricing?.direction ?? null,
-      });
-      betsPlaced++;
-      if (VALUE_MODE) _srcByQ.set(q, market.live === true);
-
-      const tag = VALUE_MODE ? "🎯VALUE" : SS_MODE ? "⚡SHARP" : signals.activeStrategy;
-      console.log(`  ✅ ENTRY ${decision.side} $${finalBet} @ ${(entryPrice*100).toFixed(1)}¢ | ${minsLeft}min | ${tag} | ${decision.reasoning || ""} | ${market.question?.slice(0,45)}`);
+    filledThis = true;     // reservation becomes permanent
+    betsPlaced++;
+    const payout = (betSize / entryPrice).toFixed(2);
+    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
     } catch (err) {
-      console.error(`  ❌ Order failed: ${err.message}`);
+      entryErrors++;
+      console.log(`  💥 Entry error [${m.slug?.slice(0,28)}]: ${err.message} — continuing to next candidate`);
+      if (!filledThis) everBet.delete(m.slug);  // release reservation — nothing filled
+      continue;
     }
   }
 
-  summary(exits, betsPlaced, MAX_CONC);
-  return { signals, exits, betsPlaced };
+  console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)}`);
+
+  const s = getStats();
+  console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
+  return { signals: null, exits, betsPlaced };
 }
