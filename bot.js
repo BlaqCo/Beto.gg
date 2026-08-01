@@ -50,7 +50,10 @@ const MAX_CONC      = 4;       // 4 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
-const LEAGUE_FOCUS  = [];
+// TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
+// caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
+// SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
+const LEAGUE_FOCUS  = ["TENNIS","TABLE-TENNIS","TABLE_TENNIS","ATP","WTA","ITF","CHALLENGER","SETKA","TT"];
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
@@ -268,7 +271,11 @@ async function _runScanCycleInner() {
     let discountRejects = 0;
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
-      .filter(m => !LEAGUE_FOCUS.length || LEAGUE_FOCUS.includes((m.league || "").toUpperCase()))
+      .filter(m => {
+        if (!LEAGUE_FOCUS.length) return true;
+        const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
+        return LEAGUE_FOCUS.some(t => hay.includes(t));
+      })
       .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
       .filter(m => {
         if (!m.isLive) return true;                       // pre-game: normal rules
