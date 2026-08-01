@@ -41,22 +41,25 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 3;       // flat $3 per bet
-const BET_MIN       = 3;
-const FAV_MIN       = 0.65;    // floor raised to 65¢ per request
-const FAV_MAX       = 0.80;    // cap 80¢ per request (break-even at 80¢ ≈ 82% win rate)
+const BET_SIZE      = 7;       // flat $7 per bet — no more, no less (whole contracts permitting)
+const BET_MIN       = 7;
+const FAV_MIN       = 0.62;    // SAFER BAND floor: 62¢
+const FAV_MAX       = 0.68;    // SAFER BAND cap: 68¢ — the documented winning band, lowest break-even
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 14;      // 14 concurrent slots (set during the $15 era)
+const MAX_CONC      = 4;       // 4 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
-const LEAGUE_FOCUS  = [];
+// TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
+// caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
+// SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
+const LEAGUE_FOCUS  = ["TENNIS","TABLE-TENNIS","TABLE_TENNIS","ATP","WTA","ITF","CHALLENGER","SETKA","TT"];
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
 const DISCOUNT_MIN  = 0.04;
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 12;      // up to 12 entries per scan
+const ENTRIES_SCAN  = 4;       // aligned with 4-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -268,7 +271,11 @@ async function _runScanCycleInner() {
     let discountRejects = 0;
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
-      .filter(m => !LEAGUE_FOCUS.length || LEAGUE_FOCUS.includes((m.league || "").toUpperCase()))
+      .filter(m => {
+        if (!LEAGUE_FOCUS.length) return true;
+        const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
+        return LEAGUE_FOCUS.some(t => hay.includes(t));
+      })
       .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
       .filter(m => {
         if (!m.isLive) return true;                       // pre-game: normal rules
@@ -421,7 +428,7 @@ async function _runScanCycleInner() {
 
     if (!DRY_RUN) {
       attempts++;
-      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick });
+      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick, minQty: m.minQty });
       if (!r.filled) {
         console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
         everBet.delete(m.slug);  // release reservation — nothing filled
