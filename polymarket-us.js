@@ -549,14 +549,31 @@ export async function getBuyingPower() {
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 4.00;   // penny/dust orders refused
-const ORDER_MAX_USD = 8.00;   // $7 flat + buffer; nothing larger can ever be ordered
+const ORDER_MIN_USD = 5.50;   // penny/dust orders refused ($6 flat, small rounding buffer)
+const ORDER_MAX_USD = 6.50;   // nothing larger than ~$6 can ever be ordered
+const MAX_OPEN_POSITIONS = 2; // hard slot cap enforced AT THE ORDER GATE
 
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01 }) {
   if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
     return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
   }
+  // ── SLOT TRIPWIRE: count REAL open positions before every order.
+  // Enforced here so the cap holds no matter which code path calls.
+  try {
+    const pos = await getOpenPositions();
+    if (pos) {
+      const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
+      if (open >= MAX_OPEN_POSITIONS) {
+        console.log(`🛑 [TRIPWIRE] ${open}/${MAX_OPEN_POSITIONS} slots already full — order REFUSED | ${slug}`);
+        return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS} reached` };
+      }
+      if (pos[slug]) {
+        console.log(`🛑 [TRIPWIRE] Already holding ${slug} — no stacking — REFUSED`);
+        return { filled: false, error: "already holding this market" };
+      }
+    }
+  } catch (e) { /* position check unavailable — size tripwire still applies */ }
   const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
   // PARTIAL CONTRACTS (API since Jun 8): decimal quantities allowed.
   // Buy exactly sizeUsd worth, floored to the instrument's minQty step.
