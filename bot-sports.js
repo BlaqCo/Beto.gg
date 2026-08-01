@@ -41,12 +41,12 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 7;       // flat $7 per bet — no more, no less (whole contracts permitting)
-const BET_MIN       = 7;
-const FAV_MIN       = 0.62;    // SAFER BAND floor: 62¢
-const FAV_MAX       = 0.68;    // SAFER BAND cap: 68¢ — the documented winning band, lowest break-even
+const BET_SIZE      = 6;       // flat $6 per bet — exactly $6, no more no less
+const BET_MIN       = 6;
+const FAV_MIN       = 0.64;    // band floor: 64¢
+const FAV_MAX       = 0.72;    // band cap: 72¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 4;       // 4 concurrent bets MAX
+const MAX_CONC      = 2;       // 2 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -58,8 +58,14 @@ const LEAGUE_FOCUS  = ["TENNIS","TABLE-TENNIS","TABLE_TENNIS","ATP","WTA","ITF",
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
 const DISCOUNT_MIN  = 0.04;
+// ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
+// tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
+// markets must clear a much higher liquidity bar to qualify at all.
+const TIER_MAIN     = ["ATP","WTA","CHALLENGER"];
+const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
+const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 4;       // aligned with 4-slot cap
+const ENTRIES_SCAN  = 2;       // aligned with 2-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -268,7 +274,8 @@ async function _runScanCycleInner() {
       if (!m.isLive && m.px) openerRef.set(m.slug, m.px);
       else if (m.isLive && m.px && !openerRef.has(m.slug)) openerRef.set(m.slug, m.px); // first sight already live → baseline
     }
-    let discountRejects = 0;
+    let discountRejects = 0, thinRejects = 0;
+    const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
       .filter(m => {
@@ -278,6 +285,12 @@ async function _runScanCycleInner() {
       })
       .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
       .filter(m => {
+        // Depth gate by tier — soft books need far more size behind the ask
+        const need = isMainTour(m) ? MAIN_MIN_QTY : SOFT_MIN_QTY;
+        if (m.askQty != null && m.askQty > 0 && m.askQty < need) { thinRejects++; return false; }
+        return true;
+      })
+      .filter(m => {
         if (!m.isLive) return true;                       // pre-game: normal rules
         const ref = openerRef.get(m.slug);
         if (!ref) return true;                            // no reference yet → allow
@@ -286,9 +299,12 @@ async function _runScanCycleInner() {
         return false;                                     // live but NOT cheaper than opener → skip
       })
       .sort((a, b) => {
+        const am = isMainTour(a), bm = isMainTour(b);
+        if (am !== bm) return am ? -1 : 1;                 // main tour first
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return b.px - a.px;
       });
+    if (thinRejects) console.log(`  💧 Depth gate: ${thinRejects} candidates lacked required book depth`);
     if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
     const lc = pool.filter(m => m.isLive).length;
     if (pool.length) {
