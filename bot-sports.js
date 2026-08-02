@@ -46,7 +46,7 @@ const BET_MIN       = 6;
 const FAV_MIN       = 0.64;    // band floor: 64¢
 const FAV_MAX       = 0.72;    // band cap: 72¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 2;       // 2 concurrent bets MAX
+const MAX_CONC      = 6;       // 6 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -65,7 +65,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 2;       // aligned with 2-slot cap
+const ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
