@@ -42,7 +42,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 10;       // flat $6 per bet — exactly $6, no more no less
-const BET_MIN       = 6;
+const BET_MIN       = 10;
 const FAV_MIN       = 0.64;    // band floor: 64¢
 const FAV_MAX       = 0.72;    // band cap: 72¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
