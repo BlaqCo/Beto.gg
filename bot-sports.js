@@ -65,7 +65,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
+const ENTRIES_SCAN  = 8;       // aligned with 6-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
