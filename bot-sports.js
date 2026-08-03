@@ -41,19 +41,19 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 10;       // flat $6 per bet — exactly $6, no more no less
+const BET_SIZE      = 10;      // flat $10 per bet
 const BET_MIN       = 10;
-const FAV_MIN       = 0.64;    // band floor: 64¢
+const FAV_MIN       = 0.67;    // band floor: 67¢
 const FAV_MAX       = 0.72;    // band cap: 72¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 8;       // 6 concurrent bets MAX
+const MAX_CONC      = 6;       // 6 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
 // TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
 // caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
 // SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
-const LEAGUE_FOCUS  = ["TENNIS","TABLE-TENNIS","TABLE_TENNIS","ATP","WTA","ITF","CHALLENGER","SETKA","TT"];
+const LEAGUE_FOCUS  = ["TENNIS","TABLE-TENNIS","TABLE_TENNIS","ATP","WTA","ITF","CHALLENGER","SETKA","TT","MLB","BASEBALL"];
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
@@ -61,11 +61,11 @@ const DISCOUNT_MIN  = 0.04;
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
 // markets must clear a much higher liquidity bar to qualify at all.
-const TIER_MAIN     = ["ATP","WTA","CHALLENGER"];
+const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 8;       // aligned with 6-slot cap
+const ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -268,13 +268,17 @@ async function _runScanCycleInner() {
   } else {
     // LIVE: live games ALWAYS eligible (even mid-game); pre-game only if
     // starting within 6h so capital isn't parked half a day before tip-off.
-    const UPCOMING_MAX_H = 6;
+    // ── ENTRY WINDOW: only games starting 4–12 hours from now.
+    // Pre-game window entries only; live and near-tipoff games excluded.
+    const UPCOMING_MIN_H = 4;
+    const UPCOMING_MAX_H = 12;
     // Track opener references: keep updating while pre-game; freeze once live.
+    // Reference = FIRST price ever seen for this market (never overwritten),
+    // so "discount" means cheaper than where we first found it.
     for (const m of bbosWithData) {
-      if (!m.isLive && m.px) openerRef.set(m.slug, m.px);
-      else if (m.isLive && m.px && !openerRef.has(m.slug)) openerRef.set(m.slug, m.px); // first sight already live → baseline
+      if (m.px && !openerRef.has(m.slug)) openerRef.set(m.slug, m.px);
     }
-    let discountRejects = 0, thinRejects = 0;
+    let discountRejects = 0, thinRejects = 0, windowRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
@@ -283,7 +287,12 @@ async function _runScanCycleInner() {
         const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
         return LEAGUE_FOCUS.some(t => hay.includes(t));
       })
-      .filter(m => m.isLive || m.hoursUntil == null || m.hoursUntil <= UPCOMING_MAX_H)
+      .filter(m => {
+        if (m.isLive) { windowRejects++; return false; }          // in-play → outside window
+        if (m.hoursUntil == null) { windowRejects++; return false; } // unknown start → can't verify window
+        if (m.hoursUntil < UPCOMING_MIN_H || m.hoursUntil > UPCOMING_MAX_H) { windowRejects++; return false; }
+        return true;
+      })
       .filter(m => {
         // Depth gate by tier — soft books need far more size behind the ask
         const need = isMainTour(m) ? MAIN_MIN_QTY : SOFT_MIN_QTY;
@@ -291,12 +300,11 @@ async function _runScanCycleInner() {
         return true;
       })
       .filter(m => {
-        if (!m.isLive) return true;                       // pre-game: normal rules
         const ref = openerRef.get(m.slug);
         if (!ref) return true;                            // no reference yet → allow
-        if (m.px <= ref - DISCOUNT_MIN) return true;      // real discount → allow
+        if (m.px <= ref - DISCOUNT_MIN) return true;      // ≥4¢ cheaper than first seen → allow
         discountRejects++;
-        return false;                                     // live but NOT cheaper than opener → skip
+        return false;                                     // not on discount → skip
       })
       .sort((a, b) => {
         const am = isMainTour(a), bm = isMainTour(b);
@@ -304,6 +312,7 @@ async function _runScanCycleInner() {
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return b.px - a.px;
       });
+    if (windowRejects) console.log(`  ⏱ Entry window: ${windowRejects} skipped (outside ${UPCOMING_MIN_H}-${UPCOMING_MAX_H}h before start)`);
     if (thinRejects) console.log(`  💧 Depth gate: ${thinRejects} candidates lacked required book depth`);
     if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
     const lc = pool.filter(m => m.isLive).length;
