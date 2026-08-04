@@ -43,8 +43,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 10;      // flat $10 per bet
 const BET_MIN       = 10;
-const FAV_MIN       = 0.67;    // band floor: 67¢
-const FAV_MAX       = 0.72;    // band cap: 72¢
+const FAV_MIN       = 0.66;    // band floor: 66¢
+const FAV_MAX       = 0.74;    // band cap: 74¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
 const MAX_CONC      = 6;       // 6 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
