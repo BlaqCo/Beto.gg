@@ -9,7 +9,7 @@
 
 import { recordBet, hasActiveBet, getStats, getAllActiveBets,
          closeBet, getDryBalance, countBetsForMarket } from "./state.js";
-import { fetchSportsMoneylines, getBBO, getSettlement, getBookState,
+import { fetchSportsMoneylines, getBBO, getSettlement, getBookState, buyYesMaker,
          buyYesFOK, getBuyingPower, getOpenPositions,
          preflightUS } from "./polymarket-us.js";
 
@@ -63,6 +63,10 @@ const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
 const DISCOUNT_MIN  = 0.01;   // live entries: ≥1¢ below high-water (pre-game exempt)
+const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
+const MAKER_WAIT_MS = 20000;  // how long a resting order waits before cancel
+const QUOTE_HOLD_MS = 8000;   // price must persist this long before we trade it
+const quoteSeen     = new Map(); // slug → { px, since }
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
 // markets must clear a much higher liquidity bar to qualify at all.
@@ -289,7 +293,7 @@ async function _runScanCycleInner() {
       const prev = openerRef.get(m.slug);
       if (prev == null || m.px > prev) openerRef.set(m.slug, m.px);
     }
-    let discountRejects = 0, thinRejects = 0, windowRejects = 0;
+    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
@@ -308,6 +312,20 @@ async function _runScanCycleInner() {
         // Depth gate by tier — soft books need far more size behind the ask
         const need = isMainTour(m) ? MAIN_MIN_QTY : SOFT_MIN_QTY;
         if (m.askQty != null && m.askQty > 0 && m.askQty < need) { thinRejects++; return false; }
+        return true;
+      })
+      // ── BOOK SANITY: reject stub/fake books (bid 0.03 / ask 0.98 pairs) ──
+      .filter(m => {
+        const sum = (m.bid || 0) + (m.ask || 0);
+        if (!(m.bid > 0.02 && m.ask < 0.98 && sum > 0.90 && sum < 1.10)) { bookRejects++; return false; }
+        return true;
+      })
+      // ── QUOTE PERSISTENCE: price must hold ~8s before we act on it ──
+      .filter(m => {
+        const prev = quoteSeen.get(m.slug);
+        const now2 = Date.now();
+        if (!prev || Math.abs(prev.px - m.px) > 0.02) { quoteSeen.set(m.slug, { px: m.px, since: now2 }); flickerRejects++; return false; }
+        if (now2 - prev.since < QUOTE_HOLD_MS) { flickerRejects++; return false; }
         return true;
       })
       .filter(m => {
@@ -331,6 +349,8 @@ async function _runScanCycleInner() {
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return b.px - a.px;
       });
+    if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
+    if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
     if (windowRejects) console.log(`  ⏱ Entry window: ${windowRejects} skipped (outside ${UPCOMING_MIN_H}-${UPCOMING_MAX_H}h before start)`);
     if (thinRejects) console.log(`  💧 Depth gate: ${thinRejects} candidates lacked required book depth`);
     if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
@@ -472,7 +492,16 @@ async function _runScanCycleInner() {
 
     if (!DRY_RUN) {
       attempts++;
-      const r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick, minQty: m.minQty });
+      let r = null;
+      if (MAKER_MODE && m.bid > 0 && m.ask > m.bid) {
+        r = await buyYesMaker({ slug: m.slug, sizeUsd: BET_SIZE, bid: m.bid, ask: m.ask,
+                                tick: m.tick, minQty: m.minQty, waitMs: MAKER_WAIT_MS });
+        if (r.filled) console.log(`  🎯 MAKER FILL @ ${cents(r.fillPrice)} (saved ~${cents(m.ask - r.fillPrice)} vs ask + no taker fee)`);
+        else console.log(`  ↩︎ Maker unfilled — ${r.error}`);
+      }
+      if (!r || !r.filled) {
+        r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick, minQty: m.minQty });
+      }
       if (!r.filled) {
         console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
         everBet.delete(m.slug);  // release reservation — nothing filled
