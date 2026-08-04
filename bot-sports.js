@@ -41,19 +41,19 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 10;      // flat $10 per bet
-const BET_MIN       = 10;
-const FAV_MIN       = 0.66;    // band floor: 66¢
-const FAV_MAX       = 0.74;    // band cap: 74¢
+const BET_SIZE      = 8;       // flat $8 per bet
+const BET_MIN       = 8;
+const FAV_MIN       = 0.65;    // band floor: 65¢
+const FAV_MAX       = 0.73;    // band cap: 73¢
 const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
-const MAX_CONC      = 6;       // 6 concurrent bets MAX
+const MAX_CONC      = 5;       // 5 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
 // TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
 // caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
 // SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
-const LEAGUE_FOCUS  = ["TENNIS","TABLE-TENNIS","TABLE_TENNIS","ATP","WTA","ITF","CHALLENGER","SETKA","TT","MLB","BASEBALL"];
+const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
@@ -65,7 +65,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
+const ENTRIES_SCAN  = 5;       // aligned with 5-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
