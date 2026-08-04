@@ -62,7 +62,7 @@ const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
-const DISCOUNT_MIN  = 0.02;   // 2¢ below the market's high-water price
+const DISCOUNT_MIN  = 0.01;   // live entries: ≥1¢ below high-water (pre-game exempt)
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
 // markets must clear a much higher liquidity bar to qualify at all.
@@ -278,8 +278,8 @@ async function _runScanCycleInner() {
     // starting within 6h so capital isn't parked half a day before tip-off.
     // ── ENTRY WINDOW: only games starting 4–12 hours from now.
     // Pre-game window entries only; live and near-tipoff games excluded.
-    const UPCOMING_MIN_H = 2;
-    const UPCOMING_MAX_H = 24;
+    const UPCOMING_MIN_H = 4;
+    const UPCOMING_MAX_H = 12;
     // Track opener references: keep updating while pre-game; freeze once live.
     // Reference = HIGH-WATER price seen for this market. "Discount" then means
     // the price has pulled back from its peak — achievable, unlike the old
@@ -299,10 +299,10 @@ async function _runScanCycleInner() {
         return LEAGUE_FOCUS.some(t => hay.includes(t));
       })
       .filter(m => {
-        if (m.isLive) { windowRejects++; return false; }          // in-play → outside window
-        if (m.hoursUntil == null) { windowRejects++; return false; } // unknown start → can't verify window
+        if (m.isLive) return true;                                   // LIVE games always eligible
+        if (m.hoursUntil == null) { windowRejects++; return false; }  // unknown start → can't verify
         if (m.hoursUntil < UPCOMING_MIN_H || m.hoursUntil > UPCOMING_MAX_H) { windowRejects++; return false; }
-        return true;
+        return true;                                                 // pre-game 4–12h window
       })
       .filter(m => {
         // Depth gate by tier — soft books need far more size behind the ask
@@ -311,15 +311,23 @@ async function _runScanCycleInner() {
         return true;
       })
       .filter(m => {
+        // Discount applies to LIVE entries only — in-play prices swing, so a
+        // pullback is meaningful there. Pre-game window entries are exempt:
+        // requiring a dip from high-water blocked everything (prices sit AT
+        // their high-water most of the time, so px == ref → permanent reject).
+        if (!m.isLive) return true;
         const ref = openerRef.get(m.slug);
-        if (!ref) return true;                            // no reference yet → allow
-        if (m.px <= ref - DISCOUNT_MIN) return true;      // ≥4¢ cheaper than first seen → allow
+        if (ref == null) return true;
+        if (m.px <= ref - DISCOUNT_MIN) return true;
         discountRejects++;
-        return false;                                     // not on discount → skip
+        return false;
       })
       .sort((a, b) => {
+        const dip = m => { const r = openerRef.get(m.slug); return r == null ? 0 : Math.max(0, r - m.px); };
         const am = isMainTour(a), bm = isMainTour(b);
         if (am !== bm) return am ? -1 : 1;                 // main tour first
+        const da = dip(a), db = dip(b);
+        if (Math.abs(db - da) >= 0.01) return db - da;     // bigger pullback first
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return b.px - a.px;
       });
