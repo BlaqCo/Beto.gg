@@ -544,6 +544,79 @@ export async function getBuyingPower() {
   return { buyingPower: buyingPower ?? 0, currentBalance: currentBalance ?? buyingPower ?? 0 };
 }
 
+
+// ── buyYesMaker ──────────────────────────────────────────────────
+// POST a resting limit order at/near the MIDPOINT instead of paying the ask.
+// Why: taker orders pay the spread AND the 3% taker fee, and only fill when a
+// faster counterparty wants out (adverse selection). A resting maker order
+// buys cheaper, avoids the taker fee, and earns rebates. Cost: it may not fill.
+export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty = 0.01, waitMs = 20000 }) {
+  if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
+    console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
+    return { filled: false, error: `order size $${sizeUsd} outside allowed` };
+  }
+  try {
+    const pos = await getOpenPositions();
+    if (pos) {
+      const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
+      if (open >= MAX_OPEN_POSITIONS) return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS}` };
+      if (pos[slug]) return { filled: false, error: "already holding this market" };
+    }
+  } catch {}
+
+  if (!(bid > 0 && ask > 0 && ask > bid)) return { filled: false, error: "no two-sided book for maker order" };
+  // Price one tick above the bid, never above the midpoint — stays a maker.
+  const mid = (bid + ask) / 2;
+  let price = Math.min(mid, bid + tick);
+  price = Math.round(price / tick) * tick;
+  price = Math.round(price * 1000) / 1000;
+  if (!(price > 0.01 && price < 0.99)) return { filled: false, error: "maker price out of bounds" };
+
+  const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
+  let qty = Math.floor((sizeUsd / price) / step) * step;
+  qty = Math.round(qty * 1000) / 1000;
+  while (qty > step && qty * price > sizeUsd + 1e-9) qty = Math.round((qty - step) * 1000) / 1000;
+  if (!(qty > 0)) return { filled: false, error: "size too small for maker order" };
+
+  let id = null;
+  try {
+    const order = await signedRequest("POST", "/v1/orders", {
+      marketSlug: slug,
+      intent:     "ORDER_INTENT_BUY_LONG",
+      type:       "ORDER_TYPE_LIMIT",
+      price:      { value: price.toFixed(2), currency: "USD" },
+      quantity:   qty,
+      tif:        "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+    });
+    id = order?.id;
+    if (!id) return { filled: false, error: `no order id (${order?.state || "unknown"})` };
+
+    // Poll for a fill, then cancel whatever hasn't filled.
+    const deadline = Date.now() + waitMs;
+    let state = order?.state;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 2500));
+      try { state = (await signedRequest("GET", `/v1/order/${id}`))?.state; } catch {}
+      if (state === "ORDER_STATE_FILLED") {
+        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
+      }
+      if (state && /CANCEL|REJECT|EXPIRED/i.test(state)) break;
+    }
+    try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {}
+    // A fill can land in the same instant we cancel — verify once more.
+    try {
+      const fin = await signedRequest("GET", `/v1/order/${id}`);
+      if (fin?.state === "ORDER_STATE_FILLED") {
+        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
+      }
+    } catch {}
+    return { filled: false, error: `maker unfilled @ ${price.toFixed(2)} (cancelled)`, orderId: id };
+  } catch (err) {
+    if (id) { try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {} }
+    return { filled: false, error: err.message };
+  }
+}
+
 // ── buyYesFOK ────────────────────────────────────────────────────
 // ── ORDER-SIZE TRIPWIRE ──────────────────────────────────────────
 // EVERY buy passes through here. Regardless of which code path calls,
