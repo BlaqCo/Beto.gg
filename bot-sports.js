@@ -28,7 +28,10 @@ function calReport() {
   const rows = Object.entries(calib).map(([k, v]) => {
     const [lg, bucket] = k.split("|");
     const n = v.w + v.l, rate = v.w / n;
-    const be = (parseInt(bucket) + 2 + 2) / 100; // bucket mid + ~2% fee
+    const midPx = (parseInt(bucket) + 2) / 100;          // bucket midpoint price
+    const stake = 10, contracts = stake / midPx;
+    const fee   = 0.03 * contracts * Math.min(midPx, 1 - midPx);
+    const be    = (stake + fee) / contracts;              // true break-even win rate
     return { lg, bucket, n, rate, be, edge: rate - be };
   }).filter(r => r.n >= 3).sort((a, b) => b.edge - a.edge);
   if (!rows.length) return;
@@ -45,7 +48,9 @@ const BET_SIZE      = 8;       // flat $8 per bet
 const BET_MIN       = 8;
 const FAV_MIN       = 0.65;    // band floor: 65¢
 const FAV_MAX       = 0.73;    // band cap: 73¢
-const FEE           = 0.02;    // fee estimate on winning payout (bookkeeping)
+const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
+// $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
+const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
 const MAX_CONC      = 5;       // 5 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
@@ -70,7 +75,10 @@ const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
 const shares    = b  => b.betSize / b.entryPrice;
-const expiryPnl = (b, won) => won ? shares(b) * (1 - FEE) - b.betSize : -b.betSize;
+const expiryPnl = (b, won) => {
+  const fee = feeFor(b.entryPrice, b.betSize);
+  return won ? shares(b) - b.betSize - fee : -(b.betSize + fee);
+};
 const exitPnl   = (b, px) => shares(b) * px - b.betSize;
 const pct       = x  => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 const cents     = x  => `${(x * 100).toFixed(0)}¢`;
