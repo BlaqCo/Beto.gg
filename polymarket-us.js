@@ -549,9 +549,9 @@ export async function getBuyingPower() {
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 9.00;   // penny/dust orders refused ($10 flat, small buffer)
-const ORDER_MAX_USD = 10.50;  // nothing larger than ~$10 can ever be ordered
-const MAX_OPEN_POSITIONS = 6; // hard slot cap enforced AT THE ORDER GATE
+const ORDER_MIN_USD = 7.00;   // penny/dust orders refused ($8 flat, small buffer)
+const ORDER_MAX_USD = 8.50;   // nothing larger than ~$8 can ever be ordered
+const MAX_OPEN_POSITIONS = 5; // hard slot cap enforced AT THE ORDER GATE
 
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01 }) {
   if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
