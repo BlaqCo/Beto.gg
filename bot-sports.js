@@ -62,7 +62,7 @@ const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
-const DISCOUNT_MIN  = 0.04;
+const DISCOUNT_MIN  = 0.02;   // 2¢ below the market's high-water price
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
 // markets must clear a much higher liquidity bar to qualify at all.
@@ -278,13 +278,16 @@ async function _runScanCycleInner() {
     // starting within 6h so capital isn't parked half a day before tip-off.
     // ── ENTRY WINDOW: only games starting 4–12 hours from now.
     // Pre-game window entries only; live and near-tipoff games excluded.
-    const UPCOMING_MIN_H = 4;
-    const UPCOMING_MAX_H = 12;
+    const UPCOMING_MIN_H = 2;
+    const UPCOMING_MAX_H = 24;
     // Track opener references: keep updating while pre-game; freeze once live.
-    // Reference = FIRST price ever seen for this market (never overwritten),
-    // so "discount" means cheaper than where we first found it.
+    // Reference = HIGH-WATER price seen for this market. "Discount" then means
+    // the price has pulled back from its peak — achievable, unlike the old
+    // first-sight reference which could never be beaten on first sight.
     for (const m of bbosWithData) {
-      if (m.px && !openerRef.has(m.slug)) openerRef.set(m.slug, m.px);
+      if (!m.px) continue;
+      const prev = openerRef.get(m.slug);
+      if (prev == null || m.px > prev) openerRef.set(m.slug, m.px);
     }
     let discountRejects = 0, thinRejects = 0, windowRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
