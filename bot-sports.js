@@ -318,8 +318,12 @@ async function _runScanCycleInner() {
       })
       // ── BOOK SANITY: reject stub/fake books (bid 0.03 / ask 0.98 pairs) ──
       .filter(m => {
-        const sum = (m.bid || 0) + (m.ask || 0);
-        if (!(m.bid > 0.02 && m.ask < 0.98 && sum > 0.90 && sum < 1.10)) { bookRejects++; return false; }
+        // FIX: bid and ask are the SAME side of the book, so they do NOT sum
+        // to ~1.00 (a 69¢ market quotes ~65/69 → sum 1.34). The earlier sum
+        // check rejected every real market. Correct test: a real two-sided
+        // book has bid < ask, a tight gap, and neither side pinned at the rail.
+        const bid = m.bid || 0, ask = m.ask || 0;
+        if (!(bid > 0.02 && ask < 0.98 && ask > bid && (ask - bid) <= 0.08)) { bookRejects++; return false; }
         return true;
       })
       // ── QUOTE PERSISTENCE: price must hold ~8s before we act on it ──
