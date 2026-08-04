@@ -65,7 +65,9 @@ const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
 const DISCOUNT_MIN  = 0.01;   // live entries: ≥1¢ below high-water (pre-game exempt)
 const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
 const MAKER_WAIT_MS = 20000;  // how long a resting order waits before cancel
-const QUOTE_HOLD_MS = 8000;   // price must persist this long before we trade it
+const QUOTE_HOLD_MS = 15000;  // ~1 scan cycle: price must be seen twice
+const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apart;
+                              // 2¢ was tighter than normal drift, so nothing ever confirmed)
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
@@ -324,7 +326,7 @@ async function _runScanCycleInner() {
       .filter(m => {
         const prev = quoteSeen.get(m.slug);
         const now2 = Date.now();
-        if (!prev || Math.abs(prev.px - m.px) > 0.02) { quoteSeen.set(m.slug, { px: m.px, since: now2 }); flickerRejects++; return false; }
+        if (!prev || Math.abs(prev.px - m.px) > QUOTE_TOL) { quoteSeen.set(m.slug, { px: m.px, since: now2 }); flickerRejects++; return false; }
         if (now2 - prev.since < QUOTE_HOLD_MS) { flickerRejects++; return false; }
         return true;
       })
