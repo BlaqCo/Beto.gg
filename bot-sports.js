@@ -70,11 +70,10 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
                               // 2¢ was tighter than normal drift, so nothing ever confirmed)
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
-const DCA_ENABLED   = false;  // OFF — no add-ons, one bet per market
-const DCA_DIP_PX    = 0.50;   // price falls to/below 50¢ → add
-const DCA_DIP_USD   = 5;
-const DCA_UP_PCT    = 0.15;   // price up 15% from entry → add
-const DCA_UP_USD    = 10;
+const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
+const DCA_DROP_MIN  = 0.09;   // second buy requires ≥9¢ below entry (69¢ → ≤60¢)
+const DCA_ADD_USD   = 15;     // size of the add
+const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
@@ -167,10 +166,11 @@ async function processExits() {
       // ── ONE-TIME ADD-ON (DCA) ──
       if (DCA_ENABLED && !DRY_RUN && !addedOn.has(slug)) {
         const ask2 = bbo?.ask;
-        const dip  = ask2 && ask2 <= DCA_DIP_PX;
-        const up   = ask2 && (ask2 - bet.entryPrice) / bet.entryPrice >= DCA_UP_PCT;
-        if (ask2 && (dip || up)) {
-          const addUsd = dip ? DCA_DIP_USD : DCA_UP_USD;
+        // Second buy ONLY if price is ≥DCA_DROP_MIN below our entry and still
+        // above the floor. Same price = no add (that was the accidental $30).
+        const dip = ask2 && ask2 <= (bet.entryPrice - DCA_DROP_MIN) && ask2 >= DCA_FLOOR_PX;
+        if (dip) {
+          const addUsd = DCA_ADD_USD;
           const bal = await getBuyingPower();
           if (bal >= addUsd) {
             addedOn.add(slug);   // claim BEFORE ordering — one add, ever
@@ -178,7 +178,7 @@ async function processExits() {
                                         tick: bet.tick || 0.01, minQty: bet.minQty || 0.01,
                                         allowAddOn: true });
             if (r.filled) {
-              console.log(`  ➕ ADD-ON ${dip ? "DIP" : "UP"} $${addUsd} @ ${cents(r.fillPrice)} | ${bet.marketQuestion?.slice(0, 38)}`);
+              console.log(`  ➕ SECOND BUY $${addUsd} @ ${cents(r.fillPrice)} (entry was ${cents(bet.entryPrice)}, −${cents(bet.entryPrice - r.fillPrice)}) | ${bet.marketQuestion?.slice(0, 38)}`);
             } else {
               console.log(`  ➕ Add-on not filled (${r.error})`);
             }
@@ -537,6 +537,18 @@ async function _runScanCycleInner() {
         else console.log(`  ↩︎ Maker unfilled — ${r.error}`);
       }
       if (!r || !r.filled) {
+        // GUARD: never fall back onto a market we may have just filled as maker.
+        // A late maker fill + taker fallback = double position (the $30 bug).
+        let alreadyHave = false;
+        try {
+          const posNow = await getOpenPositions();
+          alreadyHave = !!(posNow && posNow[m.slug]);
+        } catch { alreadyHave = true; }   // can't verify → do NOT risk a second order
+        if (alreadyHave) {
+          console.log(`  ⛔ Skipping taker fallback — position already exists | ${m.question?.slice(0, 38)}`);
+          filledThis = true;              // keep the slug reserved; no second order
+          continue;
+        }
         r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick, minQty: m.minQty });
       }
       if (!r.filled) {
