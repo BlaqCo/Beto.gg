@@ -44,8 +44,8 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 8;       // flat $8 per bet
-const BET_MIN       = 8;
+const BET_SIZE      = 15;      // flat $15 per bet
+const BET_MIN       = 15;
 const FAV_MIN       = 0.65;    // band floor: 65¢
 const FAV_MAX       = 0.73;    // band cap: 73¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
@@ -69,6 +69,13 @@ const QUOTE_HOLD_MS = 15000;  // ~1 scan cycle: price must be seen twice
 const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apart;
                               // 2¢ was tighter than normal drift, so nothing ever confirmed)
 const quoteSeen     = new Map(); // slug → { px, since }
+// ── DCA / ADD-ON RULES (one add per market, ever) ──
+const DCA_ENABLED   = false;  // OFF — no add-ons, one bet per market
+const DCA_DIP_PX    = 0.50;   // price falls to/below 50¢ → add
+const DCA_DIP_USD   = 5;
+const DCA_UP_PCT    = 0.15;   // price up 15% from entry → add
+const DCA_UP_USD    = 10;
+const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
 // markets must clear a much higher liquidity bar to qualify at all.
@@ -156,6 +163,30 @@ async function processExits() {
       const move = (bid - bet.entryPrice) / bet.entryPrice;
       liveMarks.set(slug, { price: bid, pnl: +exitPnl(bet, bid).toFixed(2), movePct: move, ts: Date.now() });
       console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | Δ${pct(move)} | holding to close | ${bet.marketQuestion?.slice(0, 40)}`);
+
+      // ── ONE-TIME ADD-ON (DCA) ──
+      if (DCA_ENABLED && !DRY_RUN && !addedOn.has(slug)) {
+        const ask2 = bbo?.ask;
+        const dip  = ask2 && ask2 <= DCA_DIP_PX;
+        const up   = ask2 && (ask2 - bet.entryPrice) / bet.entryPrice >= DCA_UP_PCT;
+        if (ask2 && (dip || up)) {
+          const addUsd = dip ? DCA_DIP_USD : DCA_UP_USD;
+          const bal = await getBuyingPower();
+          if (bal >= addUsd) {
+            addedOn.add(slug);   // claim BEFORE ordering — one add, ever
+            const r = await buyYesFOK({ slug, sizeUsd: addUsd, ask: ask2,
+                                        tick: bet.tick || 0.01, minQty: bet.minQty || 0.01,
+                                        allowAddOn: true });
+            if (r.filled) {
+              console.log(`  ➕ ADD-ON ${dip ? "DIP" : "UP"} $${addUsd} @ ${cents(r.fillPrice)} | ${bet.marketQuestion?.slice(0, 38)}`);
+            } else {
+              console.log(`  ➕ Add-on not filled (${r.error})`);
+            }
+          } else {
+            console.log(`  ➕ Add-on skipped — balance $${bal.toFixed(2)} < $${addUsd}`);
+          }
+        }
+      }
     } else {
       console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} @ ${cents(bet.entryPrice)} | awaiting settlement | ${bet.marketQuestion?.slice(0, 40)}`);
     }
