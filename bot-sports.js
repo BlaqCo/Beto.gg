@@ -74,6 +74,8 @@ const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
 const DCA_DROP_MIN  = 0.13;   // second buy requires ≥13¢ below entry (69¢ → ≤56¢)
 const DCA_ADD_USD   = 6;      // size of the add (matches flat bet)
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
+const DCA_UP_PX     = 0.80;   // live price reaches 80¢ → add to the winner
+const DCA_UP_MULT   = 1.20;   // add 120% of the initial bet ($6 → $7.20)
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
@@ -222,11 +224,13 @@ async function processExits() {
       // ── ONE-TIME ADD-ON (DCA) ──
       if (DCA_ENABLED && !DRY_RUN && !addedOn.has(slug)) {
         const ask2 = bbo?.ask;
-        // Second buy ONLY if price is ≥DCA_DROP_MIN below our entry and still
-        // above the floor. Same price = no add (that was the accidental $30).
-        const dip = ask2 && ask2 <= (bet.entryPrice - DCA_DROP_MIN) && ask2 >= DCA_FLOOR_PX;
-        if (dip) {
-          const addUsd = DCA_ADD_USD;
+        // Two independent triggers, ONE add per market either way:
+        //  • DIP: price ≥13¢ below entry (and above the floor)
+        //  • STRENGTH: live price reaches 80¢+ → add 120% of the initial bet
+        const dip    = ask2 && ask2 <= (bet.entryPrice - DCA_DROP_MIN) && ask2 >= DCA_FLOOR_PX;
+        const strong = ask2 && ask2 >= DCA_UP_PX && ask2 < 0.95;
+        if (dip || strong) {
+          const addUsd = strong ? +(BET_SIZE * DCA_UP_MULT).toFixed(2) : DCA_ADD_USD;
           // getBuyingPower() returns an OBJECT, not a number (this mismatch
           // crashed processExits and stopped settlements from being recorded).
           const balObj = await getBuyingPower();
@@ -237,7 +241,7 @@ async function processExits() {
                                         tick: bet.tick || 0.01, minQty: bet.minQty || 0.01,
                                         allowAddOn: true });
             if (r.filled) {
-              console.log(`  ➕ SECOND BUY $${addUsd} @ ${cents(r.fillPrice)} (entry was ${cents(bet.entryPrice)}, −${cents(bet.entryPrice - r.fillPrice)}) | ${bet.marketQuestion?.slice(0, 38)}`);
+              console.log(`  ➕ SECOND BUY ${strong ? "STRENGTH" : "DIP"} $${addUsd} @ ${cents(r.fillPrice)} (entry ${cents(bet.entryPrice)}) | ${bet.marketQuestion?.slice(0, 38)}`);
             } else {
               console.log(`  ➕ Add-on not filled (${r.error})`);
             }
