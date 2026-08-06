@@ -44,8 +44,8 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 15;      // flat $15 per bet
-const BET_MIN       = 15;
+const BET_SIZE      = 9;       // flat $9 per bet
+const BET_MIN       = 9;
 const FAV_MIN       = 0.65;    // band floor: 65¢
 const FAV_MAX       = 0.73;    // band cap: 73¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
@@ -71,8 +71,8 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
 const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
-const DCA_DROP_MIN  = 0.09;   // second buy requires ≥9¢ below entry (69¢ → ≤60¢)
-const DCA_ADD_USD   = 15;     // size of the add
+const DCA_DROP_MIN  = 0.13;   // second buy requires ≥13¢ below entry (69¢ → ≤56¢)
+const DCA_ADD_USD   = 9;      // size of the add (matches flat bet)
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
