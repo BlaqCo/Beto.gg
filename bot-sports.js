@@ -78,7 +78,7 @@ const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
-const KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
+const KILL_FLOOR    = 50;     // total value (cash + open positions) — below this, NO new bets
 let   KILLED        = false;
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
