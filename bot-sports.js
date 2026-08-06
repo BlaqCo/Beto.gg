@@ -171,7 +171,10 @@ async function processExits() {
         const dip = ask2 && ask2 <= (bet.entryPrice - DCA_DROP_MIN) && ask2 >= DCA_FLOOR_PX;
         if (dip) {
           const addUsd = DCA_ADD_USD;
-          const bal = await getBuyingPower();
+          // getBuyingPower() returns an OBJECT, not a number (this mismatch
+          // crashed processExits and stopped settlements from being recorded).
+          const balObj = await getBuyingPower();
+          const bal = Number(balObj?.buyingPower ?? balObj?.currentBalance ?? 0);
           if (bal >= addUsd) {
             addedOn.add(slug);   // claim BEFORE ordering — one add, ever
             const r = await buyYesFOK({ slug, sizeUsd: addUsd, ask: ask2,
@@ -183,7 +186,7 @@ async function processExits() {
               console.log(`  ➕ Add-on not filled (${r.error})`);
             }
           } else {
-            console.log(`  ➕ Add-on skipped — balance $${bal.toFixed(2)} < $${addUsd}`);
+            console.log(`  ➕ Add-on skipped — balance $${(Number(bal) || 0).toFixed(2)} < $${addUsd}`);
           }
         }
       }
