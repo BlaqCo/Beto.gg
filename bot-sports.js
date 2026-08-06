@@ -46,7 +46,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 9;       // flat $9 per bet
 const BET_MIN       = 9;
-const FAV_MIN       = 0.65;    // band floor: 65¢
+const FAV_MIN       = 0.56;    // band floor: 56¢
 const FAV_MAX       = 0.73;    // band cap: 73¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
@@ -123,8 +123,42 @@ const liveMarks = new Map();
 export function getSportsMarks() { return liveMarks; }
 
 // ── Exits: settlement only — hold to close ──────────────────────
+// ── ADOPT ORPHAN POSITIONS ───────────────────────────────────────
+// Any position in the portfolio that the bot has no record of — manual bets,
+// or bets whose record was lost across a redeploy — gets adopted using the
+// API's avgPx as its entry price. Once adopted it is monitored, eligible for
+// the one-time add-on, and recorded in the calibration ledger on settlement.
+async function adoptOrphanPositions() {
+  if (DRY_RUN) return;
+  try {
+    const pos = await getOpenPositions();
+    if (!pos) return;
+    const known = new Set(getAllActiveBets().map(b => b.marketConditionId));
+    for (const [slug, p] of Object.entries(pos)) {
+      if (!(p?.qtyBought > 0) || known.has(slug)) continue;
+      const entry = p.avgPx;
+      if (!entry) { console.log(`  🫥 Orphan ${slug.slice(0,28)} — no avgPx, cannot adopt`); continue; }
+      const size = p.cost != null ? +Number(p.cost).toFixed(2) : +(p.qtyBought * entry).toFixed(2);
+      recordBet({
+        marketConditionId: slug,
+        marketQuestion: p.question || slug,
+        entryPrice: entry,
+        betSize: size,
+        strategy: "SPORTS_ML",
+        entryCoin: "ADOPTED",
+        orderId: `adopted_${Date.now()}`,
+      });
+      addedOn.add(slug);   // adopted positions don't get an add-on: entry basis is an average, not a single fill
+      console.log(`  🧲 ADOPTED position ${slug.slice(0,30)} | entry ${cents(entry)} | $${size}`);
+    }
+  } catch (e) {
+    console.log(`  ⚠️ Orphan adoption skipped: ${e.message}`);
+  }
+}
+
 async function processExits() {
   const exits = [];
+  await adoptOrphanPositions();          // pick up positions the bot didn't record
   const mine = getAllActiveBets().filter(b => b.strategy === "SPORTS_ML");
 
   for (const bet of mine) {
@@ -339,10 +373,10 @@ async function _runScanCycleInner() {
         return LEAGUE_FOCUS.some(t => hay.includes(t));
       })
       .filter(m => {
-        if (m.isLive) return true;                                   // LIVE games always eligible
-        if (m.hoursUntil == null) { windowRejects++; return false; }  // unknown start → can't verify
-        if (m.hoursUntil < UPCOMING_MIN_H || m.hoursUntil > UPCOMING_MAX_H) { windowRejects++; return false; }
-        return true;                                                 // pre-game 4–12h window
+        // LIVE ONLY: never enter before a match starts.
+        if (m.isLive) return true;
+        windowRejects++;
+        return false;
       })
       .filter(m => {
         // Depth gate by tier — soft books need far more size behind the ask
@@ -387,7 +421,7 @@ async function _runScanCycleInner() {
         const da = dip(a), db = dip(b);
         if (Math.abs(db - da) >= 0.01) return db - da;     // bigger pullback first
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
-        return b.px - a.px;
+        return a.px - b.px;                                // CHEAPEST FIRST (lower band priority)
       });
     if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
     if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
