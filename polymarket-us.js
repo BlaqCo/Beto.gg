@@ -622,11 +622,11 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 7.00;   // penny/dust orders refused ($8 flat, small buffer)
-const ORDER_MAX_USD = 8.50;   // nothing larger than ~$8 can ever be ordered
+const ORDER_MIN_USD = 13.00;  // penny/dust orders refused ($15 flat, small buffer)
+const ORDER_MAX_USD = 15.50;  // nothing larger than ~$15 can ever be ordered
 const MAX_OPEN_POSITIONS = 12; // hard slot cap enforced AT THE ORDER GATE
 
-export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01 }) {
+export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false }) {
   if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
     return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
@@ -637,11 +637,11 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
     const pos = await getOpenPositions();
     if (pos) {
       const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
-      if (open >= MAX_OPEN_POSITIONS) {
+      if (open >= MAX_OPEN_POSITIONS && !allowAddOn) {
         console.log(`🛑 [TRIPWIRE] ${open}/${MAX_OPEN_POSITIONS} slots already full — order REFUSED | ${slug}`);
         return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS} reached` };
       }
-      if (pos[slug]) {
+      if (pos[slug] && !allowAddOn) {
         console.log(`🛑 [TRIPWIRE] Already holding ${slug} — no stacking — REFUSED`);
         return { filled: false, error: "already holding this market" };
       }
