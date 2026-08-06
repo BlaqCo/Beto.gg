@@ -603,10 +603,19 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
       if (state && /CANCEL|REJECT|EXPIRED/i.test(state)) break;
     }
     try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {}
-    // A fill can land in the same instant we cancel — verify once more.
+    // A fill can land in the same instant we cancel — verify TWICE, two ways.
+    await new Promise(r => setTimeout(r, 2000));
     try {
       const fin = await signedRequest("GET", `/v1/order/${id}`);
       if (fin?.state === "ORDER_STATE_FILLED") {
+        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
+      }
+    } catch {}
+    // Positions are the ground truth — if the slug now shows a position, it filled.
+    try {
+      const pos2 = await getOpenPositions();
+      if (pos2 && pos2[slug] && pos2[slug].qtyBought > 0) {
+        console.log(`  ✅ Maker filled late (confirmed via positions) | ${slug}`);
         return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
       }
     } catch {}
@@ -622,8 +631,8 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 13.00;  // penny/dust orders refused ($15 flat, small buffer)
-const ORDER_MAX_USD = 15.50;  // nothing larger than ~$15 can ever be ordered
+const ORDER_MIN_USD = 8.00;   // penny/dust orders refused ($9 flat, small buffer)
+const ORDER_MAX_USD = 9.50;   // nothing larger than ~$9 can ever be ordered
 const MAX_OPEN_POSITIONS = 12; // hard slot cap enforced AT THE ORDER GATE
 
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false }) {
