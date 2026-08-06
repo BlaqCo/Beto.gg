@@ -77,6 +77,9 @@ const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
+// ── CIRCUIT BREAKER: hard stop on total account value ──
+const KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
+let   KILLED        = false;
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
@@ -470,6 +473,32 @@ async function _runScanCycleInner() {
   // Fetch positions already held on Polymarket (prevents double-betting).
   // FAIL-OPEN: if this fails, proceed with what the bot's own state knows
   // (hasActiveBet) rather than silently skipping every entry.
+  // ── CIRCUIT BREAKER CHECK (before any entry logic) ──
+  try {
+    const balObj = await getBuyingPower();
+    const cash   = Number(balObj?.buyingPower ?? balObj?.currentBalance ?? 0);
+    const posAll = await getOpenPositions();
+    const posVal = posAll ? Object.values(posAll)
+      .reduce((t, p) => t + Number(p.cashValue ?? p.cost ?? 0), 0) : 0;
+    const total  = cash + posVal;
+    if (total < KILL_FLOOR) {
+      if (!KILLED) {
+        KILLED = true;
+        console.log(`\n🛑🛑 CIRCUIT BREAKER TRIPPED — total $${total.toFixed(2)} below floor $${KILL_FLOOR}`);
+        console.log(`🛑 NO NEW BETS. Open positions will still settle. Set KILL_FLOOR lower or redeploy to resume.\n`);
+      }
+    } else if (!KILLED) {
+      console.log(`  🛟 Account total $${total.toFixed(2)} (cash $${cash.toFixed(2)} + positions $${posVal.toFixed(2)}) | floor $${KILL_FLOOR}`);
+    }
+  } catch (e) {
+    console.log(`  ⚠️ Circuit-breaker check failed (${e.message}) — no entries this scan`);
+    KILLED = true;
+  }
+  if (KILLED) {
+    console.log(`  🛑 Circuit breaker active — skipping all entries`);
+    candidates = [];
+  }
+
   let ownedSlugs = new Set();
   let slotsUsed  = getAllActiveBets().length;  // bot memory (resets on restart)
   if (!DRY_RUN && candidates.length) {
