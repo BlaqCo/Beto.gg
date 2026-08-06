@@ -78,7 +78,8 @@ const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
-const KILL_FLOOR    = 50;     // total value (cash + open positions) — below this, NO new bets
+const KILL_ENABLED  = false;  // circuit breaker OFF
+const KILL_FLOOR    = 50;     // (unused while KILL_ENABLED is false)
 let   KILLED        = false;
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
@@ -474,7 +475,7 @@ async function _runScanCycleInner() {
   // FAIL-OPEN: if this fails, proceed with what the bot's own state knows
   // (hasActiveBet) rather than silently skipping every entry.
   // ── CIRCUIT BREAKER CHECK (before any entry logic) ──
-  try {
+  if (KILL_ENABLED) try {
     const balObj = await getBuyingPower();
     const cash   = Number(balObj?.buyingPower ?? balObj?.currentBalance ?? 0);
     const posAll = await getOpenPositions();
@@ -494,7 +495,7 @@ async function _runScanCycleInner() {
     console.log(`  ⚠️ Circuit-breaker check failed (${e.message}) — no entries this scan`);
     KILLED = true;
   }
-  if (KILLED) {
+  if (KILL_ENABLED && KILLED) {
     console.log(`  🛑 Circuit breaker active — skipping all entries`);
     candidates = [];
   }
