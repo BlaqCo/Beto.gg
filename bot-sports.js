@@ -44,8 +44,8 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 9;       // flat $9 per bet
-const BET_MIN       = 9;
+const BET_SIZE      = 6;       // flat $6 per bet
+const BET_MIN       = 6;
 const FAV_MIN       = 0.56;    // band floor: 56¢
 const FAV_MAX       = 0.73;    // band cap: 73¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
@@ -72,7 +72,7 @@ const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
 const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
 const DCA_DROP_MIN  = 0.13;   // second buy requires ≥13¢ below entry (69¢ → ≤56¢)
-const DCA_ADD_USD   = 9;      // size of the add (matches flat bet)
+const DCA_ADD_USD   = 6;      // size of the add (matches flat bet)
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 const TP_ENABLED    = true;
