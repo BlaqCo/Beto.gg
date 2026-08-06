@@ -715,7 +715,14 @@ export async function getOpenPositions() {
     for (const [slug, p] of Object.entries(positions)) {
       // Same field fallbacks as getOpenPositionsEnriched (proven against live API):
       const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? p?.netPosition ?? 0);
-      out[slug] = { qtyBought: qty, netPosition: qty };
+      const avg = p?.avgPx != null ? parseFloat(p.avgPx) : null;
+      const cost = p?.cost?.value != null ? parseFloat(p.cost.value) : null;
+      const meta = p?.marketMetadata || p?.market_metadata || {};
+      out[slug] = {
+        qtyBought: qty, netPosition: qty,
+        avgPx: (avg && avg > 0.02 && avg < 0.99) ? +avg.toFixed(4) : null,
+        cost, question: meta.title || meta.question || meta.name || null,
+      };
     }
     return out;
   } catch (err) {
