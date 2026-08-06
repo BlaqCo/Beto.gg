@@ -10,7 +10,7 @@
 import { recordBet, hasActiveBet, getStats, getAllActiveBets,
          closeBet, getDryBalance, countBetsForMarket } from "./state.js";
 import { fetchSportsMoneylines, getBBO, getSettlement, getBookState, buyYesMaker,
-         buyYesFOK, getBuyingPower, getOpenPositions,
+         buyYesFOK, getBuyingPower, getOpenPositions, closePositionLive,
          preflightUS } from "./polymarket-us.js";
 
 console.log(`🚀 PROCESS START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
@@ -74,6 +74,9 @@ const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
 const DCA_DROP_MIN  = 0.13;   // second buy requires ≥13¢ below entry (69¢ → ≤56¢)
 const DCA_ADD_USD   = 9;      // size of the add (matches flat bet)
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
+// ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
+const TP_ENABLED    = true;
+const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
@@ -196,6 +199,21 @@ async function processExits() {
       const move = (bid - bet.entryPrice) / bet.entryPrice;
       liveMarks.set(slug, { price: bid, pnl: +exitPnl(bet, bid).toFixed(2), movePct: move, ts: Date.now() });
       console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | Δ${pct(move)} | holding to close | ${bet.marketQuestion?.slice(0, 40)}`);
+
+      // ── TAKE PROFIT ──
+      // Sell into the BID (what we'd actually receive) once the gain hits target.
+      if (TP_ENABLED && !DRY_RUN && bid && bid >= bet.entryPrice * (1 + TP_GAIN_PCT)) {
+        const gainPct = (bid - bet.entryPrice) / bet.entryPrice;
+        const res = await closePositionLive(slug);
+        if (res.ok) {
+          const pnl = +(bet.betSize * gainPct).toFixed(2);
+          closeBet(slug, { exitPrice: bid, reason: "take_profit", pnl });
+          exits.push({ slug, reason: "take_profit", pnl });
+          console.log(`  💰 TAKE PROFIT ${cents(bet.entryPrice)}→${cents(bid)} (+${(gainPct*100).toFixed(0)}%) ≈ +$${pnl} | ${bet.marketQuestion?.slice(0, 38)}`);
+          continue;
+        }
+        console.log(`  ⚠️ Take-profit sell failed (${res.error}) — holding`);
+      }
 
       // ── ONE-TIME ADD-ON (DCA) ──
       if (DCA_ENABLED && !DRY_RUN && !addedOn.has(slug)) {
