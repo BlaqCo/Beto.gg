@@ -44,14 +44,14 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 6;       // flat $6 per bet
-const BET_MIN       = 6;
+const BET_SIZE      = 9;       // flat $9 per bet
+const BET_MIN       = 9;
 const FAV_MIN       = 0.58;    // band floor: 58¢
 const FAV_MAX       = 0.74;    // band cap: 74¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
 const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
-const MAX_CONC      = 4;       // 4 concurrent bets MAX
+const MAX_CONC      = 6;       // 6 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -62,7 +62,16 @@ const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
-const DISCOUNT_MIN  = 0.01;   // live entries: ≥1¢ below high-water (pre-game exempt)
+// ── FEE-AWARE EDGE MODEL ─────────────────────────────────────────
+// Verified from the order ticket: fee = 3% × contracts × min(p, 1−p).
+// Per CONTRACT that is 0.03 × min(p,1−p) — i.e. a cost expressed directly
+// in price terms: 1.26¢ at 57¢, 1.05¢ at 65¢, 0.78¢ at 74¢.
+const FEE_COEF_PX   = 0.03;
+const feePx = px => FEE_COEF_PX * Math.min(px, 1 - px);
+// An entry must be discounted from its high-water by MORE than the fee it
+// costs, plus a margin — otherwise the "edge" is swallowed by the fee.
+const EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
+const DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
 const MAKER_WAIT_MS = 20000;  // how long a resting order waits before cancel
 const QUOTE_HOLD_MS = 15000;  // ~1 scan cycle: price must be seen twice
@@ -71,11 +80,9 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
 const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
-const DCA_DROP_MIN  = 0.13;   // second buy requires ≥13¢ below entry (69¢ → ≤56¢)
-const DCA_ADD_USD   = 6;      // size of the add (matches flat bet)
+const DCA_DROP_PCT  = 0.23;   // price ≥23% BELOW entry → add (65¢ → 50¢)
+const DCA_ADD_MULT  = 1.20;   // add 120% of the initial bet ($6 → $7.20)
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
-const DCA_UP_PX     = 0.80;   // live price reaches 80¢ → add to the winner
-const DCA_UP_MULT   = 1.20;   // add 120% of the initial bet ($6 → $7.20)
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
@@ -91,7 +98,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 4;       // aligned with 4-slot cap
+const ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -224,13 +231,12 @@ async function processExits() {
       // ── ONE-TIME ADD-ON (DCA) ──
       if (DCA_ENABLED && !DRY_RUN && !addedOn.has(slug)) {
         const ask2 = bbo?.ask;
-        // Two independent triggers, ONE add per market either way:
-        //  • DIP: price ≥13¢ below entry (and above the floor)
-        //  • STRENGTH: live price reaches 80¢+ → add 120% of the initial bet
-        const dip    = ask2 && ask2 <= (bet.entryPrice - DCA_DROP_MIN) && ask2 >= DCA_FLOOR_PX;
-        const strong = ask2 && ask2 >= DCA_UP_PX && ask2 < 0.95;
-        if (dip || strong) {
-          const addUsd = strong ? +(BET_SIZE * DCA_UP_MULT).toFixed(2) : DCA_ADD_USD;
+        // DOWNWARD DCA ONLY: price has fallen ≥DCA_DROP_PCT below entry
+        // (65¢ entry → trigger at 50¢) and is still above the floor.
+        const trigger = +(bet.entryPrice * (1 - DCA_DROP_PCT)).toFixed(4);
+        const dip = ask2 && ask2 <= trigger && ask2 >= DCA_FLOOR_PX;
+        if (dip) {
+          const addUsd = +(BET_SIZE * DCA_ADD_MULT).toFixed(2);
           // getBuyingPower() returns an OBJECT, not a number (this mismatch
           // crashed processExits and stopped settlements from being recorded).
           const balObj = await getBuyingPower();
@@ -241,7 +247,7 @@ async function processExits() {
                                         tick: bet.tick || 0.01, minQty: bet.minQty || 0.01,
                                         allowAddOn: true });
             if (r.filled) {
-              console.log(`  ➕ SECOND BUY ${strong ? "STRENGTH" : "DIP"} $${addUsd} @ ${cents(r.fillPrice)} (entry ${cents(bet.entryPrice)}) | ${bet.marketQuestion?.slice(0, 38)}`);
+              console.log(`  ➕ DCA BUY $${addUsd} @ ${cents(r.fillPrice)} (entry ${cents(bet.entryPrice)}, −${(DCA_DROP_PCT*100).toFixed(0)}%) | ${bet.marketQuestion?.slice(0, 38)}`);
             } else {
               console.log(`  ➕ Add-on not filled (${r.error})`);
             }
@@ -436,18 +442,26 @@ async function _runScanCycleInner() {
         if (!m.isLive) return true;
         const ref = openerRef.get(m.slug);
         if (ref == null) return true;
-        if (m.px <= ref - DISCOUNT_MIN) return true;
+        // Required pullback = fee cost at this price + margin.
+        const need = feePx(m.px) + EDGE_MARGIN;
+        if (m.px <= ref - need) return true;
         discountRejects++;
         return false;
       })
       .sort((a, b) => {
-        const dip = m => { const r = openerRef.get(m.slug); return r == null ? 0 : Math.max(0, r - m.px); };
+        // NET EDGE = pullback from high-water MINUS the fee that price costs.
+        // This is the closest thing we have to expected value per contract.
+        const netEdge = m => {
+          const r = openerRef.get(m.slug);
+          const dip = r == null ? 0 : Math.max(0, r - m.px);
+          return dip - feePx(m.px);
+        };
         const am = isMainTour(a), bm = isMainTour(b);
-        if (am !== bm) return am ? -1 : 1;                 // main tour first
-        const da = dip(a), db = dip(b);
-        if (Math.abs(db - da) >= 0.01) return db - da;     // bigger pullback first
+        if (am !== bm) return am ? -1 : 1;                 // main tour (deep books) first
+        const ea = netEdge(a), eb = netEdge(b);
+        if (Math.abs(eb - ea) >= 0.005) return eb - ea;    // best fee-adjusted edge first
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
-        return a.px - b.px;                                // CHEAPEST FIRST (lower band priority)
+        return a.px - b.px;                                // tie-break: cheaper
       });
     if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
     if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
