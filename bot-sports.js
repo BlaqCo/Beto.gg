@@ -46,8 +46,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 9;       // flat $9 per bet
 const BET_MIN       = 9;
-const FAV_MIN       = 0.58;    // band floor: 58¢
-const FAV_MAX       = 0.74;    // band cap: 74¢
+const FAV_MIN       = 0.63;    // band floor: 63¢ — fee drag near its floor
+const FAV_MAX       = 0.70;    // band cap: 70¢ — payoff still workable
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
 const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
