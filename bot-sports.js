@@ -80,6 +80,7 @@ const MIN_LIVE_MIN  = 10;
 // and compares it to the price at the MIN_LIVE_MIN mark, so we can answer
 // empirically: does waiting actually get us cheaper entries?
 const driftFirst = new Map();  // slug → { px, t, live }
+const liveSince  = new Map();  // slug → timestamp we FIRST saw it live
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 const DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
@@ -397,6 +398,11 @@ async function _runScanCycleInner() {
     const UPCOMING_MIN_H = 4;
     const UPCOMING_MAX_H = 12;
     // Track opener references: keep updating while pre-game; freeze once live.
+    // Stamp when each market was first observed live (trailing clock).
+    for (const m of bbosWithData) {
+      if (m.isLive && !liveSince.has(m.slug)) liveSince.set(m.slug, Date.now());
+    }
+
     // Price-drift study: stamp first sighting, then measure at the mark.
     for (const m of bbosWithData) {
       if (!m.px) continue;
@@ -437,11 +443,21 @@ async function _runScanCycleInner() {
       .filter(m => {
         // LIVE ONLY: never enter before a match starts.
         if (!m.isLive) { windowRejects++; return false; }
-        // ...and give it MIN_LIVE_MIN minutes of play first.
-        if (MIN_LIVE_MIN > 0 && m.gameStartIso) {
-          const mins = (Date.now() - new Date(m.gameStartIso).getTime()) / 60000;
-          if (mins < MIN_LIVE_MIN) { earlyRejects++; return false; }
+        if (MIN_LIVE_MIN <= 0) return true;
+        // Minutes of play. Prefer the official start time; fall back to when
+        // WE first saw it live (many esports/TT markets carry no start time,
+        // and the old code silently skipped the wait for those).
+        let mins = null;
+        if (m.gameStartIso) {
+          const t = new Date(m.gameStartIso).getTime();
+          if (!Number.isNaN(t)) mins = (Date.now() - t) / 60000;
         }
+        if (mins == null) {
+          const seen = liveSince.get(m.slug);
+          if (!seen) { liveSince.set(m.slug, Date.now()); earlyRejects++; return false; } // start trailing now
+          mins = (Date.now() - seen) / 60000;
+        }
+        if (mins < MIN_LIVE_MIN) { earlyRejects++; return false; }
         return true;
       })
       .filter(m => {
