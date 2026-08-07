@@ -44,8 +44,8 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 9;       // flat $9 per bet
-const BET_MIN       = 9;
+const BET_SIZE      = 8;       // flat $8 per bet
+const BET_MIN       = 8;
 const FAV_MIN       = 0.63;    // band floor: 63¢ — fee drag near its floor
 const FAV_MAX       = 0.70;    // band cap: 70¢ — payoff still workable
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
@@ -71,6 +71,16 @@ const feePx = px => FEE_COEF_PX * Math.min(px, 1 - px);
 // An entry must be discounted from its high-water by MORE than the fee it
 // costs, plus a margin — otherwise the "edge" is swallowed by the fee.
 const EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
+// Wait this many minutes AFTER tip-off before entering: lets the early
+// swing happen so we buy into a settled, informed price rather than the
+// opening churn. 0 = enter as soon as the market goes live.
+const MIN_LIVE_MIN  = 10;
+// ── PRICE-DRIFT STUDY ────────────────────────────────────────────
+// Records each market's price at first sight (pre-game or first live look)
+// and compares it to the price at the MIN_LIVE_MIN mark, so we can answer
+// empirically: does waiting actually get us cheaper entries?
+const driftFirst = new Map();  // slug → { px, t, live }
+const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 const DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
 const MAKER_WAIT_MS = 20000;  // how long a resting order waits before cancel
@@ -387,6 +397,26 @@ async function _runScanCycleInner() {
     const UPCOMING_MIN_H = 4;
     const UPCOMING_MAX_H = 12;
     // Track opener references: keep updating while pre-game; freeze once live.
+    // Price-drift study: stamp first sighting, then measure at the mark.
+    for (const m of bbosWithData) {
+      if (!m.px) continue;
+      const prev = driftFirst.get(m.slug);
+      if (!prev) { driftFirst.set(m.slug, { px: m.px, t: Date.now(), live: !!m.isLive, done: false }); continue; }
+      if (prev.done || !m.isLive || !m.gameStartIso) continue;
+      const mins = (Date.now() - new Date(m.gameStartIso).getTime()) / 60000;
+      if (mins >= MIN_LIVE_MIN) {
+        prev.done = true;
+        const delta = m.px - prev.px;           // negative = cheaper after waiting
+        driftStats.n++; driftStats.sumDelta += delta; driftStats.sumAbs += Math.abs(delta);
+        if (delta < -0.005) driftStats.cheaper++; else if (delta > 0.005) driftStats.dearer++;
+        if (driftStats.n % 10 === 0) {
+          const avg = driftStats.sumDelta / driftStats.n * 100;
+          const avgAbs = driftStats.sumAbs / driftStats.n * 100;
+          console.log(`📉 DRIFT STUDY (n=${driftStats.n}): avg ${avg >= 0 ? "+" : ""}${avg.toFixed(2)}¢ at ${MIN_LIVE_MIN}min | cheaper ${driftStats.cheaper} vs dearer ${driftStats.dearer} | avg swing ${avgAbs.toFixed(2)}¢`);
+        }
+      }
+    }
+
     // Reference = HIGH-WATER price seen for this market. "Discount" then means
     // the price has pulled back from its peak — achievable, unlike the old
     // first-sight reference which could never be beaten on first sight.
@@ -395,7 +425,7 @@ async function _runScanCycleInner() {
       const prev = openerRef.get(m.slug);
       if (prev == null || m.px > prev) openerRef.set(m.slug, m.px);
     }
-    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0;
+    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
@@ -406,9 +436,13 @@ async function _runScanCycleInner() {
       })
       .filter(m => {
         // LIVE ONLY: never enter before a match starts.
-        if (m.isLive) return true;
-        windowRejects++;
-        return false;
+        if (!m.isLive) { windowRejects++; return false; }
+        // ...and give it MIN_LIVE_MIN minutes of play first.
+        if (MIN_LIVE_MIN > 0 && m.gameStartIso) {
+          const mins = (Date.now() - new Date(m.gameStartIso).getTime()) / 60000;
+          if (mins < MIN_LIVE_MIN) { earlyRejects++; return false; }
+        }
+        return true;
       })
       .filter(m => {
         // Depth gate by tier — soft books need far more size behind the ask
@@ -465,6 +499,7 @@ async function _runScanCycleInner() {
       });
     if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
     if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
+    if (earlyRejects)  console.log(`  🕐 Too early: ${earlyRejects} live <${MIN_LIVE_MIN}min into play`);
     if (windowRejects) console.log(`  ⏱ Entry window: ${windowRejects} skipped (outside ${UPCOMING_MIN_H}-${UPCOMING_MAX_H}h before start)`);
     if (thinRejects) console.log(`  💧 Depth gate: ${thinRejects} candidates lacked required book depth`);
     if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
