@@ -565,11 +565,16 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
   } catch {}
 
   if (!(bid > 0 && ask > 0 && ask > bid)) return { filled: false, error: "no two-sided book for maker order" };
-  // Price one tick above the bid, never above the midpoint — stays a maker.
+  // MAKER PRICING (fixed): the old code rounded the midpoint to the nearest
+  // tick, which on a 1¢ spread (bid .67 / ask .68) rounded UP to .68 — the ask.
+  // That crosses the book and fills as a TAKER, paying the 3% fee we were
+  // trying to avoid. Now: never price at or above the ask, and floor-round.
   const mid = (bid + ask) / 2;
-  let price = Math.min(mid, bid + tick);
-  price = Math.round(price / tick) * tick;
+  let price = Math.min(mid, ask - tick);          // strictly inside the spread
+  price = Math.floor(price / tick) * tick;        // floor, never round up into the ask
   price = Math.round(price * 1000) / 1000;
+  if (price >= ask) price = +(ask - tick).toFixed(4);
+  if (price < bid) price = bid;                   // never worse than the current bid
   if (!(price > 0.01 && price < 0.99)) return { filled: false, error: "maker price out of bounds" };
 
   const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
@@ -631,9 +636,9 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 5.00;   // penny/dust orders refused ($6 flat, small buffer)
-const ORDER_MAX_USD = 7.50;   // $6 flat + $7.20 strength add — nothing larger
-const MAX_OPEN_POSITIONS = 5;  // hard slot cap enforced AT THE ORDER GATE
+const ORDER_MIN_USD = 8.00;   // penny/dust orders refused ($9 flat, small buffer)
+const ORDER_MAX_USD = 11.00;  // $9 flat + $10.80 DCA add — nothing larger
+const MAX_OPEN_POSITIONS = 6;  // hard slot cap enforced AT THE ORDER GATE
 
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false }) {
   if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
