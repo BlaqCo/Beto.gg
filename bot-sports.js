@@ -44,14 +44,14 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 8;       // flat $8 per bet
-const BET_MIN       = 8;
+const BET_SIZE      = 3;       // flat $3 per bet
+const BET_MIN       = 3;
 const FAV_MIN       = 0.58;    // band floor: 58¢
 const FAV_MAX       = 0.70;    // band cap: 70¢ — payoff still workable
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
 const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
-const MAX_CONC      = 6;       // 6 concurrent bets MAX
+const MAX_CONC      = 3;       // 3 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -104,7 +104,7 @@ const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
-const KILL_ENABLED  = true;   // circuit breaker ON
+const KILL_ENABLED  = false;  // circuit breaker OFF
 const KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
 let   KILLED        = false;
 const addedOn       = new Set(); // slugs that already used their single add
@@ -115,7 +115,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
+const ENTRIES_SCAN  = 3;       // aligned with 3-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -775,4 +775,3 @@ async function _runScanCycleInner() {
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
   return { signals: null, exits, betsPlaced };
 }
-
