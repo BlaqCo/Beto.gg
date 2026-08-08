@@ -7,11 +7,45 @@
  * LIVE: FOK limit entries via signed REST
  */
 
-import { recordBet, hasActiveBet, getStats, getAllActiveBets,
-         closeBet, getDryBalance, countBetsForMarket } from "./state.js";
-import { fetchSportsMoneylines, getBBO, getSettlement, getBookState, buyYesMaker,
-         buyYesFOK, getBuyingPower, getOpenPositions, closePositionLive,
-         preflightUS } from "./polymarket-us.js";
+// ── NAMESPACE IMPORTS (load-proof) ───────────────────────────────
+// Named imports fail the WHOLE module if a single name is missing from the
+// source file — that is what produced "sportsBot loaded: false" with no
+// usable error. Namespace imports never fail at load; missing pieces are
+// reported below instead of silently killing the bot.
+import * as state from "./state.js";
+import * as pm from "./polymarket-us.js";
+
+const recordBet         = state.recordBet;
+const hasActiveBet      = state.hasActiveBet      || (() => false);
+const getStats          = state.getStats          || (() => ({ activeBets: 0, pnl: 0 }));
+const getAllActiveBets  = state.getAllActiveBets  || (() => []);
+const closeBet          = state.closeBet          || (() => {});
+const getDryBalance     = state.getDryBalance     || (() => 0);
+
+const fetchSportsMoneylines = pm.fetchSportsMoneylines;
+const getBBO                = pm.getBBO;
+const getSettlement         = pm.getSettlement;
+const getBookState          = pm.getBookState     || (async () => ({ state: "UNKNOWN", isOpen: false }));
+const buyYesMaker           = pm.buyYesMaker      || null;   // falls back to taker if absent
+const buyYesFOK             = pm.buyYesFOK;
+const getBuyingPower        = pm.getBuyingPower;
+const getOpenPositions      = pm.getOpenPositions;
+const closePositionLive     = pm.closePositionLive || (async () => ({ ok: false, error: "not available" }));
+const preflightUS           = pm.preflightUS      || (async () => ({ ok: true, messages: [] }));
+
+// Report anything essential that is missing, loudly, at boot.
+{
+  const missing = [];
+  if (!recordBet)             missing.push("state.recordBet");
+  if (!fetchSportsMoneylines) missing.push("polymarket-us.fetchSportsMoneylines");
+  if (!getBBO)                missing.push("polymarket-us.getBBO");
+  if (!getSettlement)         missing.push("polymarket-us.getSettlement");
+  if (!buyYesFOK)             missing.push("polymarket-us.buyYesFOK");
+  if (!getBuyingPower)        missing.push("polymarket-us.getBuyingPower");
+  if (!getOpenPositions)      missing.push("polymarket-us.getOpenPositions");
+  if (missing.length) console.error("❌ MISSING EXPORTS:", missing.join(", "));
+  if (!buyYesMaker) console.log("ℹ️ buyYesMaker not found — maker mode will use taker orders");
+}
 
 console.log(`🚀 ${BOT_VERSION} START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
 // ══════════════════════════════════════════════════════════════
@@ -21,7 +55,7 @@ console.log(`🚀 ${BOT_VERSION} START ${new Date().toISOString()} — if you se
 //   • DCA: −15% from entry → add 50% of the initial bet (once)
 //   • Take profit: see TP settings below
 // ══════════════════════════════════════════════════════════════
-const BOT_VERSION   = "v13-DRY-SCALED";
+const BOT_VERSION   = "v14-MICRO-LIVE";
 const DRY_START     = 500;    // virtual bankroll for paper mode
 
 const everBet = new Set();  // slugs bet at least once — never re-enter
@@ -55,8 +89,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-const BET_LOW_USD   = 20;      // stake at the 58¢ end
-const BET_HIGH_USD  = 30;      // stake at the 70¢ end
+const BET_LOW_USD   = 1;       // flat $1
+const BET_HIGH_USD  = 1;       // flat $1 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -64,12 +98,12 @@ const sizeForPx = px => {
 };
 const BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 const BET_MIN       = BET_LOW_USD;
-const FAV_MIN       = 0.58;    // band floor: 58¢
-const FAV_MAX       = 0.70;    // band cap: 70¢ — payoff still workable
+const FAV_MIN       = 0.57;    // band floor: 57¢
+const FAV_MAX       = 0.68;    // band cap: 68¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
 const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
-const MAX_CONC      = 7;       // 7 concurrent bets MAX
+const MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qualify
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -92,7 +126,7 @@ const EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
 // Wait this many minutes AFTER tip-off before entering: lets the early
 // swing happen so we buy into a settled, informed price rather than the
 // opening churn. 0 = enter as soon as the market goes live.
-const MIN_LIVE_MIN  = 10;
+const MIN_LIVE_MIN  = 0;      // no trailing wait — enter as soon as it's live
 // ── PRICE-DRIFT STUDY ────────────────────────────────────────────
 // Records each market's price at first sight (pre-game or first live look)
 // and compares it to the price at the MIN_LIVE_MIN mark, so we can answer
@@ -104,7 +138,7 @@ const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // the bottom of the range we've watched, not just any pullback.
 const NEAR_LOW_TOL  = 0.01;
 // Prices at/below this get first claim on slots (cheap-entry priority).
-const PRIORITY_PX   = 0.62;
+const PRIORITY_PX   = 0.61;   // ≤61¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 const DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
@@ -138,7 +172,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 7;       // aligned with 7-slot cap
+const ENTRIES_SCAN  = 9999;    // no per-scan cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -730,7 +764,7 @@ async function _runScanCycleInner() {
     if (!DRY_RUN) {
       attempts++;
       let r = null;
-      if (MAKER_MODE && m.bid > 0 && m.ask > m.bid) {
+      if (MAKER_MODE && buyYesMaker && m.bid > 0 && m.ask > m.bid) {
         r = await buyYesMaker({ slug: m.slug, sizeUsd: BET_SIZE, bid: m.bid, ask: m.ask,
                                 tick: m.tick, minQty: m.minQty, waitMs: MAKER_WAIT_MS });
         if (r.filled) console.log(`  🎯 MAKER FILL @ ${cents(r.fillPrice)} (saved ~${cents(m.ask - r.fillPrice)} vs ask + no taker fee)`);
