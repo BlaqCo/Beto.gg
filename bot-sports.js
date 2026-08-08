@@ -13,7 +13,17 @@ import { fetchSportsMoneylines, getBBO, getSettlement, getBookState, buyYesMaker
          buyYesFOK, getBuyingPower, getOpenPositions, closePositionLive,
          preflightUS } from "./polymarket-us.js";
 
-console.log(`🚀 PROCESS START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
+console.log(`🚀 ${BOT_VERSION} START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
+// ══════════════════════════════════════════════════════════════
+// VERSION: v13-DRY-SCALED   (paper trading, $500 virtual bankroll)
+//   • 7 slots · edge-scaled sizing $20 (58¢) → $30 (70¢)
+//   • LIVE only, 10-min trail, near-low entry, fee-aware discount
+//   • DCA: −15% from entry → add 50% of the initial bet (once)
+//   • Take profit: see TP settings below
+// ══════════════════════════════════════════════════════════════
+const BOT_VERSION   = "v13-DRY-SCALED";
+const DRY_START     = 500;    // virtual bankroll for paper mode
+
 const everBet = new Set();  // slugs bet at least once — never re-enter
 
 // ── CALIBRATION LEDGER: realized win rate per league + entry-price bucket ──
@@ -44,14 +54,22 @@ function calReport() {
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
-const BET_SIZE      = 3;       // flat $3 per bet
-const BET_MIN       = 3;
+// Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
+const BET_LOW_USD   = 20;      // stake at the 58¢ end
+const BET_HIGH_USD  = 30;      // stake at the 70¢ end
+const sizeForPx = px => {
+  const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
+  const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
+  return +(BET_LOW_USD + t * (BET_HIGH_USD - BET_LOW_USD)).toFixed(2);
+};
+const BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
+const BET_MIN       = BET_LOW_USD;
 const FAV_MIN       = 0.58;    // band floor: 58¢
 const FAV_MAX       = 0.70;    // band cap: 70¢ — payoff still workable
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
 const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
-const MAX_CONC      = 5;       // 3 concurrent bets MAX
+const MAX_CONC      = 7;       // 7 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -97,12 +115,17 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
 const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
-const DCA_DROP_PCT  = 0.20;   // price ≥20% BELOW entry → add (60¢ → 48¢)
-const DCA_ADD_MULT  = 1.00;   // add the SAME amount as the initial bet
+const DCA_DROP_PCT  = 0.15;   // price ≥15% BELOW entry → add (60¢ → 51¢)
+const DCA_ADD_MULT  = 0.50;   // add 50% of the initial (scaled) bet
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 const TP_ENABLED    = true;
-const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
+// NOTE: a +80% GAIN is unreachable in a 58-70¢ band — max possible profit at
+// settlement is +72% (58¢) down to +43% (70¢). So gain-mode at 0.80 could
+// never fire. Default is PRICE mode: sell when the market reaches 80¢.
+const TP_MODE       = "price";  // "price" | "gain"
+const TP_PRICE      = 0.80;     // price mode: sell at 80¢
+const TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
 const KILL_ENABLED  = false;  // circuit breaker OFF
 const KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
@@ -115,7 +138,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 3;       // aligned with 3-slot cap
+const ENTRIES_SCAN  = 7;       // aligned with 7-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -232,9 +255,12 @@ async function processExits() {
 
       // ── TAKE PROFIT ──
       // Sell into the BID (what we'd actually receive) once the gain hits target.
-      if (TP_ENABLED && !DRY_RUN && bid && bid >= bet.entryPrice * (1 + TP_GAIN_PCT)) {
+      const tpHit = bid && (TP_MODE === "price"
+        ? bid >= TP_PRICE
+        : bid >= bet.entryPrice * (1 + TP_GAIN_PCT));
+      if (TP_ENABLED && tpHit) {
         const gainPct = (bid - bet.entryPrice) / bet.entryPrice;
-        const res = await closePositionLive(slug);
+        const res = DRY_RUN ? { ok: true } : await closePositionLive(slug);
         if (res.ok) {
           const pnl = +(bet.betSize * gainPct).toFixed(2);
           closeBet(slug, { exitPrice: bid, reason: "take_profit", pnl });
@@ -316,7 +342,9 @@ async function _runScanCycleInner() {
   const exits = await processExits();
 
   // ── Balance ──────────────────────────────────────────────────
-  let balance = getDryBalance();
+  let balance = DRY_RUN
+    ? DRY_START + Number(getStats().pnl || 0) - getAllActiveBets().reduce((t, b) => t + (b.betSize || 0), 0)
+    : getDryBalance();
   if (!DRY_RUN) {
     const ok = await ensureLiveReady();
     if (!ok) {
@@ -638,7 +666,7 @@ async function _runScanCycleInner() {
     try {
 
     let entryPrice = m.ask;
-    let betSize    = BET_SIZE;
+    let betSize    = sizeForPx(m.ask);
     let orderId    = `dry_${Date.now()}`;
 
     // ── Book-state check (ADVISORY, fail-open) ──
