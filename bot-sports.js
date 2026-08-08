@@ -47,7 +47,6 @@ const preflightUS           = pm.preflightUS      || (async () => ({ ok: true, m
   if (!buyYesMaker) console.log("ℹ️ buyYesMaker not found — maker mode will use taker orders");
 }
 
-console.log(`🚀 ${BOT_VERSION} START ${new Date().toISOString()} — if you see this line often, the bot is crash-looping`);
 // ══════════════════════════════════════════════════════════════
 // VERSION: v13-DRY-SCALED   (paper trading, $500 virtual bankroll)
 //   • 7 slots · edge-scaled sizing $20 (58¢) → $30 (70¢)
@@ -56,6 +55,7 @@ console.log(`🚀 ${BOT_VERSION} START ${new Date().toISOString()} — if you se
 //   • Take profit: see TP settings below
 // ══════════════════════════════════════════════════════════════
 const BOT_VERSION   = "v14-MICRO-LIVE";
+console.log(`🚀 ${BOT_VERSION} START ${new Date().toISOString()}`);
 const DRY_START     = 500;    // virtual bankroll for paper mode
 
 const everBet = new Set();  // slugs bet at least once — never re-enter
