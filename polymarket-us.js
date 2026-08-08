@@ -637,7 +637,7 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
 const ORDER_MIN_USD = 7.00;   // penny/dust orders refused ($8 flat, small buffer)
-const ORDER_MAX_USD = 10.00;  // $8 flat + $9.60 DCA add — nothing larger
+const ORDER_MAX_USD = 9.00;   // $8 flat (DCA add is same size) — nothing larger
 const MAX_OPEN_POSITIONS = 6;  // hard slot cap enforced AT THE ORDER GATE
 
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false }) {
