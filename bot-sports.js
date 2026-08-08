@@ -46,7 +46,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 // ── Config ──────────────────────────────────────────────────────
 const BET_SIZE      = 8;       // flat $8 per bet
 const BET_MIN       = 8;
-const FAV_MIN       = 0.63;    // band floor: 63¢ — fee drag near its floor
+const FAV_MIN       = 0.58;    // band floor: 58¢
 const FAV_MAX       = 0.70;    // band cap: 70¢ — payoff still workable
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
@@ -81,6 +81,12 @@ const MIN_LIVE_MIN  = 10;
 // empirically: does waiting actually get us cheaper entries?
 const driftFirst = new Map();  // slug → { px, t, live }
 const liveSince  = new Map();  // slug → timestamp we FIRST saw it live
+const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
+// Enter only when price is within this much of the trailing low — i.e. near
+// the bottom of the range we've watched, not just any pullback.
+const NEAR_LOW_TOL  = 0.01;
+// Prices at/below this get first claim on slots (cheap-entry priority).
+const PRIORITY_PX   = 0.62;
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 const DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
@@ -91,15 +97,15 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
 const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
-const DCA_DROP_PCT  = 0.23;   // price ≥23% BELOW entry → add (65¢ → 50¢)
-const DCA_ADD_MULT  = 1.20;   // add 120% of the initial bet ($6 → $7.20)
+const DCA_DROP_PCT  = 0.20;   // price ≥20% BELOW entry → add (60¢ → 48¢)
+const DCA_ADD_MULT  = 1.00;   // add the SAME amount as the initial bet
 const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 const TP_ENABLED    = true;
 const TP_GAIN_PCT   = 0.70;   // +70% on cost (sell price ≥ entry × 1.70)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
-const KILL_ENABLED  = false;  // circuit breaker OFF
-const KILL_FLOOR    = 50;     // (unused while KILL_ENABLED is false)
+const KILL_ENABLED  = true;   // circuit breaker ON
+const KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
 let   KILLED        = false;
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
@@ -398,9 +404,15 @@ async function _runScanCycleInner() {
     const UPCOMING_MIN_H = 4;
     const UPCOMING_MAX_H = 12;
     // Track opener references: keep updating while pre-game; freeze once live.
-    // Stamp when each market was first observed live (trailing clock).
+    // Stamp when each market was first observed live (trailing clock) and
+    // track the lowest price seen while trailing.
     for (const m of bbosWithData) {
-      if (m.isLive && !liveSince.has(m.slug)) liveSince.set(m.slug, Date.now());
+      if (!m.isLive) continue;
+      if (!liveSince.has(m.slug)) liveSince.set(m.slug, Date.now());
+      if (m.px) {
+        const lo = lowSeen.get(m.slug);
+        if (lo == null || m.px < lo) lowSeen.set(m.slug, m.px);
+      }
     }
 
     // Price-drift study: stamp first sighting, then measure at the mark.
@@ -431,7 +443,7 @@ async function _runScanCycleInner() {
       const prev = openerRef.get(m.slug);
       if (prev == null || m.px > prev) openerRef.set(m.slug, m.px);
     }
-    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0;
+    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0, nearLowRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
@@ -494,9 +506,11 @@ async function _runScanCycleInner() {
         if (ref == null) return true;
         // Required pullback = fee cost at this price + margin.
         const need = feePx(m.px) + EDGE_MARGIN;
-        if (m.px <= ref - need) return true;
-        discountRejects++;
-        return false;
+        if (m.px > ref - need) { discountRejects++; return false; }
+        // NEAR-LOW: only buy at/near the bottom of the trailing range.
+        const lo = lowSeen.get(m.slug);
+        if (lo != null && m.px > lo + NEAR_LOW_TOL) { nearLowRejects++; return false; }
+        return true;
       })
       .sort((a, b) => {
         // NET EDGE = pullback from high-water MINUS the fee that price costs.
@@ -506,6 +520,9 @@ async function _runScanCycleInner() {
           const dip = r == null ? 0 : Math.max(0, r - m.px);
           return dip - feePx(m.px);
         };
+        // CHEAP-ENTRY PRIORITY: anything at/below PRIORITY_PX ranks first.
+        const ap = a.px <= PRIORITY_PX, bp = b.px <= PRIORITY_PX;
+        if (ap !== bp) return ap ? -1 : 1;
         const am = isMainTour(a), bm = isMainTour(b);
         if (am !== bm) return am ? -1 : 1;                 // main tour (deep books) first
         const ea = netEdge(a), eb = netEdge(b);
@@ -515,6 +532,7 @@ async function _runScanCycleInner() {
       });
     if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
     if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
+    if (nearLowRejects) console.log(`  📍 Not near low: ${nearLowRejects} above trailing low +${(NEAR_LOW_TOL*100).toFixed(0)}¢`);
     if (earlyRejects)  console.log(`  🕐 Too early: ${earlyRejects} live <${MIN_LIVE_MIN}min into play`);
     if (windowRejects) console.log(`  ⏱ Entry window: ${windowRejects} skipped (outside ${UPCOMING_MIN_H}-${UPCOMING_MAX_H}h before start)`);
     if (thinRejects) console.log(`  💧 Depth gate: ${thinRejects} candidates lacked required book depth`);
@@ -757,3 +775,4 @@ async function _runScanCycleInner() {
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
   return { signals: null, exits, betsPlaced };
 }
+
