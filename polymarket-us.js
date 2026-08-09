@@ -742,14 +742,25 @@ export async function getOpenPositions() {
 // Filters to TRADE + POSITION_RESOLUTION types.
 // Activity shape:
 //   { type, trade: { marketSlug, price:{value,currency}, qtyDecimal, costBasis:{value}, realizedPnl:{value}, createTime, state }, positionResolution: { ... } }
-export async function getTradeHistory({ limit = 500 } = {}) {
+// Cached so repeated dashboard polls never re-hit the API.
+let _tradeCache = { data: null, ts: 0 };
+const TRADE_TTL = 120_000;   // 2 minutes
+
+export async function getTradeHistory({ limit = 500, force = false } = {}) {
+  if (!force && _tradeCache.data && Date.now() - _tradeCache.ts < TRADE_TTL) {
+    return _tradeCache.data;
+  }
   try {
     const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
     const allActivities = [];
     let cursor = null;
     let page = 0;
+    // Pages are fetched with a gap: firing 10 requests back-to-back is what
+    // produced "429 rate limited" and left the history panel empty.
+    const MAX_PAGES = 3;
 
-    while (page < 10) {
+    while (page < MAX_PAGES) {
+      if (page > 0) await new Promise(r => setTimeout(r, 1200));
       const params = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
       if (cursor) params.set("cursor", cursor);
       const data = await signedRequest("GET", `/v1/portfolio/activities?${params}`);
@@ -775,7 +786,7 @@ export async function getTradeHistory({ limit = 500 } = {}) {
 
     console.log(`📋 Total activities: ${allActivities.length}`);
 
-    return allActivities.map(a => {
+    const mapped = allActivities.map(a => {
       // ACTIVITY_TYPE_TRADE — a buy or sell fill
       if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
         const t = a.trade;
@@ -851,8 +862,18 @@ export async function getTradeHistory({ limit = 500 } = {}) {
       return null;
     }).filter(Boolean);
 
+    _tradeCache = { data: mapped, ts: Date.now() };
+    return mapped;
+
   } catch (err) {
-    console.error("⚠️ getTradeHistory failed:", err.message);
+    const rateLimited = /429|rate limit/i.test(err.message || "");
+    console.error(`⚠️ getTradeHistory failed: ${err.message}${rateLimited ? " — serving cached history" : ""}`);
+    if (_tradeCache.data) {
+      // Keep the stale copy alive rather than blanking the history panel,
+      // and hold off re-requesting for a while so we stop being throttled.
+      _tradeCache.ts = Date.now() - TRADE_TTL + 30_000;   // retry in ~30s
+      return _tradeCache.data;
+    }
     return [];
   }
 }
