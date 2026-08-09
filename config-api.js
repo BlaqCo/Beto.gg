@@ -16,8 +16,11 @@
 
 import { SCHEMA, getConfig, setConfig, resetConfig, configStatus, getFunnel } from "./config.js";
 import { interpret, describe } from "./command.js";
+import { answer, looksLikeQuestion } from "./brain.js";
 
-export function mountConfigApi(app) {
+export function mountConfigApi(app, opts = {}) {
+  // getHistory lets BetoBot answer questions about settled bets.
+  const getHistory = typeof opts.getHistory === "function" ? opts.getHistory : async () => [];
   app.get("/api/config", async (_req, res) => {
     try {
       const config = await getConfig({ force: true });
@@ -45,16 +48,30 @@ export function mountConfigApi(app) {
     const text = String(req.body?.text || "").slice(0, 400);
     if (!text.trim()) return res.json({ ok: false, message: "Type a change, e.g. \"flat bets to $5, slots to 5\"" });
     try {
+      // Questions get answered; everything else is treated as a setting change.
+      if (looksLikeQuestion(text)) {
+        let history = [];
+        try { history = await getHistory(); } catch {}
+        const a = await answer(text, history);
+        console.log(`🗣 asked (${a.source}): "${text}"`);
+        return res.json({ ok: true, kind: "answer", message: a.answer });
+      }
+
       const { patch, source } = await interpret(text);
       if (!Object.keys(patch).length) {
-        return res.json({ ok: false, message: "Didn't recognise a setting in that. Try \"bet size 5\", \"edge 60-70\", or \"pause\"." });
+        // Not a recognised setting — try answering it instead of failing.
+        let history = [];
+        try { history = await getHistory(); } catch {}
+        const a = await answer(text, history);
+        if (a.source !== "none") return res.json({ ok: true, kind: "answer", message: a.answer });
+        return res.json({ ok: false, message: "Didn't catch that. Try \"bet size 5\", \"edge 60-70\", \"pause\" — or ask me something like \"which sport is most profitable?\"" });
       }
       const { applied, persisted } = await setConfig(patch);
       if (!Object.keys(applied).length) {
         return res.json({ ok: false, message: "Those values were out of range — nothing changed." });
       }
       console.log(`🗣 command (${source}): "${text}" → ${describe(applied)}`);
-      res.json({ ok: true, message: `Updated ${describe(applied)}${persisted ? "" : " (this session only)"}`, applied });
+      res.json({ ok: true, kind: "change", message: `Updated ${describe(applied)}${persisted ? "" : " (this session only)"}`, applied });
     } catch (e) {
       res.json({ ok: false, message: `Couldn't apply that: ${e.message}` });
     }
