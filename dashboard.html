@@ -497,7 +497,10 @@ async function loadScalp(){
     $('sExits').textContent = s.exits ? `${s.exits.bounce}B ${s.exits.break}S ${s.exits.timeout}T` : '—';
     $('sAvg').textContent = s.avgBounce==null?'—':s.avgBounce+'¢';
     $('sHold').textContent = (s.avgHoldMin==null?'—':s.avgHoldMin+'m avg hold')+' · '+s.openCount+' open';
-    $('scalpRecent').innerHTML = (s.recent||[]).slice(0,8).map(function(t){
+    const bl = (s.byLeague||[]).filter(function(x){return x.n>=1;});
+    const blHtml = bl.length ? '<div class="row" style="color:var(--dim);font-size:10px">'+
+      bl.map(function(x){return x.league+' '+x.rate+'% ('+x.n+') '+money(x.pnl);}).join(' · ')+'</div>' : '';
+    $('scalpRecent').innerHTML = blHtml + (s.recent||[]).slice(0,8).map(function(t){
       const tag = t.reason==='bounce'?'w':'l';
       return '<div class="row"><span class="hres '+tag+'">'+t.reason.toUpperCase()+'</span>'+
         '<span class="q">'+String(t.q||'').slice(0,34)+'</span>'+
