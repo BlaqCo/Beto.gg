@@ -29,7 +29,24 @@ const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 app.use(express.json());
-mountConfigApi(app);   // /api/config, /api/command, /api/funnel
+// BetoBot: settings + questions. getHistory feeds its answers about results.
+mountConfigApi(app, {
+  getHistory: async () => {
+    const stateClosed = (state.getAllBets ? state.getAllBets() : [])
+      .filter(b => b.status && b.status !== "open")
+      .map(b => ({
+        _type: "resolution",
+        marketSlug: b.marketConditionId,
+        question: (b.marketQuestion || "").replace(/^\[.*?\]\s*/, ""),
+        realizedPnl: parseFloat(b.pnl || 0),
+        costBasis: parseFloat(b.betSize || 0),
+        won: b.status === "won",
+        createTime: b.closedAt || b.placedAt || "",
+      }));
+    const acts = _histCache.data || [];
+    return [...stateClosed, ...acts];
+  },
+});
 
 // NOTE: static is registered at the END of routes — otherwise public/index.html
 // hijacks GET / and the dashboard's JSON polling breaks.
@@ -328,7 +345,13 @@ app.post("/settings", (req, res) => {
 
 // ── Dashboard page + view switch + health ───────────────────────
 app.get("/landing", (req, res) => res.sendFile(path.join(__dirname, "landing.html")));
-app.get("/dashboard", (req, res) => res.sendFile(path.join(__dirname, "dashboard.html")));
+app.get("/dashboard", (req, res) => {
+  // never let a browser cache the dashboard shell — stale UI has cost us hours
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.sendFile(path.join(__dirname, "dashboard.html"));
+});
 app.get("/octopus.svg", (req, res) => res.sendFile(path.join(__dirname, "octopus.svg")));
 app.get("/octopus.png", (req, res) => res.sendFile(path.join(__dirname, "octopus.png")));
 app.get("/logo.png", (req, res) => res.sendFile(path.join(__dirname, "logo.png")));
