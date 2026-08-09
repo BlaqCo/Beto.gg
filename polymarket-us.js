@@ -550,7 +550,7 @@ export async function getBuyingPower() {
 // Why: taker orders pay the spread AND the 3% taker fee, and only fill when a
 // faster counterparty wants out (adverse selection). A resting maker order
 // buys cheaper, avoids the taker fee, and earns rebates. Cost: it may not fill.
-export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty = 0.01, waitMs = 20000 }) {
+export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty = 0.01, waitMs = 20000, override = false }) {
   if (override) {
     console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
   } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
