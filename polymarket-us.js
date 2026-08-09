@@ -683,14 +683,45 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
       quantity:   qty,
       tif:        "TIME_IN_FORCE_FILL_OR_KILL",
     });
-    let state = order?.state, id = order?.id;
-    if (state === "ORDER_STATE_PENDING_NEW" && id) {
-      await new Promise(r => setTimeout(r, 1200));
-      try { state = (await signedRequest("GET", `/v1/order/${id}`))?.state; } catch {}
+    let state = order?.state ?? order?.orderState ?? order?.status;
+    const id = order?.id ?? order?.orderId;
+    const filledOf = o => {
+      const q = parseFloat(o?.filledQuantity ?? o?.filledQty ?? o?.cumQty ?? o?.executedQuantity ?? 0);
+      return Number.isFinite(q) ? q : 0;
+    };
+    let filledQty = filledOf(order);
+
+    // Poll a few times: the API sometimes returns no state on the POST, and a
+    // single 1.2s look was declaring good orders "unknown" (they had filled).
+    if (!/FILLED/i.test(String(state)) && filledQty <= 0 && id) {
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 900));
+        try {
+          const o = await signedRequest("GET", `/v1/order/${id}`);
+          state = o?.state ?? o?.orderState ?? o?.status ?? state;
+          filledQty = filledOf(o) || filledQty;
+        } catch {}
+        if (/FILLED/i.test(String(state)) || filledQty > 0) break;
+        if (/CANCEL|REJECT|EXPIRED|KILL/i.test(String(state))) break;
+      }
     }
-    if (state === "ORDER_STATE_FILLED") {
-      return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id };
+
+    if (/FILLED/i.test(String(state)) || filledQty > 0) {
+      const q = filledQty > 0 ? filledQty : qty;
+      return { filled: true, qty: q, fillPrice: limit, cost: +(q * limit).toFixed(2), orderId: id };
     }
+
+    // Last resort: the portfolio is ground truth — a fill may have landed
+    // without the order endpoint ever reporting it.
+    try {
+      const pos = await getOpenPositions();
+      if (pos && pos[slug] && pos[slug].qtyBought > 0) {
+        console.log(`  ✅ Fill confirmed via positions (order reported "${state || "no state"}") | ${slug}`);
+        return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id };
+      }
+    } catch {}
+
+    if (!state) console.log(`  🔎 Order response had no state: ${JSON.stringify(order).slice(0, 220)}`);
     return { filled: false, error: `order ${state || "unknown"}`, orderId: id };
   } catch (err) {
     return { filled: false, error: err.message };
