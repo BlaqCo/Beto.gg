@@ -21,7 +21,6 @@ import {
   getOpenPositionsEnriched,
   getTradeHistory,
 } from "./polymarket-us.js";
-import { mountConfigApi } from "./config-api.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -29,8 +28,9 @@ const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 app.use(express.json());
-// BetoBot: settings + questions. getHistory feeds its answers about results.
-mountConfigApi(app, {
+// BetoBot: settings + questions. Loaded dynamically so a problem in the
+// config/command modules can never stop the bot from starting.
+const betoOpts = {
   getHistory: async () => {
     const stateClosed = (state.getAllBets ? state.getAllBets() : [])
       .filter(b => b.status && b.status !== "open")
@@ -46,7 +46,13 @@ mountConfigApi(app, {
     const acts = _histCache.data || [];
     return [...stateClosed, ...acts];
   },
-});
+};
+import("./config-api.js")
+  .then(m => {
+    if (typeof m.mountConfigApi === "function") m.mountConfigApi(app, betoOpts);
+    else console.error("⚠️ config-api.js loaded but has no mountConfigApi export — BetoBot disabled (bot still runs)");
+  })
+  .catch(err => console.error(`⚠️ BetoBot disabled (${err.message}) — bot still runs`));
 
 // NOTE: static is registered at the END of routes — otherwise public/index.html
 // hijacks GET / and the dashboard's JSON polling breaks.
