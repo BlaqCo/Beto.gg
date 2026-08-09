@@ -883,6 +883,16 @@ async function _runScanCycleInner() {
         { name: "candidates",count: candidates.length },
         { name: "entries",   count: betsPlaced },
       ],
+      // why candidates were rejected — powers "why haven't I made any bets?"
+      gates: {
+        notLive:   typeof windowRejects   !== "undefined" ? windowRejects   : 0,
+        tooEarly:  typeof earlyRejects    !== "undefined" ? earlyRejects    : 0,
+        badBook:   typeof bookRejects     !== "undefined" ? bookRejects     : 0,
+        quoteHold: typeof flickerRejects  !== "undefined" ? flickerRejects  : 0,
+        noDiscount:typeof discountRejects !== "undefined" ? discountRejects : 0,
+        notNearLow:typeof nearLowRejects  !== "undefined" ? nearLowRejects  : 0,
+        thinBook:  typeof thinRejects     !== "undefined" ? thinRejects     : 0,
+      },
     });
   } catch {}
 
