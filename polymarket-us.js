@@ -551,7 +551,9 @@ export async function getBuyingPower() {
 // faster counterparty wants out (adverse selection). A resting maker order
 // buys cheaper, avoids the taker fee, and earns rebates. Cost: it may not fill.
 export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty = 0.01, waitMs = 20000 }) {
-  if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
+  if (override) {
+    console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
+  } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
     return { filled: false, error: `order size $${sizeUsd} outside allowed` };
   }
@@ -640,8 +642,10 @@ const ORDER_MIN_USD = 0.40;   // v14: $1 flat, DCA add $0.50
 const ORDER_MAX_USD = 1.50;   // v14: nothing larger than ~$1
 const MAX_OPEN_POSITIONS = 9999; // no slot limit
 
-export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false }) {
-  if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
+export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false, override = false }) {
+  if (override) {
+    console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
+  } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
     return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
   }
