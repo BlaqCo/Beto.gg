@@ -883,6 +883,23 @@ async function _runScanCycleInner() {
         { name: "candidates",count: candidates.length },
         { name: "entries",   count: betsPlaced },
       ],
+      // the board as the bot sees it — powers "what games look promising?"
+      watchlist: (bbosWithData || [])
+        .filter(m => m.px && m.isLive)
+        .map(m => {
+          const ref = openerRef.get(m.slug), lo = lowSeen.get(m.slug);
+          const inBand = m.px >= FAV_MIN && m.px <= FAV_MAX;
+          const dip = ref == null ? 0 : Math.max(0, ref - m.px);
+          let blocker = null;
+          if (!inBand) blocker = m.px < FAV_MIN ? "below band" : "above band";
+          else if (ref != null && m.px > ref - (feePx(m.px) + EDGE_MARGIN)) blocker = "no discount yet";
+          else if (lo != null && m.px > lo + NEAR_LOW_TOL) blocker = "above its low";
+          return { q: (m.question || m.slug || "").slice(0, 46), league: m.league || "",
+                   px: +m.px.toFixed(2), high: ref ? +ref.toFixed(2) : null,
+                   low: lo ? +lo.toFixed(2) : null, dip: +dip.toFixed(3), blocker };
+        })
+        .sort((a, b) => (a.blocker ? 1 : 0) - (b.blocker ? 1 : 0) || b.dip - a.dip)
+        .slice(0, 8),
       // why candidates were rejected — powers "why haven't I made any bets?"
       gates: {
         notLive:   typeof windowRejects   !== "undefined" ? windowRejects   : 0,
