@@ -39,6 +39,9 @@ export const SCHEMA = {
   KILL_ENABLED:  { v: false, label: "Circuit breaker",     group: "Safety",  bool: true },
   KILL_FLOOR:    { v: 120,   label: "Stop below",          group: "Safety",  unit: "$",  step: 10,   min: 0,   max: 100000 },
   PAUSED:        { v: false, label: "Pause new bets",      group: "Safety",  bool: true },
+
+  LEAGUE_FOCUS:  { v: [],    label: "Only these sports",    group: "Sports",  list: true },
+  LEAGUE_BLOCK:  { v: [],    label: "Never these sports",   group: "Sports",  list: true },
 };
 
 export const DEFAULTS = Object.fromEntries(Object.entries(SCHEMA).map(([k, s]) => [k, s.v]));
@@ -84,7 +87,10 @@ export async function setConfig(patch = {}) {
     const s = SCHEMA[k];
     if (!s) continue;
     let v = raw;
-    if (s.bool) v = !!v;
+    if (s.list) {
+      v = Array.isArray(v) ? v.map(x => String(x).toUpperCase()) : [];
+    }
+    else if (s.bool) v = !!v;
     else {
       v = Number(v);
       if (!Number.isFinite(v)) continue;
