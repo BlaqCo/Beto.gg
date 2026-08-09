@@ -67,6 +67,99 @@ export async function snapshot(history = []) {
   };
 }
 
+
+// ── deeper analytics ─────────────────────────────────────────────
+const sortByTime = h => [...h].sort((a, b) =>
+  String(a.createTime || "").localeCompare(String(b.createTime || "")));
+
+export function streaks(history) {
+  const seq = sortByTime(history)
+    .filter(b => b._type === "resolution" || b.won != null || b.realizedPnl != null)
+    .map(b => (b.won === true || Number(b.realizedPnl ?? b.pnl ?? 0) > 0));
+  let bestW = 0, bestL = 0, curW = 0, curL = 0, cur = 0, curIsWin = null;
+  for (const win of seq) {
+    if (win) { curW++; curL = 0; bestW = Math.max(bestW, curW); }
+    else     { curL++; curW = 0; bestL = Math.max(bestL, curL); }
+  }
+  const last = seq[seq.length - 1];
+  cur = last === undefined ? 0 : (last ? curW : curL);
+  curIsWin = last;
+  return { longestWin: bestW, longestLoss: bestL, current: cur, currentIsWin: curIsWin, n: seq.length };
+}
+
+/** Win rate by entry-price bucket, measured against real break-even. */
+export function byPriceBucket(history) {
+  const B = {};
+  for (const b of history) {
+    const px = Number(b.price ?? b.entryPrice ?? 0);
+    if (!(px > 0.3 && px < 0.99)) continue;
+    const lo = Math.floor(px * 100 / 4) * 4;
+    const key = `${lo}-${lo + 3}`;
+    const won = b.won === true || Number(b.realizedPnl ?? b.pnl ?? 0) > 0;
+    (B[key] ||= { bucket: key, mid: (lo + 2) / 100, n: 0, w: 0, pnl: 0 });
+    B[key].n++; if (won) B[key].w++;
+    B[key].pnl += Number(b.realizedPnl ?? b.pnl ?? 0);
+  }
+  return Object.values(B).map(x => {
+    const c = 1 / x.mid, fee = 0.03 * c * Math.min(x.mid, 1 - x.mid);
+    return { ...x, rate: x.w / x.n, breakEven: (1 + fee) / c, edge: x.w / x.n - (1 + fee) / c };
+  }).sort((a, b) => a.mid - b.mid);
+}
+
+function answerSuggestEdge(s, history) {
+  const buckets = byPriceBucket(history).filter(b => b.n >= 3);
+  if (!buckets.length) {
+    return `Not enough settled bets yet to recommend a band — I need at least a few per price bucket. Right now you have ${s.settled} settled. Keep the current ${Math.round(s.cfg.FAV_MIN*100)}–${Math.round(s.cfg.FAV_MAX*100)}¢ band running and ask me again once ~30 have closed.`;
+  }
+  const green = buckets.filter(b => b.edge > 0);
+  const lines = buckets.map(b =>
+    `${b.bucket}¢: ${(b.rate*100).toFixed(0)}% over ${b.n} (need ${(b.breakEven*100).toFixed(0)}%) ${b.edge>0?"✓":"✗"}`);
+  if (!green.length) {
+    const best = buckets.reduce((a, b) => b.edge > a.edge ? b : a);
+    return `No price bucket is beating its break-even yet.\n\n${lines.join("\n")}\n\nClosest is ${best.bucket}¢, still ${Math.abs(best.edge*100).toFixed(1)} points short. On this data I'd keep stakes small rather than widen the band.`;
+  }
+  const lo = Math.min(...green.map(b => b.mid)) - 0.02;
+  const hi = Math.max(...green.map(b => b.mid)) + 0.02;
+  return `Based on ${s.settled} settled bets, the buckets clearing break-even are ${green.map(b=>b.bucket+"¢").join(", ")}.\n\n${lines.join("\n")}\n\nI'd suggest a band of ${Math.round(lo*100)}–${Math.round(hi*100)}¢. Say "edge ${Math.round(lo*100)}-${Math.round(hi*100)}" and I'll set it.`;
+}
+
+function answerProjection(s, history, days = 2) {
+  if (s.settled < 5) return `Only ${s.settled} settled bets — too thin to project from. Ask again after ~20.`;
+  const times = history.map(b => b.createTime).filter(Boolean).sort();
+  let perDay = s.settled;
+  if (times.length > 1) {
+    const spanDays = Math.max(0.5, (new Date(times[times.length-1]) - new Date(times[0])) / 86400000);
+    perDay = s.settled / spanDays;
+  }
+  const avgStake = history.reduce((a, b) => a + Number(b.costBasis ?? b.betSize ?? 0), 0) / Math.max(1, s.settled) || s.cfg.BET_SIZE;
+  const evPerBet = s.pnl / s.settled;
+  const proj = evPerBet * perDay * days;
+  const dir = proj >= 0 ? "gain" : "loss";
+  return `At your current ${s.winRate.toFixed(1)}% win rate you're averaging ${evPerBet >= 0 ? "+" : "−"}$${Math.abs(evPerBet).toFixed(2)} per settled bet, across roughly ${perDay.toFixed(1)} bets/day at $${avgStake.toFixed(2)} average stake.\n\nOver ${days} days that projects to a ${dir} of about ${proj >= 0 ? "+$" : "−$"}${Math.abs(proj).toFixed(2)}.\n\nThat's a straight-line estimate from a ${s.settled}-bet sample — real swings will be much wider in both directions.`;
+}
+
+function answerWeakestSport(s) {
+  const withN = s.sports.filter(x => x.n >= 2);
+  if (!withN.length) return "Not enough settled bets per sport to rank win rates yet.";
+  const worst = withN.reduce((a, b) => (b.w / b.n) < (a.w / a.n) ? b : a);
+  const lines = withN.map(x => `${x.league}: ${((x.w/x.n)*100).toFixed(0)}% (${x.w}W/${x.l}L) ${money(x.pnl)}`);
+  return `Weakest win rate is ${worst.league} at ${((worst.w/worst.n)*100).toFixed(0)}% (${worst.w}W/${worst.l}L, ${money(worst.pnl)}).\n\n${lines.join("\n")}`;
+}
+
+function answerPromising(s) {
+  const w = s.funnel.watchlist || [];
+  if (!w.length) return "No live markets on the board right now — nothing to watch. The bot only tracks games already in play.";
+  const ready = w.filter(x => !x.blocker);
+  const lines = w.slice(0, 6).map(x => {
+    const move = x.high ? ` (high ${Math.round(x.high*100)}¢)` : "";
+    return `${Math.round(x.px*100)}¢${move} ${x.q}${x.blocker ? ` — ${x.blocker}` : " — READY"}`;
+  });
+  const head = ready.length
+    ? `${ready.length} market${ready.length===1?"":"s"} clearing every filter right now.`
+    : `Nothing is clearing all the filters yet. Closest ones:`;
+  return `${head}\n\n${lines.join("\n")}`;
+}
+
 // ── answers ──────────────────────────────────────────────────────
 function answerSport(s, worst = false) {
   if (!s.sports.length) return "No settled bets yet, so there's nothing to compare by sport. Once a few close out I can break it down.";
@@ -147,6 +240,21 @@ function answerSettings(s) {
 }
 
 const QUESTIONS = [
+  { re: /\b(promising|look good|worth betting|what.*(watch|tracking|board)|any (good )?(games|plays|bets))\b/i,
+    fn: (s) => answerPromising(s) },
+  { re: /\b(suggest|recommend|what).*(edge|band|range)\b|\bbest (edge|band|range)\b/i,
+    fn: (s, h) => answerSuggestEdge(s, h) },
+  { re: /\b(predict|project|forecast|how much.*(make|profit)|next (couple|few|\d+) days?)\b/i,
+    fn: (s, h, t) => { const m = (t||"").match(/(\d+)\s*days?/i); return answerProjection(s, h, m ? +m[1] : 2); } },
+  { re: /\b(streak|in a row|consecutive)\b/i,
+    fn: (s, h) => {
+      const k = streaks(h);
+      if (!k.n) return "No settled bets yet, so no streaks to report.";
+      const cur = k.currentIsWin == null ? "" : ` Currently on ${k.current} ${k.currentIsWin ? (k.current===1?"win":"wins") : (k.current===1?"loss":"losses")} in a row.`;
+      return `Longest win streak: ${k.longestWin}. Longest losing streak: ${k.longestLoss}. Over ${k.n} settled bets.${cur}`;
+    } },
+  { re: /\b(lack|weakest|worst win rate|least wins|struggling)\b/i,
+    fn: (s) => answerWeakestSport(s) },
   { re: /\b(worst|losing|lose most|bad(?:est)?)\b.*\b(sport|categor|league)\b|\b(sport|categor|league)\b.*\b(worst|losing)\b/i,
     fn: s => answerSport(s, true) },
   { re: /\b(best|most|which|what)\b.*\b(sport|categor|league)\b|\b(sport|categor|league)\b.*\b(best|most profit|winning)\b/i,
@@ -170,9 +278,13 @@ export function looksLikeQuestion(text) {
   return /\?|^\s*(what|why|which|how|who|when|is|are|am|do|does|should|tell me|explain|show)\b/i.test(text || "");
 }
 
+let _aiWarned = false;
 async function askClaude(text, s) {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return null;
+  if (!key) {
+    if (!_aiWarned) { _aiWarned = true; console.log("🧠 BetoBot: no ANTHROPIC_API_KEY — built-in answers only"); }
+    return null;
+  }
   const facts = {
     settings: s.cfg,
     performance: { settled: s.settled, wins: s.wins, losses: s.losses, pnl: +s.pnl.toFixed(2), winRatePct: s.winRate },
@@ -191,21 +303,30 @@ async function askClaude(text, s) {
       }),
     });
     const data = await res.json();
+    if (data?.error) {
+      console.log(`🧠 BetoBot AI error: ${data.error.type || ""} ${data.error.message || ""}`.trim());
+      return null;
+    }
     const out = (data?.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+    if (!out) console.log(`🧠 BetoBot AI returned nothing (status ${res.status})`);
     return out || null;
-  } catch { return null; }
+  } catch (e) {
+    console.log(`🧠 BetoBot AI call failed: ${e.message}`);
+    return null;
+  }
 }
 
 /** Answer a question. Returns { answer, source }. */
 export async function answer(text, history = []) {
   const s = await snapshot(history);
   for (const q of QUESTIONS) {
-    if (q.re.test(text)) return { answer: q.fn(s), source: "data" };
+    if (q.re.test(text)) return { answer: q.fn(s, history, text), source: "data" };
   }
   const ai = await askClaude(text, s);
   if (ai) return { answer: ai, source: "model" };
+  const aiOff = !process.env.ANTHROPIC_API_KEY;
   return {
-    answer: "I can answer questions about which sports are profitable, why bets aren't happening, your win rate, and current settings. Or tell me a change like \"bet size 5\".",
+    answer: `I don't have a built-in answer for that one${aiOff ? " and no AI key is set, so I can only handle the questions I know" : " and the AI fallback didn't respond — check the logs"}.\n\nI can answer: which sports are profitable, why bets aren't happening, your win rate, longest streak, what edge to use, profit projections, and current settings. Or tell me a change like "bet size 5".`,
     source: "none",
   };
 }
