@@ -21,6 +21,7 @@ import {
   getOpenPositionsEnriched,
   getTradeHistory,
 } from "./polymarket-us.js";
+import { mountConfigApi } from "./config-api.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -28,6 +29,8 @@ const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 app.use(express.json());
+mountConfigApi(app);   // /api/config, /api/command, /api/funnel
+
 // NOTE: static is registered at the END of routes — otherwise public/index.html
 // hijacks GET / and the dashboard's JSON polling breaks.
 
@@ -73,7 +76,6 @@ async function getLiveSportsBalance() {
     return _liveBalCache.value;
   }
   try {
-    
     const { currentBalance } = await getBuyingPower();
     _liveBalCache = { value: currentBalance, ts: Date.now() };
     return currentBalance;
@@ -108,7 +110,7 @@ function withSportsLiveMarks(bets) {
     return {
       ...b,
       pnl: mk.pnl, // dashboard row shows live $ instead of 'open'
-      reasoning: `${b.reasoning || ""}  ⟂ LIVE ${(mk.price * 100).toFixed(0)}¢ (${mk.movePct >= 0 ? "+" : ""}${pct}%)`,
+      reasoning: `${b.reasoning || ""} ⟂ LIVE ${(mk.price * 100).toFixed(0)}¢ (${mk.movePct >= 0 ? "+" : ""}${pct}%)`,
     };
   });
 }
@@ -127,7 +129,6 @@ async function getLivePortfolioPnl() {
   if (settings.dryRun) return null; // dry run — no real account to query
 
   try {
-    
     const positions = await getOpenPositions();
     if (!positions) return null;
 
@@ -149,18 +150,17 @@ async function getLivePortfolioPnl() {
     }
 
     // Match against our local bet records to get entry prices
-    const allBets = state.getAllBets ? state.getAllBets() : [];
-    const openBets = allBets.filter(b => !b.status || b.status === "open");
+    const allBetsList = state.getAllBets ? state.getAllBets() : [];
+    const openBets = allBetsList.filter(b => !b.status || b.status === "open");
 
     let totalOpenPnl = 0;
     let portfolioValue = 0; // current market value of all open positions
-    const betMarks = {}; // conditionId → { pnl, currentValue, bid, entryPrice }
+    const betMarks = {};    // conditionId → { pnl, currentValue, bid, entryPrice }
 
     for (const bet of openBets) {
       const slug = bet.marketConditionId;
       const mark = liveMarks[slug];
       if (!mark || !bet.entryPrice || !bet.betSize) continue;
-
       const shares = bet.betSize / bet.entryPrice;
       const currentValue = shares * mark.bid;
       const openPnl = currentValue - bet.betSize;
@@ -182,7 +182,6 @@ async function getLivePortfolioPnl() {
       slugCount: slugs.length,
       ts: Date.now(),
     };
-
     _portfolioCache = { positions: result, ts: Date.now() };
     return result;
   } catch (err) {
@@ -203,7 +202,6 @@ async function statsForMode(mode, portfolio) {
   const total = wins + losses;
 
   let openPnl = 0;
-
   if (mode === "SPORTS") {
     if (portfolio?.betMarks && Object.keys(portfolio.betMarks).length > 0) {
       // ★ Use real Polymarket position values (LIVE mode)
@@ -237,7 +235,6 @@ async function fullStats(portfolio) {
   const s = state.getStats() || {};
   const sports = await statsForMode("SPORTS", portfolio);
   const crypto = await statsForMode("CRYPTO", portfolio);
-
   const out = {
     ...s,
     dryBalance: state.getDryBalance(),
@@ -247,7 +244,6 @@ async function fullStats(portfolio) {
     portfolioValue: portfolio?.portfolioValue ?? null,
     portfolioOpenPnl: portfolio?.totalOpenPnl ?? null,
   };
-
   // Legacy top-level fields scoped to current view
   const active = currentMode === "SPORTS" ? sports : crypto;
   out.wins = active.wins;
@@ -257,7 +253,6 @@ async function fullStats(portfolio) {
   out.activeBets = active.activeBets;
   out.totalBets = active.totalBets;
   out.winRate = active.winRate;
-
   return out;
 }
 
@@ -296,8 +291,8 @@ app.get("/bets", (req, res) => {
 app.get("/signals", (req, res) => {
   if (currentMode === "SPORTS" || !lastSignals) {
     return res.json({ bias: 0, confidence: 0, currentPrice: 0,
-                      activeStrategy: currentMode === "SPORTS" ? "SPORTS_ML" : "—",
-                      walls: {} });
+      activeStrategy: currentMode === "SPORTS" ? "SPORTS_ML" : "—",
+      walls: {} });
   }
   res.json(lastSignals);
 });
@@ -305,7 +300,6 @@ app.get("/signals", (req, res) => {
 app.get("/markets", async (req, res) => {
   try {
     if (currentMode === "SPORTS") {
-      
       const mkts = await fetchSportsMoneylines(); // 20s-cached internally
       return res.json(mkts.map(m => ({
         question: m.question,
@@ -337,6 +331,8 @@ app.get("/landing", (req, res) => res.sendFile(path.join(__dirname, "landing.htm
 app.get("/dashboard", (req, res) => res.sendFile(path.join(__dirname, "dashboard.html")));
 app.get("/octopus.svg", (req, res) => res.sendFile(path.join(__dirname, "octopus.svg")));
 app.get("/octopus.png", (req, res) => res.sendFile(path.join(__dirname, "octopus.png")));
+app.get("/logo.png", (req, res) => res.sendFile(path.join(__dirname, "logo.png")));
+app.get("/logo.svg", (req, res) => res.sendFile(path.join(__dirname, "logo.svg")));
 
 app.get("/api/status", (req, res) => {
   const s = fullStats();
@@ -389,7 +385,7 @@ app.get("/api/positions", async (req, res) => {
           const n = Object.keys(entryPriceCache).length;
           if (n > 0) console.log(`📊 Entry price cache: ${n} slugs from ${acts.length} activities`);
         }
-      } catch(e) {
+      } catch (e) {
         // Non-fatal — positions still show, just without entry price
       }
 
@@ -400,6 +396,7 @@ app.get("/api/positions", async (req, res) => {
       console.error("⚠️ /api/positions error:", e.message);
     }
   }
+
   // DRY fallback: return state.js active bets shaped like position objects
   const bets = (state.getAllBets ? state.getAllBets() : [])
     .filter(b => b.status === "open" && b.strategy === "SPORTS_ML");
@@ -407,17 +404,17 @@ app.get("/api/positions", async (req, res) => {
   const out = bets.map(b => {
     const mk = marks.get(b.marketConditionId);
     return {
-      slug:        b.marketConditionId,
-      question:    (b.marketQuestion || "").replace(/^\[.*?\]\s*/, ""),
-      category:    b.entryCoin || "",
-      qty:         b.betSize / (b.entryPrice || 1),
-      avgPrice:    b.entryPrice,
-      currentBid:  mk?.price ?? b.entryPrice,
-      costBasis:   +b.betSize.toFixed(2),
-      currentVal:  mk ? +(mk.price * b.betSize / (b.entryPrice || 1)).toFixed(2) : null,
-      openPnl:     mk?.pnl ?? null,
-      side:        "YES",
-      placedAt:    b.placedAt,
+      slug: b.marketConditionId,
+      question: (b.marketQuestion || "").replace(/^\[.*?\]\s*/, ""),
+      category: b.entryCoin || "",
+      qty: b.betSize / (b.entryPrice || 1),
+      avgPrice: b.entryPrice,
+      currentBid: mk?.price ?? b.entryPrice,
+      costBasis: +b.betSize.toFixed(2),
+      currentVal: mk ? +(mk.price * b.betSize / (b.entryPrice || 1)).toFixed(2) : null,
+      openPnl: mk?.pnl ?? null,
+      side: "YES",
+      placedAt: b.placedAt,
     };
   });
   res.json(out);
@@ -433,16 +430,16 @@ app.get("/api/history", async (req, res) => {
     const stateClosed = (state.getAllBets ? state.getAllBets() : [])
       .filter(b => b.status && b.status !== "open")
       .map(b => ({
-        _type:       b.status === "won" ? "resolution" : b.status === "lost" ? "resolution" : "trade",
-        _source:     "state",
-        marketSlug:  b.marketConditionId,
-        question:    (b.marketQuestion || "").replace(/^\[.*?\]\s*/, ""),
+        _type: b.status === "won" ? "resolution" : b.status === "lost" ? "resolution" : "trade",
+        _source: "state",
+        marketSlug: b.marketConditionId,
+        question: (b.marketQuestion || "").replace(/^\[.*?\]\s*/, ""),
         realizedPnl: parseFloat(b.pnl || 0),
-        costBasis:   parseFloat(b.betSize || 0),
-        price:       b.entryPrice || null,
-        createTime:  b.closedAt || b.placedAt || "",
-        won:         b.status === "won",
-        side:        "BUY",
+        costBasis: parseFloat(b.betSize || 0),
+        price: b.entryPrice || null,
+        createTime: b.closedAt || b.placedAt || "",
+        won: b.status === "won",
+        side: "BUY",
       }));
 
     // Source 2: Polymarket activities (fills cross-session history)
@@ -454,24 +451,24 @@ app.get("/api/history", async (req, res) => {
         try {
           actActs = await getTradeHistory({ limit: 500 });
           if (actActs.length) _histCache = { data: actActs, ts: Date.now() };
-        } catch(e) {
+        } catch (e) {
           console.error("⚠️ /api/history activities fetch:", e.message);
         }
       }
     }
 
     // Merge: deduplicate by question text (state bets take priority)
-    const stateQuestions = new Set(stateClosed.map(b => b.question?.slice(0,30)));
+    const stateQuestions = new Set(stateClosed.map(b => b.question?.slice(0, 30)));
     const actFiltered = actActs.filter(a => {
-      const q = (a.question || a.marketSlug || "").slice(0,30);
+      const q = (a.question || a.marketSlug || "").slice(0, 30);
       return !stateQuestions.has(q); // don't duplicate what state already has
     });
 
     const merged = [...stateClosed, ...actFiltered]
-      .sort((a,b) => (b.createTime||"") > (a.createTime||"") ? 1 : -1);
+      .sort((a, b) => (b.createTime || "") > (a.createTime || "") ? 1 : -1);
 
     return res.json(merged);
-  } catch(e) {
+  } catch (e) {
     console.error("⚠️ /api/history error:", e.message);
     return res.json([]);
   }
@@ -490,14 +487,14 @@ app.get("/api/stats", async (req, res) => {
     // ── Source 1: state.js (always reliable for current session) ──
     const allBetsArr = state.getAllBets ? state.getAllBets() : [];
     const closed = allBetsArr.filter(b => b.status && b.status !== "open");
-    const stateWins   = closed.filter(b => b.status === "won").length;
+    const stateWins = closed.filter(b => b.status === "won").length;
     const stateLosses = closed.filter(b => b.status === "lost").length;
-    const statePnl    = closed.reduce((s,b) => s + parseFloat(b.pnl||0), 0);
-    const stateWaged  = allBetsArr.reduce((s,b) => s + parseFloat(b.betSize||0), 0);
-    const stateBets   = allBetsArr.length;
+    const statePnl = closed.reduce((s, b) => s + parseFloat(b.pnl || 0), 0);
+    const stateWaged = allBetsArr.reduce((s, b) => s + parseFloat(b.betSize || 0), 0);
+    const stateBets = allBetsArr.length;
 
     // ── Source 2: Polymarket activities endpoint ────────────────
-    let actWins=0, actLosses=0, actPnl=0, actWaged=0, actBets=0;
+    let actWins = 0, actLosses = 0, actPnl = 0, actWaged = 0, actBets = 0;
     if (!DRY_RUN) {
       try {
         let acts = _histCache.data;
@@ -505,59 +502,61 @@ app.get("/api/stats", async (req, res) => {
           acts = await getTradeHistory({ limit: 500 });
           if (acts && acts.length) _histCache = { data: acts, ts: Date.now() };
         }
+
         if (acts && acts.length) {
-          const trades      = acts.filter(a => a._type === "trade");
+          const trades = acts.filter(a => a._type === "trade");
           const resolutions = acts.filter(a => a._type === "resolution");
 
-          // Debug: log what we got
           console.log(`📊 Stats: ${acts.length} total acts | ${trades.length} trades | ${resolutions.length} resolutions`);
           if (trades.length > 0) {
             const sample = trades[0];
-            console.log(`📊 Trade sample: slug=${sample.marketSlug?.slice(0,25)} side=${sample.side} price=${sample.price} cost=${sample.costBasis} pl=${sample.realizedPnl}`);
+            console.log(`📊 Trade sample: slug=${sample.marketSlug?.slice(0, 25)} side=${sample.side} price=${sample.price} cost=${sample.costBasis} pl=${sample.realizedPnl}`);
           }
           if (resolutions.length > 0) {
-            console.log(`📊 Resolution sample: ${resolutions[0].question?.slice(0,40)} won=${resolutions[0].won} pl=${resolutions[0].realizedPnl}`);
+            console.log(`📊 Resolution sample: ${resolutions[0].question?.slice(0, 40)} won=${resolutions[0].won} pl=${resolutions[0].realizedPnl}`);
           }
 
           // BUY trades = bets placed (side=BUY or empty, cost>0)
           const buys = trades.filter(a => {
-            const s = (a.side||"").toUpperCase();
-            return s === "BUY" || (s === "" && parseFloat(a.costBasis||0) > 0);
+            const s = (a.side || "").toUpperCase();
+            return s === "BUY" || (s === "" && parseFloat(a.costBasis || 0) > 0);
           });
-          actWins   = resolutions.filter(a => a.won).length;
-          actLosses = resolutions.filter(a => !a.won && parseFloat(a.realizedPnl||0) < 0).length;
-          actPnl    = resolutions.reduce((s,a) => s + parseFloat(a.realizedPnl||0), 0)
-                    + trades.reduce((s,a) => s + parseFloat(a.realizedPnl||0), 0);
-          actWaged  = buys.reduce((s,a) => s + parseFloat(a.costBasis||0), 0);
-          actBets   = buys.length;
+
+          actWins = resolutions.filter(a => a.won).length;
+          actLosses = resolutions.filter(a => !a.won && parseFloat(a.realizedPnl || 0) < 0).length;
+          actPnl = resolutions.reduce((s, a) => s + parseFloat(a.realizedPnl || 0), 0)
+                 + trades.reduce((s, a) => s + parseFloat(a.realizedPnl || 0), 0);
+          actWaged = buys.reduce((s, a) => s + parseFloat(a.costBasis || 0), 0);
+          actBets = buys.length;
+
           console.log(`📊 Stats computed: wins=${actWins} losses=${actLosses} pnl=${actPnl.toFixed(2)} waged=${actWaged.toFixed(2)} bets=${actBets}`);
         } else {
           console.log("📊 Stats: no activities returned from getTradeHistory");
         }
-      } catch(e) {
+      } catch (e) {
         console.error("⚠️ activities fetch in /api/stats:", e.message);
       }
     }
 
     // ── Merge: take whichever source has more data ──────────────
-    const wins        = Math.max(stateWins, actWins);
-    const losses      = Math.max(stateLosses, actLosses);
-    const totalPnl    = actPnl !== 0 ? +actPnl.toFixed(2) : +statePnl.toFixed(2);
-    const totalWagered= actWaged > 0 ? +actWaged.toFixed(2) : +stateWaged.toFixed(2);
-    const totalBets   = Math.max(stateBets, actBets);
+    const wins = Math.max(stateWins, actWins);
+    const losses = Math.max(stateLosses, actLosses);
+    const totalPnl = actPnl !== 0 ? +actPnl.toFixed(2) : +statePnl.toFixed(2);
+    const totalWagered = actWaged > 0 ? +actWaged.toFixed(2) : +stateWaged.toFixed(2);
+    const totalBets = Math.max(stateBets, actBets);
 
     const stats = { wins, losses, totalPnl, totalWagered, totalBets };
     _statsCache = { data: stats, ts: Date.now() };
     return res.json(stats);
-  } catch(e) {
+  } catch (e) {
     console.error("⚠️ /api/stats error:", e.message);
     // Emergency fallback — raw state
     const s = state.getStats ? state.getStats() : {};
     return res.json({
-      wins: s.wins||0, losses: s.losses||0,
-      totalPnl: parseFloat(s.pnl||0),
-      totalWagered: parseFloat(s.totalWagered||0),
-      totalBets: s.betsPlaced||0,
+      wins: s.wins || 0, losses: s.losses || 0,
+      totalPnl: parseFloat(s.pnl || 0),
+      totalWagered: parseFloat(s.totalWagered || 0),
+      totalBets: s.betsPlaced || 0,
     });
   }
 });
@@ -578,6 +577,7 @@ async function loadBots() {
     console.log("[INFO] Loaded bot-sports.js");
   } catch (err) {
     console.error("Sports bot load error:", err.message);
+    console.error(err.stack?.split("\n").slice(0, 3).join(" | "));
   }
   // Crypto bot disabled — not legal in California
   console.log("[INFO] Crypto bot disabled (CA regulations)");
@@ -586,20 +586,15 @@ async function loadBots() {
 (async () => {
   // Load state in background (don't block scan loop startup)
   state.ready.catch(err => console.error("⚠️ State load error:", err.message));
-  
+
   await loadBots();
 
   // ── Load bet history into log on boot (LIVE mode only) ──────────
-  // Fetches /v1/portfolio/trades and pushes each trade into the UI log
-  // so the System Log panel shows your full bet history immediately.
   if (!DRY_RUN) {
     try {
       const trades = await getTradeHistory({ limit: 500 });
       if (trades.length) {
-        // Log raw shape of first trade so we know field names
         console.log(`📋 Trade history shape: ${JSON.stringify(trades[0]).slice(0, 300)}`);
-
-        // Log a summary line per trade, newest first
         const sorted = [...trades].sort((a, b) => {
           const da = a.createdAt || a.created_at || "";
           const db = b.createdAt || b.created_at || "";
@@ -609,19 +604,18 @@ async function loadBots() {
         sorted.forEach(a => {
           if (a._type === "resolution") {
             const won = a.won;
-            const pl  = (a.realizedPnl ?? 0).toFixed(2);
+            const pl = (a.realizedPnl ?? 0).toFixed(2);
             const result = won ? "✅ WIN" : "❌ LOSS";
-            const ts  = (a.createTime || "").slice(0, 10) || "—";
-            console.log(`  ${result} | ${ts} | P/L $${pl} | ${a.question || a.marketSlug}`);
+            const ts = (a.createTime || "").slice(0, 10) || "—";
+            console.log(`   ${result} | ${ts} | P/L $${pl} | ${a.question || a.marketSlug}`);
           } else if (a._type === "trade") {
-            const pl  = (a.realizedPnl ?? 0).toFixed(2);
+            const pl = (a.realizedPnl ?? 0).toFixed(2);
             const cost = (a.costBasis ?? 0).toFixed(2);
             const result = parseFloat(pl) > 0 ? "✅ WIN" : parseFloat(pl) < 0 ? "❌ LOSS" : "🔄 TRADE";
-            const ts  = (a.createTime || "").slice(0, 10) || "—";
-            console.log(`  ${result} | ${ts} | $${cost} @ ${a.price ? Math.round(a.price*100)+"¢" : "—"} | P/L $${pl} | ${a.question || a.marketSlug}`);
+            const ts = (a.createTime || "").slice(0, 10) || "—";
+            console.log(`   ${result} | ${ts} | $${cost} @ ${a.price ? Math.round(a.price * 100) + "¢" : "—"} | P/L $${pl} | ${a.question || a.marketSlug}`);
           }
         });
-        // Cache for /api/history so first dashboard poll is instant
         _histCache = { data: trades, ts: Date.now() };
       } else {
         console.log("📋 No trade history found on Polymarket account");
@@ -631,14 +625,11 @@ async function loadBots() {
     }
 
     // Load open positions on boot + reconcile with state.js
-    // This fixes the case where bets exist on Polymarket but state was reset
     try {
       const stateBetsB = state.getAllBets ? state.getAllBets() : [];
       const positions = await getOpenPositionsEnriched(stateBetsB, {});
       if (positions.length) {
         console.log(`📊 OPEN POSITIONS — ${positions.length} active`);
-
-        // Reconcile: if a position exists on Polymarket but NOT in state, record it
         const stateIds = new Set((state.getAllBets ? state.getAllBets() : [])
           .filter(b => b.status === "open")
           .map(b => b.marketConditionId));
@@ -646,36 +637,35 @@ async function loadBots() {
         let reconciled = 0;
         for (const p of positions) {
           const slug = p.slug;
-          const q    = (p.question || slug || "Unknown").slice(0, 50);
+          const q = (p.question || slug || "Unknown").slice(0, 50);
           const cost = p.costBasis != null ? "$" + p.costBasis.toFixed(2) : "—";
-          const bid  = p.currentBid ? Math.round(p.currentBid * 100) + "¢" : "—";
-          const pnl  = p.openPnl != null ? (p.openPnl >= 0 ? "+" : "") + p.openPnl.toFixed(2) : "—";
-          const prob = p.avgPrice  ? Math.round(p.avgPrice * 100) + "%" : "—";
-          console.log(`  🔴 LIVE | ${cost} @ ${prob} | now ${bid} | P/L $${pnl} | ${q}`);
+          const bid = p.currentBid ? Math.round(p.currentBid * 100) + "¢" : "—";
+          const pnl = p.openPnl != null ? (p.openPnl >= 0 ? "+" : "") + p.openPnl.toFixed(2) : "—";
+          const prob = p.avgPrice ? Math.round(p.avgPrice * 100) + "%" : "—";
+          console.log(`   🔴 LIVE | ${cost} @ ${prob} | now ${bid} | P/L $${pnl} | ${q}`);
 
-          // If not in state, inject it so settlement tracking works
           if (!stateIds.has(slug) && state.recordBet) {
             try {
               state.recordBet({
                 market: {
                   conditionId: slug,
-                  question:    p.question || slug,
-                  endDateIso:  null,
+                  question: p.question || slug,
+                  endDateIso: null,
                 },
-                side:               "YES",
-                betSize:            p.costBasis || 0,
-                edge:               0,
-                trueProbability:    p.avgPrice || 0.65,
+                side: "YES",
+                betSize: p.costBasis || 0,
+                edge: 0,
+                trueProbability: p.avgPrice || 0.65,
                 impliedProbability: p.avgPrice || 0.65,
-                entryPrice:         p.avgPrice || null,
-                strategy:           "SPORTS_ML",
-                entryCoin:          p.category || "SPORT",
-                reasoning:          "Reconciled from Polymarket on boot",
+                entryPrice: p.avgPrice || null,
+                strategy: "SPORTS_ML",
+                entryCoin: p.category || "SPORT",
+                reasoning: "Reconciled from Polymarket on boot",
               });
               reconciled++;
-              console.log(`  ♻️ Reconciled into state: ${slug.slice(0, 40)}`);
-            } catch(re) {
-              console.error("  ⚠️ Reconcile failed:", re.message);
+              console.log(`   ♻️ Reconciled into state: ${slug.slice(0, 40)}`);
+            } catch (re) {
+              console.error("   ⚠️ Reconcile failed:", re.message);
             }
           }
         }
@@ -701,7 +691,7 @@ async function loadBots() {
         if (scanCount === 1) console.error("[ERROR] sportsBot not loaded or runScanCycle not found");
       }
     } catch (err) {
-      console.error("Sports scan error:", err.message, err.stack?.split('\n')[1]);
+      console.error("Sports scan error:", err.message, err.stack?.split("\n")[1]);
     }
   }, 3000);
 
