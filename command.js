@@ -11,7 +11,38 @@
  * config.js before it is applied.
  */
 
-import { SCHEMA } from "./config.js";
+import { SCHEMA, getConfig } from "./config.js";
+
+// ── sport vocabulary ─────────────────────────────────────────────
+// Each sport maps to the slug/league tokens Polymarket actually uses.
+export const SPORTS = {
+  "tennis":       ["TENNIS","ATP","WTA","ITF","CHALLENGER"],
+  "table tennis": ["TABLE-TENNIS","TABLE_TENNIS","SETKA","TT-"],
+  "baseball":     ["MLB","BASEBALL","NPB","KBO"],
+  "basketball":   ["NBA","BASKETBALL","NBASL","NCAAMB","WNBA"],
+  "football":     ["NFL","NCAAFB"],
+  "hockey":       ["NHL","HOCKEY"],
+  "soccer":       ["SOCCER","EPL","LA-LIGA","SERIE-A","BUNDESLIGA","LIGUE-1","MLS","UCL","WORLD-CUP"],
+  "esports":      ["ESPORTS","CS2","VALORANT","LOL","DOTA"],
+  "mma":          ["UFC","MMA","BOXING"],
+  "cricket":      ["CRICKET"],
+  "golf":         ["GOLF"],
+};
+const SPORT_ALIASES = {
+  "table-tennis":"table tennis","ping pong":"table tennis","tt":"table tennis",
+  "mlb":"baseball","nba":"basketball","wnba":"basketball","nfl":"football","nhl":"hockey",
+  "futbol":"soccer","football (soccer)":"soccer","ufc":"mma","boxing":"mma",
+  "esport":"esports","e-sports":"esports","atp":"tennis","wta":"tennis","itf":"tennis",
+};
+export function matchSports(text) {
+  const t = String(text || "").toLowerCase();
+  const found = new Set();
+  for (const [alias, canon] of Object.entries(SPORT_ALIASES))
+    if (new RegExp(`\\b${alias.replace(/[-() ]/g, "[- ()]?")}\\b`, "i").test(t)) found.add(canon);
+  for (const name of Object.keys(SPORTS))
+    if (new RegExp(`\\b${name.replace(" ", "[- ]?")}s?\\b`, "i").test(t)) found.add(name);
+  return [...found];
+}
 
 // price-ish values may be written as 65, 65%, 65¢, or 0.65 — normalize to 0-1
 const toPrice = raw => {
@@ -120,17 +151,65 @@ async function askClaude(text) {
 }
 
 /** Human-readable confirmation of what changed. */
+const prettySports = tokens => {
+  if (!tokens || !tokens.length) return "none";
+  const names = Object.entries(SPORTS)
+    .filter(([, toks]) => toks.some(t => tokens.includes(t)))
+    .map(([n]) => n);
+  return names.length ? names.join(", ") : tokens.slice(0, 4).join(", ").toLowerCase();
+};
+
 export function describe(patch) {
   return Object.entries(patch).map(([k, v]) => {
     const s = SCHEMA[k] || {};
+    if (s.list) {
+      if (k === "LEAGUE_FOCUS") return v.length ? `only ${prettySports(v)}` : "all sports";
+      if (k === "LEAGUE_BLOCK") return v.length ? `excluding ${prettySports(v)}` : null;
+    }
     if (s.bool) return `${s.label || k} ${v ? "on" : "off"}`;
     if (s.pct)  return `${s.label || k} ${Math.round(v * 100)}${s.unit || "¢"}`;
     return `${s.label || k} ${s.unit === "$" ? "$" : ""}${v}${s.unit && s.unit !== "$" ? s.unit : ""}`;
-  }).join(" · ");
+  }).filter(Boolean).join(" · ");
 }
 
 /** Parse with model fallback. Returns { patch, matched, source }. */
+/** "bet on tennis" / "bet on all sports" / "stop betting on esports" */
+export async function sportCommand(text) {
+  const t = String(text || "");
+  const wantsAll = /\b(all sports|every sport|everything|all games|any sport)\b/i.test(t);
+  const isStop   = /\b(stop|don'?t|do not|no more|exclude|avoid|quit|never|remove)\b/i.test(t);
+  const isStart  = /\b(bet on|only bet|focus|allow|include|add|switch to|trade)\b/i.test(t);
+  if (!wantsAll && !isStop && !isStart) return null;
+
+  const cfg = await getConfig();
+  const focus = new Set(cfg.LEAGUE_FOCUS || []);
+  const block = new Set(cfg.LEAGUE_BLOCK || []);
+
+  if (wantsAll && !isStop) {
+    return { patch: { LEAGUE_FOCUS: [], LEAGUE_BLOCK: [] }, note: "Betting on all sports — no restrictions." };
+  }
+  const sports = matchSports(t);
+  if (!sports.length) return null;
+
+  const tokens = sports.flatMap(s => SPORTS[s]);
+  if (isStop) {
+    tokens.forEach(x => block.add(x));
+    tokens.forEach(x => focus.delete(x));
+    return { patch: { LEAGUE_BLOCK: [...block], LEAGUE_FOCUS: [...focus] },
+             note: `No longer betting ${sports.join(" or ")}.` };
+  }
+  // "only bet tennis" replaces the list; "also bet tennis" adds to it
+  const exclusive = /\b(only|just|nothing but|exclusively|switch to)\b/i.test(t);
+  const next = exclusive ? new Set(tokens) : new Set([...focus, ...tokens]);
+  tokens.forEach(x => block.delete(x));
+  return { patch: { LEAGUE_FOCUS: [...next], LEAGUE_BLOCK: [...block] },
+           note: exclusive ? `Betting ${sports.join(" and ")} only.` : `Now betting ${sports.join(" and ")}.` };
+}
+
 export async function interpret(text) {
+  const sport = await sportCommand(text);
+  if (sport) return { patch: sport.patch, matched: Object.keys(sport.patch), source: "rules", note: sport.note };
+
   const local = parseCommand(text || "");
   if (Object.keys(local.patch).length) return { ...local, source: "rules" };
   const ai = await askClaude(text || "");
