@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>BETO.GG — control</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -107,7 +110,8 @@ button:active{transform:translateY(1px)}
   background:linear-gradient(180deg,rgba(61,224,255,.06),transparent 60%),var(--panel)}
 .askhead{display:flex;align-items:center;gap:8px;padding:12px 14px 0}
 .askhead h3{font-family:'Archivo';font-weight:700;font-size:12px;letter-spacing:.14em}
-.askhint{font-size:10px;color:var(--dim);padding:4px 14px 10px}
+.askhint{font-size:10px;color:var(--dim);padding:4px 14px 2px}
+.cfgline{font-size:10px;color:var(--cyan);padding:0 14px 10px;letter-spacing:.06em}
 .askrow{display:flex;gap:8px;padding:0 14px 12px}
 #cmd{flex:1;background:#0A1120;border:1px solid var(--line);color:var(--text);
   font-family:'JetBrains Mono';font-size:12px;padding:11px 12px;border-radius:10px}
@@ -157,6 +161,7 @@ button:active{transform:translateY(1px)}
 #toast.bad{border-left-color:var(--down)}
 #toast .tt{font-family:'Archivo';font-weight:700;font-size:11px;letter-spacing:.12em;margin-bottom:3px}
 #toast.ok .tt{color:var(--up)}#toast.bad .tt{color:var(--down)}
+.uiver{text-align:center;font-size:9px;color:#2C3A57;letter-spacing:.18em;padding:6px 0 2px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -202,6 +207,7 @@ button:active{transform:translateY(1px)}
 <div class="ask">
   <div class="askhead"><h3>ASK BETOBOT</h3></div>
   <div class="askhint">Change any setting in plain English — applies on the next scan.</div>
+  <div class="cfgline" id="cfgline">—</div>
   <div class="askrow">
     <input id="cmd" placeholder="flat bets to $5, slots to 5" autocomplete="off">
     <button class="primary" id="send">REQUEST</button>
@@ -212,15 +218,6 @@ button:active{transform:translateY(1px)}
     <span class="chip">slots 6</span>
     <span class="chip">wait 10 minutes</span>
     <span class="chip">pause</span>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="phead"><h3>LIVE SETTINGS</h3><span class="saved" id="saved">saved · live next scan</span></div>
-  <div id="controls"><div class="empty">loading settings…</div></div>
-  <div class="actions">
-    <button id="reset">RESET</button>
-    <button class="primary" id="apply">APPLY</button>
   </div>
 </div>
 
@@ -239,6 +236,8 @@ button:active{transform:translateY(1px)}
   <div id="log"></div>
 </div>
 
+<div class="uiver" id="uiver">UI v3 · betobot</div>
+
 <div id="sheet" role="dialog" aria-modal="true">
   <div class="sheetbox">
     <div class="sheettitle" id="dTitle">—</div>
@@ -249,7 +248,7 @@ button:active{transform:translateY(1px)}
       <div class="dcell"><div class="dlabel">RESULT</div><div class="dval" id="dRes">—</div></div>
       <div class="dcell"><div class="dlabel">STAKE</div><div class="dval" id="dSize">—</div></div>
       <div class="dcell"><div class="dlabel">P&amp;L</div><div class="dval" id="dPnl">—</div></div>
-      <div class="dcell"><div class="dlabel">HELD</div><div class="dval" id="dHeld">—</div></div>
+      <div class="dcell"><div class="dlabel">SETTLED</div><div class="dval" id="dHeld" style="font-size:11px">—</div></div>
     </div>
     <button class="close" id="dClose">CLOSE</button>
   </div>
@@ -265,47 +264,28 @@ let schema = {}, config = {}, dirty = {};
 
 async function loadConfig(){
   try{
-    const d = await (await fetch('/api/config')).json();
-    schema = d.schema||{}; config = d.config||{};
-    const groups = {};
-    for(const [k,s] of Object.entries(schema)){ (groups[s.group||'Other'] = groups[s.group||'Other'] || []).push([k,s]); }
-    $('controls').innerHTML = Object.entries(groups).map(function(pair){
-      const g = pair[0], items = pair[1];
-      return '<div class="group"><div class="gname">'+g.toUpperCase()+'</div>'+
-        items.map(function(it){
-          const k = it[0], s = it[1], v = config[k];
-          if(s.bool) return '<div class="field"><div class="fname">'+s.label+'</div>'+
-            '<div class="toggle" role="switch" tabindex="0" aria-checked="'+(!!v)+'" data-key="'+k+'"></div></div>';
-          const shown = s.pct ? Math.round(v*100) : v;
-          return '<div class="field"><div class="fname">'+s.label+'</div>'+
-            '<input type="number" data-key="'+k+'" data-pct="'+(!!s.pct)+'" value="'+shown+'" step="'+(s.pct?1:(s.step||1))+'">'+
-            '<span class="unit">'+(s.unit||'')+'</span></div>';
-        }).join('')+'</div>';
-    }).join('');
-    $('controls').querySelectorAll('.toggle').forEach(function(t){
-      const flip = function(){ const on = t.getAttribute('aria-checked')!=='true';
-        t.setAttribute('aria-checked', on); dirty[t.dataset.key]=on; };
-      t.onclick = flip;
-      t.onkeydown = function(e){ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); flip(); } };
-    });
-    $('controls').querySelectorAll('input').forEach(function(i){
-      i.oninput = function(){ const raw = parseFloat(i.value);
-        if(isFinite(raw)) dirty[i.dataset.key] = i.dataset.pct==='true' ? raw/100 : raw; };
-    });
-  }catch(e){ $('controls').innerHTML = '<div class="empty">settings unavailable — is mountConfigApi(app) added to index.js?</div>'; }
+    const d = await (await fetch('/api/config?t='+Date.now())).json();
+    const c = d.config || {};
+    const bits = [
+      '$'+c.BET_SIZE,
+      Math.round(c.FAV_MIN*100)+'–'+Math.round(c.FAV_MAX*100)+'¢',
+      (c.MAX_CONC>=9999?'unlimited slots':c.MAX_CONC+' slots'),
+      (c.MIN_LIVE_MIN>0 ? 'wait '+c.MIN_LIVE_MIN+'m' : 'no wait'),
+      (c.DCA_ENABLED ? 'dca −'+Math.round(c.DCA_DROP_PCT*100)+'%' : 'dca off'),
+      (c.TP_ENABLED ? 'tp '+Math.round(c.TP_PRICE*100)+'¢' : 'tp off'),
+      (c.MAKER_MODE ? 'maker' : 'taker'),
+      (c.KILL_ENABLED ? 'stop $'+c.KILL_FLOOR : null),
+      (c.PAUSED ? 'PAUSED' : null),
+    ].filter(Boolean);
+    $('cfgline').textContent = bits.join('  ·  ');
+  }catch(e){
+    $('cfgline').textContent = 'settings unavailable — check the bot is running';
+  }
 }
-$('apply').onclick = async function(){
-  if(!Object.keys(dirty).length) return;
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dirty)});
-  dirty = {}; $('saved').classList.add('show');
-  setTimeout(function(){ $('saved').classList.remove('show'); }, 2200);
-  loadConfig();
-};
-$('reset').onclick = async function(){ await fetch('/api/config/reset',{method:'POST'}); dirty={}; loadConfig(); };
 
 async function loadFunnel(){
   try{
-    const f = await (await fetch('/api/funnel')).json();
+    const f = await (await fetch('/api/funnel?t='+Date.now())).json();
     if(!f.stages || !f.stages.length){ $('fmeta').textContent='waiting for scan…'; return; }
     const max = Math.max.apply(null, f.stages.map(function(s){return s.count;}).concat([1]));
     $('stages').innerHTML = f.stages.map(function(s){
@@ -415,18 +395,30 @@ async function loadHistory(){
     }catch(e){}
   }
   if(!list){ $('history').innerHTML='<div class="empty">history endpoint not found</div>'; return; }
-  HIST = list.filter(function(b){ return b.exitPrice!=null || b.pnl!=null || b.result || b.won!=null; });
+  HIST = list.map(function(b){
+    return {
+      question: b.question || b.marketQuestion || b.marketSlug || '',
+      slug:     b.marketSlug || b.slug || '',
+      pnl:      Number(b.pnl != null ? b.pnl : (b.realizedPnl != null ? b.realizedPnl : 0)),
+      won:      b.won === true || Number(b.realizedPnl || b.pnl || 0) > 0,
+      size:     Number(b.betSize != null ? b.betSize : (b.costBasis || 0)),
+      entry:    b.entryPrice != null ? b.entryPrice : b.price,
+      exit:     b.exitPrice != null ? b.exitPrice : null,
+      when:     b.createTime || b.closedAt || b.settledAt || b.exitTime || b.placedAt || '',
+      kind:     b._type || '',
+      league:   b.category || b.league || b.entryCoin || '',
+    };
+  }).filter(function(b){ return b.question && (b.kind==='resolution' || b.pnl!==0 || b.exit!=null); });
   if(!HIST.length){ $('history').innerHTML='<div class="empty">no settled bets yet</div>'; return; }
-  const wins = HIST.filter(function(b){ return Number(b.pnl)>0 || b.won===true; }).length;
+  const wins = HIST.filter(function(b){ return b.won; }).length;
   $('histCount').textContent = wins+'W / '+(HIST.length-wins)+'L';
   $('histCount').classList.add('show');
   $('history').innerHTML = HIST.slice(0,40).map(function(b,i){
-    const pl = Number(b.pnl||0), win = pl>0 || b.won===true;
     return '<div class="hrow" tabindex="0" data-i="'+i+'">'+
-      '<span class="hres '+(win?'w':'l')+'">'+(win?'WON':'LOST')+'</span>'+
-      '<span class="hq">'+String(b.marketQuestion||b.question||b.slug||'').slice(0,40)+'</span>'+
-      '<span class="hwhen">'+ago(b.exitTime||b.closedAt||b.settledAt||b.entryTime)+'</span>'+
-      '<span class="hpl '+cls(pl)+'">'+money(pl)+'</span></div>';
+      '<span class="hres '+(b.won?'w':'l')+'">'+(b.won?'WON':'LOST')+'</span>'+
+      '<span class="hq">'+b.question.slice(0,40)+'</span>'+
+      '<span class="hwhen">'+ago(b.when)+'</span>'+
+      '<span class="hpl '+cls(b.pnl)+'">'+money(b.pnl)+'</span></div>';
   }).join('');
   $('history').querySelectorAll('.hrow').forEach(function(row){
     const open = function(){ showBet(HIST[+row.dataset.i]); };
@@ -436,21 +428,17 @@ async function loadHistory(){
 }
 function showBet(b){
   if(!b) return;
-  const pl = Number(b.pnl||0), win = pl>0 || b.won===true;
-  const ep = b.entryPrice, xp = b.exitPrice;
-  $('dTitle').textContent = b.marketQuestion || b.question || b.slug || 'Bet';
-  $('dSub').textContent = [ (b.league||b.entryCoin||'').toUpperCase(), b.reason||'', b.slug||'' ]
+  $('dTitle').textContent = b.question || 'Bet';
+  $('dSub').textContent = [ (b.league||'').toUpperCase(), b.kind||'', b.slug||'' ]
     .filter(Boolean).join(' · ').slice(0,90);
-  $('dEntry').textContent = ep!=null ? Math.round(ep*100)+'¢' : '—';
-  $('dExit').textContent  = xp!=null ? Math.round(xp*100)+'¢' : '—';
-  $('dRes').textContent = win ? 'WON' : 'LOST';
-  $('dRes').className = 'dval '+(win?'up':'down');
-  $('dSize').textContent = b.betSize!=null ? '$'+Number(b.betSize).toFixed(2) : '—';
-  $('dPnl').textContent = money(pl);
-  $('dPnl').className = 'dval '+cls(pl);
-  const t0 = b.entryTime ? new Date(b.entryTime).getTime() : null;
-  const t1 = (b.exitTime||b.closedAt||b.settledAt) ? new Date(b.exitTime||b.closedAt||b.settledAt).getTime() : null;
-  $('dHeld').textContent = (t0&&t1) ? (t1-t0<3600000 ? Math.round((t1-t0)/60000)+'m' : ((t1-t0)/3600000).toFixed(1)+'h') : '—';
+  $('dEntry').textContent = b.entry!=null ? Math.round(b.entry*100)+'¢' : '—';
+  $('dExit').textContent  = b.exit!=null ? Math.round(b.exit*100)+'¢' : (b.won ? '100¢' : '0¢');
+  $('dRes').textContent = b.won ? 'WON' : 'LOST';
+  $('dRes').className = 'dval '+(b.won?'up':'down');
+  $('dSize').textContent = b.size ? '$'+b.size.toFixed(2) : '—';
+  $('dPnl').textContent = money(b.pnl);
+  $('dPnl').className = 'dval '+cls(b.pnl);
+  $('dHeld').textContent = b.when ? new Date(b.when).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—';
   $('sheet').classList.add('show');
 }
 $('dClose').onclick = function(){ $('sheet').classList.remove('show'); };
