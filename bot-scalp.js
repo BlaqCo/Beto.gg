@@ -24,16 +24,16 @@ import * as pm from "./polymarket-us.js";
 export const SCALP = {
   ENABLED:     process.env.SCALP_PAPER === "true",
   SCAN_MS:     20_000,   // own cadence, offset from the live bot
-  TRACK_MAX:   25,       // markets quoted per cycle (API-friendly)
+  TRACK_MAX:   30,       // markets quoted per cycle (API-friendly)
 
   // Only these leagues. Round-based esports overshoot most reliably.
   // Empty array = every live market.
   LEAGUES:     ["CS2", "VALORANT", "CSGO", "COUNTER-STRIKE"],
 
-  PX_MIN:      0.45,     // scalp zone is wider than the value bot's band
-  PX_MAX:      0.75,
-  DIP_MIN:     0.09,     // deeper overshoot = more room to revert (was 6¢)
-  DIP_WINDOW:  6 * 60_000, // the drop must be recent
+  PX_MIN:      0.35,     // wider zone = more candidates
+  PX_MAX:      0.85,
+  DIP_MIN:     0.06,     // loosened: catch more setups (was 9¢)
+  DIP_WINDOW:  10 * 60_000, // loosened from 6 min
 
   BANKROLL:    500,      // paper starting balance
   STAKE:       10,       // paper dollars per scalp
@@ -42,9 +42,9 @@ export const SCALP = {
   // The old 3¢/8¢ pair needed 73% and could never work.
   TAKE:        0.04,     // exit +4¢
   STOP:        0.05,     // exit −5¢
-  MAX_SPREAD:  0.03,     // wide books gap through stops — skip them
+  MAX_SPREAD:  0.05,     // loosened from 3¢
   MAX_HOLD_MS: 20 * 60_000,
-  MAX_OPEN:    6,
+  MAX_OPEN:    10,
 
   FEE_COEF:    0.03,     // entry assumed maker (free); exit pays taker
 };
