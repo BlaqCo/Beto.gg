@@ -124,6 +124,8 @@ button:active{transform:translateY(1px)}
 .answer.show{display:block;animation:fadeup .3s cubic-bezier(.22,1,.36,1)}
 .answer.change{border-left-color:var(--up)}
 .answer.bad{border-left-color:var(--down)}
+.answer.confirm{border-left-color:var(--amber);background:rgba(255,182,61,.06)}
+.answer.action{border-left-color:var(--up)}
 @keyframes fadeup{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 12px}
 .chip{font-size:10px;color:var(--dim);border:1px solid var(--line);background:#0A1120;
@@ -216,7 +218,7 @@ button:active{transform:translateY(1px)}
   <div class="askhint">Ask about results, or change any setting in plain English.</div>
   <div class="cfgline" id="cfgline">—</div>
   <div class="askrow">
-    <input id="cmd" placeholder="flat bets to $5, slots to 5" autocomplete="off">
+    <input id="cmd" placeholder="flat bets to $5, or ask a question" autocomplete="off">
     <button class="primary" id="send">REQUEST</button>
   </div>
   <div class="answer" id="answer"></div>
@@ -226,6 +228,8 @@ button:active{transform:translateY(1px)}
     <span class="chip">how am I doing?</span>
     <span class="chip">bet size 5</span>
     <span class="chip">edge 60-70</span>
+    <span class="chip">what's my longest win streak?</span>
+    <span class="chip">what edge do you suggest?</span>
     <span class="chip">pause</span>
   </div>
 </div>
@@ -375,7 +379,10 @@ async function sendCommand(){
     const d = await r.json();
     const a = $('answer');
     a.textContent = d.message || '';
-    a.className = 'answer show ' + (!d.ok ? 'bad' : (d.kind === 'change' ? 'change' : ''));
+    const k = !d.ok ? 'bad' : (d.kind || '');
+    a.className = 'answer show ' + k;
+    if(d.kind === 'confirm'){ $('cmd').placeholder = 'type yes to confirm, or cancel'; $('cmd').focus(); }
+    else { $('cmd').placeholder = 'flat bets to $5, or ask a question'; }
     if(d.kind === 'change' || !d.ok) toast(!!d.ok, d.message || '');
     if(d.ok){ $('cmd').value=''; loadConfig(); }
   }catch(e){ toast(false, 'Could not reach the bot — is it running?'); }
