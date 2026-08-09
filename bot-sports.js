@@ -14,6 +14,7 @@
 // reported below instead of silently killing the bot.
 import * as state from "./state.js";
 import * as pm from "./polymarket-us.js";
+import * as cfgStore from "./config.js";
 
 const recordBet         = state.recordBet;
 const hasActiveBet      = state.hasActiveBet      || (() => false);
@@ -89,21 +90,21 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-const BET_LOW_USD   = 1;       // flat $1
-const BET_HIGH_USD  = 1;       // flat $1 (no edge scaling)
+let BET_LOW_USD   = 1;       // flat $1
+let BET_HIGH_USD  = 1;       // flat $1 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
   return +(BET_LOW_USD + t * (BET_HIGH_USD - BET_LOW_USD)).toFixed(2);
 };
-const BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
-const BET_MIN       = BET_LOW_USD;
-const FAV_MIN       = 0.57;    // band floor: 57¢
-const FAV_MAX       = 0.68;    // band cap: 68¢
+let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
+let BET_MIN       = BET_LOW_USD;
+let FAV_MIN       = 0.57;    // band floor: 57¢
+let FAV_MAX       = 0.68;    // band cap: 68¢
 const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
 // $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
 const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
-const MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qualify
+let MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qualify
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -122,11 +123,11 @@ const FEE_COEF_PX   = 0.03;
 const feePx = px => FEE_COEF_PX * Math.min(px, 1 - px);
 // An entry must be discounted from its high-water by MORE than the fee it
 // costs, plus a margin — otherwise the "edge" is swallowed by the fee.
-const EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
+let EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
 // Wait this many minutes AFTER tip-off before entering: lets the early
 // swing happen so we buy into a settled, informed price rather than the
 // opening churn. 0 = enter as soon as the market goes live.
-const MIN_LIVE_MIN  = 0;      // no trailing wait — enter as soon as it's live
+let MIN_LIVE_MIN  = 0;      // no trailing wait — enter as soon as it's live
 // ── PRICE-DRIFT STUDY ────────────────────────────────────────────
 // Records each market's price at first sight (pre-game or first live look)
 // and compares it to the price at the MIN_LIVE_MIN mark, so we can answer
@@ -136,33 +137,33 @@ const liveSince  = new Map();  // slug → timestamp we FIRST saw it live
 const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // Enter only when price is within this much of the trailing low — i.e. near
 // the bottom of the range we've watched, not just any pullback.
-const NEAR_LOW_TOL  = 0.01;
+let NEAR_LOW_TOL  = 0.01;
 // Prices at/below this get first claim on slots (cheap-entry priority).
-const PRIORITY_PX   = 0.61;   // ≤61¢ gets first claim
+let PRIORITY_PX   = 0.61;   // ≤61¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
-const DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
-const MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
+let DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
+let MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
 const MAKER_WAIT_MS = 20000;  // how long a resting order waits before cancel
 const QUOTE_HOLD_MS = 15000;  // ~1 scan cycle: price must be seen twice
 const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apart;
                               // 2¢ was tighter than normal drift, so nothing ever confirmed)
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
-const DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
-const DCA_DROP_PCT  = 0.15;   // price ≥15% BELOW entry → add (60¢ → 51¢)
-const DCA_ADD_MULT  = 0.50;   // add 50% of the initial (scaled) bet
-const DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
+let DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
+let DCA_DROP_PCT  = 0.15;   // price ≥15% BELOW entry → add (60¢ → 51¢)
+let DCA_ADD_MULT  = 0.50;   // add 50% of the initial (scaled) bet
+let DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
-const TP_ENABLED    = true;
+let TP_ENABLED    = true;
 // NOTE: a +80% GAIN is unreachable in a 58-70¢ band — max possible profit at
 // settlement is +72% (58¢) down to +43% (70¢). So gain-mode at 0.80 could
 // never fire. Default is PRICE mode: sell when the market reaches 80¢.
 const TP_MODE       = "price";  // "price" | "gain"
-const TP_PRICE      = 0.80;     // price mode: sell at 80¢
-const TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
+let TP_PRICE      = 0.80;     // price mode: sell at 80¢
+let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
-const KILL_ENABLED  = false;  // circuit breaker OFF
-const KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
+let KILL_ENABLED  = false;  // circuit breaker OFF
+let KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
 let   KILLED        = false;
 const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
@@ -172,7 +173,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-const ENTRIES_SCAN  = 9999;    // no per-scan cap
+let ENTRIES_SCAN  = 9999;    // no per-scan cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -341,6 +342,35 @@ async function processExits() {
 }
 
 // ── Main scan ────────────────────────────────────────────────────
+// ── LIVE CONFIG: re-read every scan so dashboard edits apply within one
+// cycle. No redeploy, no lost calibration ledger.
+let PAUSED = false;
+async function applyLiveConfig() {
+  try {
+    const c = await cfgStore.getConfig();
+    if (!c) return;
+    if (c.BET_SIZE      != null) { BET_SIZE = c.BET_SIZE; BET_MIN = c.BET_SIZE;
+                                   BET_LOW_USD = c.BET_SIZE; BET_HIGH_USD = c.BET_SIZE; }
+    if (c.MAX_CONC      != null) MAX_CONC      = c.MAX_CONC;
+    if (c.ENTRIES_SCAN  != null) ENTRIES_SCAN  = c.ENTRIES_SCAN;
+    if (c.FAV_MIN       != null) FAV_MIN       = c.FAV_MIN;
+    if (c.FAV_MAX       != null) FAV_MAX       = c.FAV_MAX;
+    if (c.PRIORITY_PX   != null) PRIORITY_PX   = c.PRIORITY_PX;
+    if (c.EDGE_MARGIN   != null) EDGE_MARGIN   = c.EDGE_MARGIN;
+    if (c.NEAR_LOW_TOL  != null) NEAR_LOW_TOL  = c.NEAR_LOW_TOL;
+    if (c.MIN_LIVE_MIN  != null) MIN_LIVE_MIN  = c.MIN_LIVE_MIN;
+    if (c.MAKER_MODE    != null) MAKER_MODE    = c.MAKER_MODE;
+    if (c.DCA_ENABLED   != null) DCA_ENABLED   = c.DCA_ENABLED;
+    if (c.DCA_DROP_PCT  != null) DCA_DROP_PCT  = c.DCA_DROP_PCT;
+    if (c.DCA_ADD_MULT  != null) DCA_ADD_MULT  = c.DCA_ADD_MULT;
+    if (c.TP_ENABLED    != null) TP_ENABLED    = c.TP_ENABLED;
+    if (c.TP_PRICE      != null) TP_PRICE      = c.TP_PRICE;
+    if (c.KILL_ENABLED  != null) KILL_ENABLED  = c.KILL_ENABLED;
+    if (c.KILL_FLOOR    != null) KILL_FLOOR    = c.KILL_FLOOR;
+    PAUSED = !!c.PAUSED;
+  } catch { /* keep last-known config */ }
+}
+
 let _scanning = false;
 let _lastScanEnd = 0;
 const SCAN_MIN_GAP_MS = 15_000; // changelog Jul 1: tiered rate limits (~60 req/min public) — space scans out
@@ -360,6 +390,7 @@ export async function runScanCycle() {
 }
 
 async function _runScanCycleInner() {
+  await applyLiveConfig();
   const stats = getStats();
   console.log(`\n── SPORTS SCAN ${new Date().toISOString()} ${DRY_RUN ? "[DRY]" : "[🔴 LIVE]"} ──`);
 
@@ -623,6 +654,11 @@ async function _runScanCycleInner() {
   // Fetch positions already held on Polymarket (prevents double-betting).
   // FAIL-OPEN: if this fails, proceed with what the bot's own state knows
   // (hasActiveBet) rather than silently skipping every entry.
+  if (PAUSED) {
+    console.log("  ⏸ PAUSED from dashboard — monitoring only, no new bets");
+    candidates = [];
+  }
+
   // ── CIRCUIT BREAKER CHECK (before any entry logic) ──
   if (KILL_ENABLED) try {
     const balObj = await getBuyingPower();
@@ -830,6 +866,25 @@ async function _runScanCycleInner() {
       continue;
     }
   }
+
+  try {
+    cfgStore.publishFunnel({
+      version: BOT_VERSION,
+      mode: DRY_RUN ? "PAPER" : "LIVE",
+      paused: PAUSED,
+      entries: betsPlaced,
+      band: [FAV_MIN, FAV_MAX],
+      betSize: BET_SIZE,
+      slots: { used: getAllActiveBets().length, max: MAX_CONC },
+      balance: +Number(balance).toFixed(2),
+      stages: [
+        { name: "markets",   count: markets.length },
+        { name: "priced",    count: bbosWithData.length },
+        { name: "candidates",count: candidates.length },
+        { name: "entries",   count: betsPlaced },
+      ],
+    });
+  } catch {}
 
   console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)}`);
 
