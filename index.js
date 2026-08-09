@@ -584,6 +584,16 @@ app.get("/api/stats", async (req, res) => {
   }
 });
 
+// Scalp lab — paper only, read-only, off unless SCALP_PAPER=true
+app.get("/api/scalp", async (req, res) => {
+  try {
+    const lab = await import("./bot-scalp.js");
+    res.json(lab.scalpStats());
+  } catch (e) {
+    res.json({ enabled: false, error: e.message });
+  }
+});
+
 app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
 
 app.use(express.static("public")); // after routes so JSON endpoints win
@@ -719,4 +729,13 @@ async function loadBots() {
   }, 3000);
 
   console.log("[INFO] Sports scanner started — crypto disabled (CA)");
+
+  // Scalp lab runs on its own interval, cannot place orders, and stays off
+  // unless SCALP_PAPER=true. A failure here never affects the live bot.
+  try {
+    const lab = await import("./bot-scalp.js");
+    lab.startScalpLab();
+  } catch (err) {
+    console.log("🧪 Scalp lab not loaded:", err.message);
+  }
 })();
