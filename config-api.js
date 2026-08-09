@@ -17,6 +17,7 @@
 import { SCHEMA, getConfig, setConfig, resetConfig, configStatus, getFunnel } from "./config.js";
 import { interpret, describe } from "./command.js";
 import { answer, looksLikeQuestion } from "./brain.js";
+import * as actions from "./actions.js";
 
 export function mountConfigApi(app, opts = {}) {
   // getHistory lets BetoBot answer questions about settled bets.
@@ -48,6 +49,14 @@ export function mountConfigApi(app, opts = {}) {
     const text = String(req.body?.text || "").slice(0, 400);
     if (!text.trim()) return res.json({ ok: false, message: "Type a change, e.g. \"flat bets to $5, slots to 5\"" });
     try {
+      // 1) Money-moving actions — armed first, executed only on confirmation.
+      const act = actions.detectAction(text);
+      if (act?.type === "confirm") return res.json(await actions.confirmPending());
+      if (act?.type === "cancel")  { actions.cancelPending(); return res.json({ ok: true, kind: "action", message: "Cancelled — nothing was done." }); }
+      const dryRun = process.env.DRY_RUN !== "false";
+      if (act?.type === "sell_all") return res.json(await actions.sellEverything({ alsoPause: act.alsoPause, dryRun }));
+      if (act?.type === "all_in")   return res.json(await actions.goAllIn(act.query, { dryRun }));
+
       // Questions get answered; everything else is treated as a setting change.
       if (looksLikeQuestion(text)) {
         let history = [];
