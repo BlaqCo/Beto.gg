@@ -26,15 +26,23 @@ export const SCALP = {
   SCAN_MS:     20_000,   // own cadence, offset from the live bot
   TRACK_MAX:   25,       // markets quoted per cycle (API-friendly)
 
+  // Only these leagues. Round-based esports overshoot most reliably.
+  // Empty array = every live market.
+  LEAGUES:     ["CS2", "VALORANT", "CSGO", "COUNTER-STRIKE"],
+
   PX_MIN:      0.45,     // scalp zone is wider than the value bot's band
   PX_MAX:      0.75,
-  DIP_MIN:     0.06,     // ≥6¢ below high-water to call it an overshoot
+  DIP_MIN:     0.09,     // deeper overshoot = more room to revert (was 6¢)
   DIP_WINDOW:  6 * 60_000, // the drop must be recent
 
   BANKROLL:    500,      // paper starting balance
   STAKE:       10,       // paper dollars per scalp
-  TAKE:        0.03,     // exit +3¢ (the bounce)
-  STOP:        0.08,     // exit −8¢ (the move was real)
+  // Risk/reward must respect the observed bounce rate: break-even is
+  // stop/(stop+take), so a 4¢/5¢ pair needs ~56% — under the 61% seen so far.
+  // The old 3¢/8¢ pair needed 73% and could never work.
+  TAKE:        0.04,     // exit +4¢
+  STOP:        0.05,     // exit −5¢
+  MAX_SPREAD:  0.03,     // wide books gap through stops — skip them
   MAX_HOLD_MS: 20 * 60_000,
   MAX_OPEN:    6,
 
@@ -81,6 +89,13 @@ export function scalpStats() {
       const loss = SCALP.STAKE * (SCALP.STOP / px) + feeFor(px, SCALP.STAKE);
       return +(loss / (win + loss) * 100).toFixed(1);
     })(),
+    byLeague: Object.values(closed.reduce((acc, t) => {
+      const k = t.league || "OTHER";
+      (acc[k] ||= { league: k, n: 0, bounce: 0, pnl: 0 });
+      acc[k].n++; if (t.reason === "bounce") acc[k].bounce++;
+      acc[k].pnl = +(acc[k].pnl + t.pnl).toFixed(2);
+      return acc;
+    }, {})).map(x => ({ ...x, rate: +(x.bounce / x.n * 100).toFixed(0) })),
     recent: closed.slice(-12).reverse(),
     settings: SCALP,
   };
@@ -95,7 +110,16 @@ export async function runScalpCycle() {
     lastRun = Date.now(); cycles++;
 
     const markets = await pm.fetchSportsMoneylines();   // shared 20s cache
-    const live = markets.filter(m => m.isLive);
+    const inLeague = m => {
+      if (!SCALP.LEAGUES.length) return true;
+      const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
+      return SCALP.LEAGUES.some(t => hay.includes(t));
+    };
+    const live = markets.filter(m => m.isLive && inLeague(m));
+    if (cycles % 10 === 1) {
+      const total = markets.filter(m => m.isLive).length;
+      console.log(`🧪 Scalp lab watching ${live.length}/${total} live markets (${SCALP.LEAGUES.join("/") || "all"})`);
+    }
     if (!live.length) return;
 
     // Quote the open positions first, then the most promising watch targets.
@@ -138,7 +162,7 @@ export async function runScalpCycle() {
       const gross  = shares * bid - p.stake;
       const fee    = feeFor(bid, shares * bid);            // exit is a taker sale
       const pnl    = +(gross - fee).toFixed(3);
-      closed.push({ slug, q: p.q, entry: p.entry, exit: bid, reason, pnl,
+      closed.push({ slug, q: p.q, league: p.league, entry: p.entry, exit: bid, reason, pnl,
                     heldMin: +((now - p.ts) / 60000).toFixed(1), maxBounce: p.maxBounce });
       open.delete(slug);
       const running_pnl = closed.reduce((a, t) => a + t.pnl, 0);
@@ -155,7 +179,7 @@ export async function runScalpCycle() {
       const q = quotes.get(slug); const m = bySlug.get(slug);
       if (!q || !m) continue;
       const ask = q.ask, bid = q.bid;
-      if (!(ask > 0 && bid > 0 && ask > bid && ask - bid <= 0.04)) continue;
+      if (!(ask > 0 && bid > 0 && ask > bid && ask - bid <= SCALP.MAX_SPREAD)) continue;
 
       const h = high.get(slug);
       if (!h || ask > h.px) { high.set(slug, { px: ask, ts: now }); continue; }
@@ -166,7 +190,8 @@ export async function runScalpCycle() {
       if (ask < SCALP.PX_MIN || ask > SCALP.PX_MAX) continue;
 
       // PAPER ENTRY — assumes a maker fill at the bid, so no entry fee.
-      open.set(slug, { q: m.question || slug, entry: bid, stake: SCALP.STAKE,
+      const lg = (SCALP.LEAGUES.find(t => `${m.slug} ${m.question}`.toUpperCase().includes(t)) || "OTHER");
+      open.set(slug, { q: m.question || slug, league: lg, entry: bid, stake: SCALP.STAKE,
                        ts: now, maxBounce: 0, minPx: bid, high: h.px });
       console.log(`🧪 SCALP ENTRY (paper) ${Math.round(bid*100)}¢ after −${Math.round(dip*100)}¢ ` +
                   `from ${Math.round(h.px*100)}¢ | ${(m.question || slug).slice(0, 34)}`);
@@ -190,7 +215,8 @@ export function startScalpLab() {
     console.log("🧪 Scalp lab OFF (set SCALP_PAPER=true to run it in paper mode)");
     return null;
   }
-  console.log(`🧪 SCALP LAB ON — paper bankroll $${SCALP.BANKROLL}, $${SCALP.STAKE}/trade, ` +
+  console.log(`🧪 SCALP LAB ON — ${SCALP.LEAGUES.length ? SCALP.LEAGUES.slice(0,2).join("/") : "all sports"}, ` +
+              `paper bankroll $${SCALP.BANKROLL}, $${SCALP.STAKE}/trade, ` +
               `dip ≥${Math.round(SCALP.DIP_MIN*100)}¢, take +${Math.round(SCALP.TAKE*100)}¢, ` +
               `stop −${Math.round(SCALP.STOP*100)}¢`);
   return setInterval(() => { runScalpCycle().catch(() => {}); }, SCALP.SCAN_MS);
