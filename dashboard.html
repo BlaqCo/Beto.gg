@@ -1,1178 +1,278 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>BETO.GG — Automated Prediction Markets</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BETO.GG — control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
-  --bg:#050a07;
-  --surface:#0a1209;
-  --surface2:#0f1a0d;
-  --border:rgba(46,255,123,0.10);
-  --border-bright:rgba(46,255,123,0.22);
-  --green:#2eff7b;
-  --green-dim:rgba(46,255,123,0.55);
-  --green-faint:rgba(46,255,123,0.06);
-  --green-glow:rgba(46,255,123,0.18);
-  --red:#ff4560;
-  --red-faint:rgba(255,69,96,0.08);
-  --yellow:#ffd600;
-  --blue:#58c4f6;
-  --text:#c8e8d4;
-  --text-dim:rgba(200,232,212,0.45);
-  --text-muted:rgba(200,232,212,0.22);
-  --mono:'IBM Plex Mono',monospace;
-  --sans:'Space Grotesk',sans-serif;
+  --ink:#080B14; --ink-2:#0E1422; --panel:#121A2B; --line:#1E2A42;
+  --text:#DCE5F5; --dim:#6B7C9E;
+  --cyan:#3DE0FF; --amber:#FFB63D; --up:#3DFF9E; --down:#FF4E6A;
 }
-
-html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:var(--sans)}
-
-/* ── Grid scanlines — very subtle ── */
-body::before{
-  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.07) 3px,rgba(0,0,0,0.07) 4px);
-}
-
-/* ── Ambient glow ── */
-.glow-orb{
-  position:fixed;width:600px;height:600px;border-radius:50%;
-  background:radial-gradient(ellipse,rgba(46,255,123,0.04),transparent 70%);
-  top:-200px;left:50%;transform:translateX(-50%);pointer-events:none;z-index:0;
-}
-
-/* ── Layout ── */
-.shell{
-  position:relative;z-index:1;
-  max-width:900px;margin:0 auto;
-  padding:20px 16px 48px;
-  display:flex;flex-direction:column;gap:16px;
-}
-
-/* ── Header ── */
-.hdr{
-  display:flex;align-items:center;gap:14px;
-  padding-bottom:16px;
-  border-bottom:1px solid var(--border);
-}
-.logo-mark{
-  font-family:var(--sans);font-weight:700;font-size:22px;
-  letter-spacing:2px;color:var(--green);
-  text-shadow:0 0 24px rgba(46,255,123,0.5);
-}
-.logo-mark span{opacity:0.3}
-.logo-sub{font-family:var(--mono);font-size:7px;letter-spacing:3px;color:var(--text-muted);margin-top:2px}
-.hdr-right{margin-left:auto;display:flex;align-items:center;gap:12px}
-.status-pill{
-  display:flex;align-items:center;gap:6px;
-  font-family:var(--mono);font-size:9px;letter-spacing:2px;
-  padding:5px 10px;border:1px solid var(--border-bright);
-  background:var(--green-faint);color:var(--green-dim);
-}
-.status-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s ease-in-out infinite}
-.status-dot.off{background:var(--red);box-shadow:0 0 6px var(--red);animation:none}
-.mode-badge{
-  font-family:var(--mono);font-size:8px;letter-spacing:2px;
-  padding:4px 9px;border:1px solid;
-}
-.mode-dry{border-color:rgba(255,214,0,0.3);color:var(--yellow);background:rgba(255,214,0,0.05)}
-.mode-live{border-color:rgba(255,69,96,0.4);color:var(--red);background:rgba(255,69,96,0.06)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-
-/* ── Hero metrics ── */
-.verdict{
-  display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
-  padding:14px 18px;margin:0 0 1px 0;
-  background:var(--panel);border:1px solid var(--border);
-  border-left:3px solid #5a6572;
-}
-.verdict.up{border-left-color:#2eff7b;box-shadow:inset 0 0 40px rgba(46,255,123,.04)}
-.verdict.down{border-left-color:#ff4560;box-shadow:inset 0 0 40px rgba(255,69,96,.04)}
-.verdict-word{font-family:var(--mono,monospace);font-weight:800;font-size:20px;letter-spacing:.14em}
-.verdict.up .verdict-word{color:#2eff7b;text-shadow:0 0 14px rgba(46,255,123,.45)}
-.verdict.down .verdict-word{color:#ff4560;text-shadow:0 0 14px rgba(255,69,96,.45)}
-.verdict-amt{font-family:var(--mono,monospace);font-weight:700;font-size:20px}
-.verdict.up .verdict-amt{color:#2eff7b}
-.verdict.down .verdict-amt{color:#ff4560}
-.verdict-detail{font-size:11px;color:#5a6572;letter-spacing:.06em;margin-left:auto}
-@media(max-width:640px){.verdict-detail{margin-left:0;width:100%}}
-.hero-metrics{
-  display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;
-  background:var(--border);
-  border:1px solid var(--border);
-  overflow:hidden;
-}
-.metric{
-  background:var(--surface);
-  padding:18px 16px;
-  position:relative;overflow:hidden;
-}
-.metric::before{
-  content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
-  background:linear-gradient(90deg,transparent,var(--green-glow),transparent);
-  opacity:0;transition:opacity .3s;
-}
-.metric:hover::before{opacity:1}
-.metric-label{
-  font-family:var(--mono);font-size:7px;letter-spacing:3px;
-  color:var(--text-muted);text-transform:uppercase;margin-bottom:10px;
-}
-.metric-value{
-  font-family:var(--sans);font-weight:700;font-size:clamp(20px,4vw,28px);
-  line-height:1;letter-spacing:-0.5px;
-}
-.metric-sub{font-family:var(--mono);font-size:7.5px;color:var(--text-dim);margin-top:6px}
-.c-green{color:var(--green);text-shadow:0 0 16px rgba(46,255,123,0.4)}
-.c-red{color:var(--red);text-shadow:0 0 12px rgba(255,69,96,0.35)}
-.c-blue{color:var(--blue)}
-.c-yellow{color:var(--yellow)}
-.c-neutral{color:var(--text)}
-
-/* ── P/L Curve ── */
-.chart-section{
-  border:1px solid var(--border);
-  background:var(--surface);
-}
-.section-hd{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:11px 14px;border-bottom:1px solid var(--border);
-  background:var(--surface2);
-}
-.section-title{font-family:var(--mono);font-size:8px;letter-spacing:3px;color:var(--green-dim);text-transform:uppercase}
-.section-meta{font-family:var(--mono);font-size:8px;color:var(--text-muted)}
-.chart-wrap{padding:16px 14px 12px;position:relative;height:160px}
-canvas#pnl-chart{width:100%;height:100%}
-.chart-zero{
-  position:absolute;bottom:12px;left:14px;right:14px;height:1px;
-  background:var(--border-bright);pointer-events:none;
-}
-.chart-zero-label{
-  position:absolute;left:2px;top:-10px;
-  font-family:var(--mono);font-size:7px;color:var(--text-muted);
-}
-
-/* ── Secondary metrics row ── */
-.secondary-metrics{
-  display:grid;grid-template-columns:repeat(5,1fr);gap:1px;
-  background:var(--border);border:1px solid var(--border);overflow:hidden;
-}
-.sm{background:var(--surface);padding:13px 12px}
-.sm-label{font-family:var(--mono);font-size:6.5px;letter-spacing:2.5px;color:var(--text-muted);text-transform:uppercase;margin-bottom:7px}
-.sm-value{font-family:var(--sans);font-weight:600;font-size:17px}
-.sm-sub{font-family:var(--mono);font-size:7px;color:var(--text-dim);margin-top:4px}
-
-/* ── Sport breakdown ── */
-.sport-bar-section{
-  border:1px solid var(--border);background:var(--surface);
-}
-.sport-rows{padding:12px 14px;display:flex;flex-direction:column;gap:9px}
-.sport-row{display:flex;align-items:center;gap:10px}
-.sport-tag{
-  font-family:var(--mono);font-size:7px;letter-spacing:1.5px;
-  padding:2px 7px;border:1px solid var(--border-bright);
-  color:var(--green-dim);background:var(--green-faint);
-  flex-shrink:0;width:64px;text-align:center;
-}
-.sport-bar-wrap{flex:1;background:rgba(46,255,123,0.05);height:8px;border-radius:0;overflow:hidden;position:relative}
-.sport-bar-fill{
-  height:100%;width:0%;
-  position:relative;
-  transition:width 0.9s cubic-bezier(.16,1,.3,1);
-  background:linear-gradient(90deg,rgba(46,255,123,0.6),#2eff7b);
-  box-shadow:0 0 8px rgba(46,255,123,0.5);
-}
-.sport-bar-fill::after{
-  content:'';
-  position:absolute;inset:0;
-  background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.28) 50%,transparent 100%);
-  background-size:200% 100%;
-  animation:bar-shimmer 1.8s ease-in-out infinite;
-  animation-play-state:paused;
-}
-.sport-bar-fill.shimmer::after{animation-play-state:running}
-.sport-bar-fill.losing{
-  background:linear-gradient(90deg,rgba(255,69,96,0.5),#ff4560);
-  box-shadow:0 0 8px rgba(255,69,96,0.4);
-}
-@keyframes bar-shimmer{
-  0%{background-position:200% 0}
-  100%{background-position:-200% 0}
-}
-.sport-stat{font-family:var(--mono);font-size:8px;color:var(--text-dim);flex-shrink:0;width:56px;text-align:right}
-.sport-pnl{font-family:var(--mono);font-size:8px;flex-shrink:0;width:54px;text-align:right}
-.sport-empty{font-family:var(--mono);font-size:8px;color:var(--text-muted);padding:4px 0;text-align:center}
-
-/* ── Active positions ── */
-.positions-section{border:1px solid var(--border);background:var(--surface)}
-.pos-list{max-height:280px;overflow-y:auto}
-.pos-list::-webkit-scrollbar{width:2px}
-.pos-list::-webkit-scrollbar-thumb{background:var(--border-bright)}
-
-.pos-card{
-  padding:12px 14px;border-bottom:1px solid var(--border);
-  transition:background .15s;
-}
-.pos-card:last-child{border-bottom:none}
-.pos-card:hover{background:var(--green-faint)}
-.pos-top{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px}
-.pos-q{font-size:9.5px;color:var(--text);flex:1;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.pos-pnl{font-family:var(--sans);font-weight:600;font-size:13px;flex-shrink:0;text-align:right}
-.pos-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.pos-tag{font-family:var(--mono);font-size:6px;letter-spacing:1px;padding:2px 5px;border:1px solid var(--border-bright);color:var(--green-dim);background:var(--green-faint)}
-.pos-pill{font-family:var(--mono);font-size:7px;color:var(--text-dim)}
-.pos-pill strong{color:var(--text);font-weight:500}
-.pos-progress{
-  margin-top:7px;height:3px;background:rgba(255,255,255,0.06);
-  overflow:hidden;position:relative;
-}
-.pos-progress-fill{
-  height:100%;position:absolute;top:0;left:0;
-  transition:width .5s cubic-bezier(.16,1,.3,1);
-}
-
-/* ── History ── */
-.hist-section{border:1px solid var(--border);background:var(--surface)}
-.hist-list{max-height:300px;overflow-y:auto}
-.hist-list::-webkit-scrollbar{width:2px}
-.hist-list::-webkit-scrollbar-thumb{background:var(--border-bright)}
-
-.hist-row{
-  display:grid;grid-template-columns:auto 1fr auto auto;
-  align-items:center;gap:10px;
-  padding:10px 14px;border-bottom:1px solid var(--border);
-  transition:background .12s;
-}
-.hist-row:last-child{border-bottom:none}
-.hist-row:hover{background:rgba(255,255,255,0.02)}
-.hist-result{
-  font-family:var(--mono);font-size:7.5px;letter-spacing:1px;
-  padding:2px 6px;border:1px solid;flex-shrink:0;
-}
-.hist-win{border-color:rgba(46,255,123,0.35);color:var(--green);background:rgba(46,255,123,0.06)}
-.hist-loss{border-color:rgba(255,69,96,0.35);color:var(--red);background:rgba(255,69,96,0.06)}
-.hist-q{font-size:8.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hist-pnl{font-family:var(--sans);font-weight:600;font-size:12px;text-align:right;flex-shrink:0}
-.hist-date{font-family:var(--mono);font-size:7px;color:var(--text-muted);flex-shrink:0}
-
-/* ── Log ── */
-.log-section{border:1px solid var(--border);background:var(--surface)}
-.log-body{
-  height:160px;overflow-y:auto;overflow-x:hidden;padding:6px 10px;
-  font-family:var(--mono);font-size:7px;line-height:1.6;
-}
-.log-body::-webkit-scrollbar{width:2px}
-.log-body::-webkit-scrollbar-thumb{background:var(--border-bright)}
-.log-line{display:flex;gap:6px;min-height:0;overflow:hidden}
-.log-ts{font-size:7px;color:var(--text-muted);flex-shrink:0;white-space:nowrap;opacity:0.5}
-.log-msg{font-size:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;flex:1;min-width:0}
-.log-ok{color:var(--green)}
-.log-err{color:var(--red)}
-.log-warn{color:var(--yellow)}
-.log-info{color:var(--text-dim)}
-
-/* ── Scanner preview ── */
-.scanner-section{border:1px solid var(--border);background:var(--surface)}
-.scanner-list{max-height:180px;overflow-y:auto;padding:0}
-.scanner-list::-webkit-scrollbar{width:2px}
-.scanner-list::-webkit-scrollbar-thumb{background:var(--border-bright)}
-.scanner-row{
-  display:flex;align-items:center;gap:10px;
-  padding:9px 14px;border-bottom:1px solid var(--border);
-}
-.scanner-row:last-child{border-bottom:none}
-.scanner-live{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-.scanner-live.active{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 1.8s infinite}
-.scanner-live.pre{background:var(--text-muted)}
-.scanner-q{font-size:8px;color:var(--text-dim);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.scanner-price{font-family:var(--mono);font-size:9px;color:var(--green);flex-shrink:0}
-.scanner-league{font-family:var(--mono);font-size:7px;color:var(--text-muted);flex-shrink:0;width:48px;text-align:right}
-.scanner-vol{font-family:var(--mono);font-size:7px;color:var(--text-muted);flex-shrink:0;width:44px;text-align:right}
-
-/* ── Footer ── */
-.ftr{
-  border-top:1px solid var(--border);padding-top:16px;
-  display:flex;align-items:center;justify-content:center;gap:20px;
-}
-.ftr-link{
-  display:inline-flex;align-items:center;gap:7px;text-decoration:none;
-  font-family:var(--mono);font-size:8px;letter-spacing:2px;
-  color:var(--green-dim);border:1px solid rgba(46,255,123,0.35);
-  padding:7px 14px;transition:all .3s;
-  box-shadow:0 0 10px rgba(46,255,123,0.25),0 0 24px rgba(46,255,123,0.1),inset 0 0 8px rgba(46,255,123,0.04);
-  animation:ftr-pulse 2.5s ease-in-out infinite;text-shadow:0 0 8px rgba(46,255,123,0.5);
-}
-.ftr-link:hover{color:var(--green);border-color:rgba(46,255,123,0.6);box-shadow:0 0 18px rgba(46,255,123,0.5),0 0 40px rgba(46,255,123,0.2),inset 0 0 12px rgba(46,255,123,0.08)}
-@keyframes ftr-pulse{0%,100%{box-shadow:0 0 8px rgba(46,255,123,0.2),0 0 18px rgba(46,255,123,0.08)}50%{box-shadow:0 0 16px rgba(46,255,123,0.38),0 0 32px rgba(46,255,123,0.16)}}
-.ftr-right{font-family:var(--mono);font-size:7px;color:var(--text-muted);letter-spacing:1.5px}
-
-/* ── Empty states ── */
-.empty{
-  font-family:var(--mono);font-size:8px;color:var(--text-muted);
-  padding:20px 14px;text-align:center;
-}
-
-/* ── Clock ── */
-.clock{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:1px}
-
-/* ── Responsive ── */
-@media(max-width:600px){
-  .hero-metrics{grid-template-columns:1fr 1fr;gap:1px}
-  .hero-metrics .metric:last-child{grid-column:span 2}
-  .secondary-metrics{grid-template-columns:1fr 1fr}
-  .secondary-metrics .sm:nth-child(5){grid-column:span 2}
-  .hist-row{grid-template-columns:auto 1fr auto}
-  .hist-date{display:none}
-  .hdr-right .clock{display:none}
-}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--text);
+  font-family:'JetBrains Mono',ui-monospace,monospace;-webkit-font-smoothing:antialiased}
+body{padding:14px 12px 40px;max-width:760px;margin:0 auto}
+h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.mark{width:34px;height:34px;border-radius:9px;flex:0 0 auto;
+  background:linear-gradient(145deg,var(--cyan),#1B6BFF);
+  display:grid;place-items:center;font-family:'Archivo';font-weight:900;color:#04121C;font-size:15px}
+.brand{font-family:'Archivo';font-weight:900;font-size:19px;letter-spacing:-.02em;line-height:1}
+.brand span{color:var(--cyan)}
+.sub{font-size:10px;color:var(--dim);letter-spacing:.18em;margin-top:3px}
+.state{margin-left:auto;text-align:right}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.12em;
+  padding:5px 9px;border-radius:99px;border:1px solid var(--line);background:var(--ink-2)}
+.dot{width:6px;height:6px;border-radius:99px;background:var(--up)}
+.dot.live{animation:beat 1.6s ease-in-out infinite}
+@keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+.ver{font-size:9px;color:var(--dim);margin-top:5px;letter-spacing:.1em}
+.verdict{border:1px solid var(--line);border-radius:14px;background:
+  radial-gradient(120% 140% at 0% 0%,rgba(61,224,255,.09),transparent 60%),var(--panel);
+  padding:16px 16px 14px;margin-bottom:12px;position:relative;overflow:hidden}
+.verdict::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(180deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px)}
+.vlabel{font-size:10px;letter-spacing:.2em;color:var(--dim)}
+.vrow{display:flex;align-items:flex-end;gap:12px;margin-top:6px}
+.vnum{font-family:'Archivo';font-weight:900;font-size:40px;line-height:.95;letter-spacing:-.03em}
+.vnum.up{color:var(--up)}.vnum.down{color:var(--down)}
+.vside{font-size:11px;color:var(--dim);padding-bottom:6px;line-height:1.5}
+.vside b{color:var(--text);font-weight:500}
+.funnel{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:14px;margin-bottom:12px}
+.fhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.ftitle{font-family:'Archivo';font-weight:700;font-size:12px;letter-spacing:.14em}
+.fmeta{font-size:10px;color:var(--dim)}
+.stage{margin-bottom:9px}
+.srow{display:flex;align-items:baseline;justify-content:space-between;font-size:11px;margin-bottom:4px}
+.sname{color:var(--dim);letter-spacing:.1em}
+.scount{font-weight:700;font-variant-numeric:tabular-nums}
+.track{height:6px;border-radius:99px;background:#0A1120;overflow:hidden}
+.fill{height:100%;border-radius:99px;transition:width .6s cubic-bezier(.22,1,.36,1);
+  background:linear-gradient(90deg,#1B4E7A,var(--cyan))}
+.stage:nth-child(3) .fill{background:linear-gradient(90deg,#7A5A1B,var(--amber))}
+.stage:nth-child(4) .fill{background:linear-gradient(90deg,#1B7A4E,var(--up))}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.cell{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:10px 9px}
+.clabel{font-size:9px;letter-spacing:.14em;color:var(--dim)}
+.cval{font-family:'Archivo';font-weight:700;font-size:17px;margin-top:3px;font-variant-numeric:tabular-nums}
+.cval.up{color:var(--up)}.cval.down{color:var(--down)}
+.csub{font-size:9px;color:var(--dim);margin-top:1px}
+@media(max-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
+.panel{border:1px solid var(--line);border-radius:14px;background:var(--panel);margin-bottom:12px;overflow:hidden}
+.phead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.phead h3{font-family:'Archivo';font-weight:700;font-size:12px;letter-spacing:.14em}
+.saved{margin-left:auto;font-size:10px;color:var(--up);opacity:0;transition:opacity .3s}
+.saved.show{opacity:1}
+.group{padding:10px 14px;border-bottom:1px solid var(--line)}
+.group:last-child{border-bottom:0}
+.gname{font-size:9px;letter-spacing:.18em;color:var(--cyan);margin-bottom:8px}
+.field{display:flex;align-items:center;gap:10px;padding:5px 0}
+.fname{font-size:11px;color:var(--dim);flex:1}
+input[type=number]{width:82px;background:#0A1120;border:1px solid var(--line);color:var(--text);
+  font-family:'JetBrains Mono';font-size:12px;padding:6px 8px;border-radius:8px;text-align:right}
+input[type=number]:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 2px rgba(61,224,255,.15)}
+.unit{font-size:10px;color:var(--dim);width:26px}
+.toggle{width:40px;height:22px;border-radius:99px;background:#0A1120;border:1px solid var(--line);
+  position:relative;cursor:pointer;transition:background .2s;flex:0 0 auto}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:99px;
+  background:var(--dim);transition:transform .2s,background .2s}
+.toggle[aria-checked=true]{background:rgba(61,224,255,.18);border-color:var(--cyan)}
+.toggle[aria-checked=true]::after{transform:translateX(18px);background:var(--cyan)}
+.toggle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.actions{display:flex;gap:8px;padding:12px 14px}
+button{flex:1;font-family:'Archivo';font-weight:700;font-size:11px;letter-spacing:.12em;
+  padding:11px;border-radius:10px;border:1px solid var(--line);background:#0A1120;color:var(--text);cursor:pointer}
+button.primary{background:var(--cyan);color:#04121C;border-color:var(--cyan)}
+button:active{transform:translateY(1px)}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:11px}
+.row:last-child{border-bottom:0}
+.q{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.px{color:var(--dim);font-variant-numeric:tabular-nums}
+.pl{font-weight:700;font-variant-numeric:tabular-nums;text-align:right;min-width:62px}
+.pl.up{color:var(--up)}.pl.down{color:var(--down)}
+.empty{padding:20px 14px;font-size:11px;color:var(--dim);text-align:center}
+#log{max-height:220px;overflow:auto;font-size:10px;line-height:1.75;padding:10px 14px;color:var(--dim)}
+#log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#log .ok{color:var(--up)}#log .err{color:var(--down)}#log .warn{color:var(--amber)}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<div class="glow-orb"></div>
-<div class="shell">
-
-<!-- HEADER -->
-<header class="hdr">
-  <img id="site-logo" src="data:image/png;base64,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" width="44" height="44" alt="" style="flex-shrink:0;filter:drop-shadow(0 0 8px rgba(46,255,123,0.95)) drop-shadow(0 0 20px rgba(46,255,123,0.5)) drop-shadow(0 0 40px rgba(46,255,123,0.25))">
+<div class="top">
+  <div class="mark">B</div>
   <div>
-    <div class="logo-mark">BETO<span>.</span>GG</div>
-    <div class="logo-sub">AUTOMATED PREDICTION MARKETS</div>
+    <div class="brand">BETO<span>.GG</span></div>
+    <div class="sub">PREDICTION ENGINE</div>
   </div>
-  <div class="hdr-right">
-    <div class="clock" id="clock">—</div>
-    <div class="status-pill">
-      <div class="status-dot" id="sdot"></div>
-      <span id="stxt">CONNECTING</span>
+  <div class="state">
+    <span class="pill"><span class="dot live" id="dot"></span><span id="mode">CONNECTING</span></span>
+    <div class="ver" id="ver">—</div>
+  </div>
+</div>
+
+<div class="verdict">
+  <div class="vlabel">NET POSITION</div>
+  <div class="vrow">
+    <div class="vnum" id="net">—</div>
+    <div class="vside">
+      <div>realized <b id="realized">—</b></div>
+      <div>open <b id="open">—</b></div>
     </div>
   </div>
-</header>
-
-<!-- NET VERDICT — the one-glance answer: up or down? -->
-<div class="verdict" id="verdict">
-  <span class="verdict-word" id="verdict-word">—</span>
-  <span class="verdict-amt" id="verdict-amt"></span>
-  <span class="verdict-detail" id="verdict-detail">calculating…</span>
 </div>
 
-<!-- HERO METRICS -->
-<div class="hero-metrics">
-  <div class="metric">
-    <div class="metric-label">Balance</div>
-    <div class="metric-value c-blue" id="balance">$—</div>
-    <div class="metric-sub" id="bal-sub">buying power</div>
+<div class="funnel">
+  <div class="fhead">
+    <div class="ftitle">SCAN PIPELINE</div>
+    <div class="fmeta" id="fmeta">waiting for scan…</div>
   </div>
-  <div class="metric">
-    <div class="metric-label">All-Time P/L</div>
-    <div class="metric-value c-neutral" id="pnl">+$0.00</div>
-    <div class="metric-sub" id="pnl-sub">settled bets</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Open P/L</div>
-    <div class="metric-value c-neutral" id="open-pnl">$0.00</div>
-    <div class="metric-sub" id="open-sub">0 positions</div>
-  </div>
+  <div id="stages"></div>
 </div>
 
-<!-- P/L CURVE -->
-<div class="chart-section">
-  <div class="section-hd">
-    <span class="section-title">P/L Curve</span>
-    <span class="section-meta" id="chart-meta">settled bets</span>
-  </div>
-  <div class="chart-wrap" id="chart-wrap" style="position:relative;padding:0;height:180px;overflow:hidden">
-    <canvas id="pnl-chart" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
-    <div id="chart-vline"     style="display:none;position:absolute;top:0;bottom:0;width:1px;background:rgba(46,255,123,0.45);pointer-events:none;z-index:5"></div>
-    <div id="chart-dot-cross" style="display:none;position:absolute;width:8px;height:8px;border-radius:50%;border:2px solid #2eff7b;background:#050a07;transform:translate(-50%,-50%);pointer-events:none;z-index:6"></div>
-    <div id="chart-badge"     style="display:none;position:absolute;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;padding:3px 8px;background:rgba(5,10,7,0.92);border:1px solid rgba(46,255,123,0.4);color:#2eff7b;white-space:nowrap;pointer-events:none;z-index:7;letter-spacing:1px"></div>
+<div class="grid">
+  <div class="cell"><div class="clabel">BALANCE</div><div class="cval" id="bal">—</div><div class="csub" id="balsub">cash</div></div>
+  <div class="cell"><div class="clabel">WIN RATE</div><div class="cval" id="wr">—</div><div class="csub" id="wrsub">settled</div></div>
+  <div class="cell"><div class="clabel">OPEN</div><div class="cval" id="slots">—</div><div class="csub">positions</div></div>
+  <div class="cell"><div class="clabel">VOLUME</div><div class="cval" id="vol">—</div><div class="csub" id="volsub">lifetime</div></div>
+</div>
+
+<div class="panel">
+  <div class="phead"><h3>LIVE SETTINGS</h3><span class="saved" id="saved">saved · live next scan</span></div>
+  <div id="controls"><div class="empty">loading settings…</div></div>
+  <div class="actions">
+    <button id="reset">RESET</button>
+    <button class="primary" id="apply">APPLY</button>
   </div>
 </div>
 
-<!-- SECONDARY METRICS -->
-<div class="secondary-metrics">
-  <div class="sm">
-    <div class="sm-label">Win Rate</div>
-    <div class="sm-value c-green" id="win-rate">—%</div>
-    <div class="sm-sub" id="win-rate-sub">of settled</div>
-  </div>
-  <div class="sm">
-    <div class="sm-label">Record</div>
-    <div class="sm-value c-neutral" id="record">—W / —L</div>
-    <div class="sm-sub">all time</div>
-  </div>
-  <div class="sm">
-    <div class="sm-label">Active</div>
-    <div class="sm-value c-neutral" id="active-ct">0</div>
-    <div class="sm-sub">open positions</div>
-  </div>
-  <div class="sm">
-    <div class="sm-label">Avg Bet</div>
-    <div class="sm-value c-neutral" id="avg-bet">$—</div>
-    <div class="sm-sub" id="avg-bet-sub">per fill</div>
-  </div>
-  <div class="sm">
-    <div class="sm-label">Volume</div>
-    <div class="sm-value c-neutral" id="volume">$—</div>
-    <div class="sm-sub" id="volume-sub">lifetime wagered</div>
-  </div>
+<div class="panel">
+  <div class="phead"><h3>OPEN POSITIONS</h3></div>
+  <div id="positions"><div class="empty">none open</div></div>
 </div>
 
-<!-- SPORT BREAKDOWN -->
-<div class="sport-bar-section">
-  <div class="section-hd">
-    <span class="section-title">Performance by Sport</span>
-    <span class="section-meta" id="sport-meta">win rate</span>
-  </div>
-  <div class="sport-rows" id="sport-rows">
-    <div class="sport-empty">> NO DATA YET</div>
-  </div>
+<div class="panel">
+  <div class="phead"><h3>ACTIVITY</h3></div>
+  <div id="log"></div>
 </div>
-
-<!-- MARKET SCANNER -->
-<div class="scanner-section">
-  <div class="section-hd">
-    <span class="section-title">Market Scanner</span>
-    <span class="section-meta" id="scanner-meta">evaluating now</span>
-  </div>
-  <div class="scanner-list" id="scanner-list">
-    <div class="empty">> SCANNER INITIALIZING_</div>
-  </div>
-</div>
-
-<!-- ACTIVE POSITIONS -->
-<div class="positions-section">
-  <div class="section-hd">
-    <span class="section-title">Active Positions</span>
-    <span class="section-meta" id="pos-meta">0 open</span>
-  </div>
-  <div class="pos-list" id="pos-list">
-    <div class="empty">> NO ACTIVE POSITIONS_</div>
-  </div>
-</div>
-
-<!-- BET HISTORY -->
-<div class="hist-section">
-  <div class="section-hd">
-    <span class="section-title">Settled Bets</span>
-    <span class="section-meta" id="hist-meta">all time</span>
-  </div>
-  <div class="hist-list" id="hist-list">
-    <div class="empty">> NO HISTORY YET_</div>
-  </div>
-</div>
-
-<!-- SYSTEM LOG -->
-<div class="log-section">
-  <div class="section-hd">
-    <span class="section-title">System Log</span>
-    <span class="section-meta" id="log-meta">—</span>
-  </div>
-  <div class="log-body" id="log-body">
-    <div class="log-line"><span class="log-ts">[BOOT]</span><span class="log-info">> BETO.GG INITIALIZING...</span></div>
-  </div>
-</div>
-
-<!-- FOOTER -->
-<footer class="ftr">
-  <a class="ftr-link" href="https://x.com/0xblaq?s=11" target="_blank" rel="noopener">
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-    BUILT BY 0XBLAQ
-  </a>
-</footer>
-
-</div><!-- /shell -->
 
 <script>
-'use strict';
+const $ = id => document.getElementById(id);
+const money = n => (Number(n)>=0?'+':'−')+'$'+Math.abs(Number(n)||0).toFixed(2);
+const cls = n => Number(n)>0?'up':Number(n)<0?'down':'';
+let schema = {}, config = {}, dirty = {};
 
-function tick(){
-  const now = new Date();
-  document.getElementById('clock').textContent =
-    now.toISOString().replace('T',' ').slice(0,19)+' UTC';
-}
-tick(); setInterval(tick,1000);
-
-// ── Helpers ──────────────────────────────────────────────────────
-const $  = id => document.getElementById(id);
-const pnlCls = n => n>0?'c-green':n<0?'c-red':'c-neutral';
-const fmt$ = n => '$'+Math.abs(parseFloat(n)||0).toFixed(2);
-const fmtPnl = n => { const v=parseFloat(n)||0; return (v>=0?'+':'−')+fmt$(v); };
-const pnlArrow = n => { const v=parseFloat(n)||0; return v>0?'▲ ':v<0?'▼ ':''; };
-const cleanQ = q => (q||'').replace(/^\[.*?\]\s*/,'');
-
-// ── Net verdict: settled + open, in plain English ───────────────
-function renderVerdict(){
-  const settled = window._settledPnl, open = window._openPnl;
-  if (settled === undefined && open === undefined) return;
-  const net = (settled||0) + (open||0);
-  const el = $('verdict'); if(!el) return;
-  el.className = 'verdict ' + (net>0.005?'up':net<-0.005?'down':'');
-  $('verdict-word').textContent = net>0.005?'▲ UP':net<-0.005?'▼ DOWN':'● FLAT';
-  $('verdict-amt').textContent  = fmtPnl(net);
-  const parts = [];
-  if (settled !== undefined) parts.push('settled '+fmtPnl(settled));
-  if (open    !== undefined) parts.push('open '+fmtPnl(open));
-  $('verdict-detail').textContent = 'net of ' + parts.join(' · ');
-}
-
-function sport(q){
-  const s=(q||'').toLowerCase();
-  if(/yankees|astros|red sox|dodgers|cubs|mets|braves|padres|mariners|pirates|reds|orioles|rays|twins|royals|rangers|angels|athletics|tigers|nationals|cardinals|phillies|brewers|guardians|diamondbacks|white sox|blue jays/.test(s))return'MLB';
-  if(/celtics|lakers|warriors|heat|nuggets|bucks|suns|nets|knicks|raptors|76ers|bulls|pistons|hawks|pacers|hornets|magic|wizards|cavs|thunder|blazers|jazz|spurs|rockets|grizzlies|pelicans|kings|wolves|clippers|mavs/.test(s))return'NBA';
-  if(/wnba|sky\b|aces\b|liberty|fever|dream\b|sparks|storm\b|sun\b|lynx|wings\b|mercury|mystics|valkyries|firebirds/.test(s))return'WNBA';
-  if(/world cup|fc |united|real madrid|barcelona|arsenal|chelsea|liverpool|man city|tottenham|juventus|ac milan|inter |roma|atletico|dortmund|bayern|psg/.test(s))return'SOCCER';
-  if(/atp|wta|wimbledon|french open|us open|djokovic|alcaraz|sinner|medvedev|zverev|nadal|federer|murray|osaka|swiatek/.test(s))return'TENNIS';
-  if(/cs2|valorant|dota|esport/.test(s))return'ESPORTS';
-  return'SPORT';
-}
-
-// ── P/L Chart — animated reveal ──────────────────────────────────
-let chartData   = [];
-let _chartAnim  = null;   // current rAF handle
-let _dotAnim    = null;   // pulsing dot rAF handle
-let _dotT       = 0;      // time for dot pulse
-
-function buildChartData(history){
-  const settled = (history||[]).filter(h=>h._source==='state'||(h.won!==undefined&&h.realizedPnl!==undefined));
-  let running = 0;
-  return settled
-    .sort((a,b)=>(a.createTime||'')>(b.createTime||'')?1:-1)
-    .map(h=>{
-      running += parseFloat(h.realizedPnl||h.pnl||0);
-      return running;
-    });
-}
-
-// Shared coordinate helpers — built once per drawChart call
-function makeCoords(data, W, H){
-  const min   = Math.min(0, ...data);
-  const max   = Math.max(0, ...data);
-  const range = Math.max(max - min, 0.01);
-  const pad   = range * 0.18;
-  const span  = range + pad * 2;
-  const toX   = i  => (i  / (data.length - 1)) * W;
-  const toY   = v  => H  - ((v - min + pad) / span) * H;
-  const zeroY = toY(0);
-  return { min, max, toX, toY, zeroY };
-}
-
-// Draw the static "background" layer: grid, zero-line, axes labels
-function drawBackground(ctx, W, H, coords){
-  const { zeroY } = coords;
-
-  // Subtle horizontal grid lines
-  ctx.strokeStyle = 'rgba(46,255,123,0.05)';
-  ctx.lineWidth   = 1;
-  for(let i=0; i<=4; i++){
-    const y = (H / 4) * i;
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
-  }
-
-  // Zero line — dashed, slightly brighter
-  ctx.strokeStyle = 'rgba(46,255,123,0.20)';
-  ctx.lineWidth   = 1;
-  ctx.setLineDash([3,5]);
-  ctx.beginPath(); ctx.moveTo(0,zeroY); ctx.lineTo(W,zeroY); ctx.stroke();
-  ctx.setLineDash([]);
-}
-
-// Draw the curve up to progress ∈ [0,1]
-function drawCurve(ctx, data, W, H, coords, progress){
-  const { toX, toY, zeroY } = coords;
-  const lastIdx  = (data.length - 1) * Math.min(progress, 1);
-  const fullSteps = Math.floor(lastIdx);
-  const frac      = lastIdx - fullSteps;          // sub-step fractional position
-
-  if(fullSteps < 1) return { lx: toX(0), ly: toY(data[0]) };
-
-  const lastVal = data[data.length - 1];
-  const lineCol = lastVal >= 0 ? '#2eff7b' : '#ff4560';
-
-  // ── Fill ──────────────────────────────────────────────────────
-  // Clip to the drawn portion so fill doesn't bleed ahead of the line
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, toX(lastIdx), H);
-  ctx.clip();
-
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  if(lastVal >= 0){
-    grad.addColorStop(0, 'rgba(46,255,123,0.22)');
-    grad.addColorStop(1, 'rgba(46,255,123,0.00)');
-  } else {
-    grad.addColorStop(0, 'rgba(255,69,96,0.00)');
-    grad.addColorStop(1, 'rgba(255,69,96,0.18)');
-  }
-
-  ctx.beginPath();
-  ctx.moveTo(toX(0), zeroY);
-  ctx.lineTo(toX(0), toY(data[0]));
-  for(let i=1; i<=fullSteps; i++){
-    const x0=toX(i-1), y0=toY(data[i-1]);
-    const x1=toX(i),   y1=toY(data[i]);
-    const cx=(x0+x1)/2;
-    ctx.bezierCurveTo(cx,y0,cx,y1,x1,y1);
-  }
-  // fractional segment
-  if(frac > 0 && fullSteps < data.length - 1){
-    const xi  = toX(fullSteps), yi  = toY(data[fullSteps]);
-    const xi1 = toX(fullSteps+1), yi1 = toY(data[fullSteps+1]);
-    const cx  = (xi + xi1) / 2;
-    const tx  = xi + (xi1 - xi) * frac;
-    const ty  = yi + (yi1 - yi) * frac; // rough linear for fill edge
-    ctx.bezierCurveTo(cx,yi,cx,ty,tx,ty);
-  }
-  ctx.lineTo(toX(lastIdx), zeroY);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.restore();
-
-  // ── Line ──────────────────────────────────────────────────────
-  ctx.beginPath();
-  ctx.moveTo(toX(0), toY(data[0]));
-  for(let i=1; i<=fullSteps; i++){
-    const x0=toX(i-1), y0=toY(data[i-1]);
-    const x1=toX(i),   y1=toY(data[i]);
-    const cx=(x0+x1)/2;
-    ctx.bezierCurveTo(cx,y0,cx,y1,x1,y1);
-  }
-  let lx = toX(fullSteps);
-  let ly = toY(data[fullSteps]);
-  if(frac > 0 && fullSteps < data.length - 1){
-    const xi  = toX(fullSteps),   yi  = toY(data[fullSteps]);
-    const xi1 = toX(fullSteps+1), yi1 = toY(data[fullSteps+1]);
-    const cx  = (xi + xi1) / 2;
-    lx = xi + (xi1 - xi) * frac;
-    ly = yi + (yi1 - yi) * frac;
-    ctx.bezierCurveTo(cx,yi,cx,ly,lx,ly);
-  }
-  ctx.strokeStyle = lineCol;
-  ctx.lineWidth   = 1.8;
-  ctx.stroke();
-
-  // ── Scan-line head — vertical glow at the drawing front ──────
-  const headGrad = ctx.createLinearGradient(lx - 28, 0, lx + 4, 0);
-  headGrad.addColorStop(0, 'rgba(46,255,123,0.00)');
-  headGrad.addColorStop(1, lastVal>=0?'rgba(46,255,123,0.30)':'rgba(255,69,96,0.30)');
-  ctx.fillStyle = headGrad;
-  ctx.fillRect(lx - 28, 0, 32, H);
-
-  return { lx, ly };
-}
-
-// Pulsing dot — runs its own rAF loop after reveal finishes
-function startDotPulse(canvas, lx, ly, color){
-  if(_dotAnim){ cancelAnimationFrame(_dotAnim); _dotAnim=null; }
-  _dotT = 0;
-  const dpr = window.devicePixelRatio||1;
-
-  function pulse(ts){
-    _dotT = ts;
-    const ctx2 = canvas.getContext('2d');
-    const W = canvas.width / dpr;
-    const H = canvas.height / dpr;
-
-    // Erase just the dot area so we don't repaint the whole chart
-    // Use a small square so we never leave artifacts
-    const r = 8;
-    ctx2.clearRect(lx - r, ly - r, r*2, r*2);
-
-    // Repaint that patch from the off-screen buffer
-    if(canvas._bg){
-      ctx2.drawImage(canvas._bg,
-        (lx-r)*dpr, (ly-r)*dpr, r*2*dpr, r*2*dpr,
-         lx-r,       ly-r,       r*2,     r*2);
-    }
-
-    // Outer ring — slow breathe
-    const breathe = 0.5 + 0.5 * Math.sin(ts * 0.003);
-    const ringR   = 4 + breathe * 4;
-    ctx2.beginPath();
-    ctx2.arc(lx, ly, ringR, 0, Math.PI*2);
-    ctx2.strokeStyle = color.replace(')', `,${0.15 + breathe*0.15})`).replace('rgb','rgba');
-    ctx2.lineWidth   = 1;
-    ctx2.stroke();
-
-    // Core dot
-    ctx2.beginPath();
-    ctx2.arc(lx, ly, 3, 0, Math.PI*2);
-    ctx2.fillStyle = color;
-    ctx2.fill();
-
-    // Inner bright core
-    ctx2.beginPath();
-    ctx2.arc(lx, ly, 1.2, 0, Math.PI*2);
-    ctx2.fillStyle = '#fff';
-    ctx2.globalAlpha = 0.7;
-    ctx2.fill();
-    ctx2.globalAlpha = 1;
-
-    _dotAnim = requestAnimationFrame(pulse);
-  }
-  _dotAnim = requestAnimationFrame(pulse);
-}
-
-function drawChart(data){
-  // Cancel any in-progress animation
-  if(_chartAnim){ cancelAnimationFrame(_chartAnim); _chartAnim=null; }
-  if(_dotAnim){   cancelAnimationFrame(_dotAnim);   _dotAnim=null; }
-
-  const canvas = $('pnl-chart');
-  const wrap   = canvas.parentElement;
-  const dpr    = window.devicePixelRatio || 1;
-  const W      = wrap.clientWidth;
-  const H      = wrap.clientHeight;
-
-  canvas.width         = W * dpr;
-  canvas.height        = H * dpr;
-  canvas.style.width   = W + 'px';
-  canvas.style.height  = H + 'px';
-
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  // Empty state
-  if(!data || data.length < 2){
-    ctx.font      = '8px IBM Plex Mono';
-    ctx.fillStyle = 'rgba(200,232,212,0.20)';
-    ctx.textAlign = 'center';
-    ctx.fillText('> AWAITING FIRST SETTLED BET_', W/2, H/2);
-    ctx.strokeStyle = 'rgba(46,255,123,0.10)';
-    ctx.lineWidth   = 1;
-    ctx.setLineDash([3,5]);
-    ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
-    ctx.setLineDash([]);
-    return;
-  }
-
-  const coords   = makeCoords(data, W, H);
-  const lastVal  = data[data.length - 1];
-  const lineCol  = lastVal >= 0 ? '#2eff7b' : '#ff4560';
-  const DURATION = Math.min(1400, 600 + data.length * 60); // faster for few points
-
-  // Draw static background once into an offscreen canvas so the dot
-  // pulse loop can composite on top without full redraws
-  const bg = document.createElement('canvas');
-  bg.width = W * dpr; bg.height = H * dpr;
-  const bgCtx = bg.getContext('2d');
-  bgCtx.scale(dpr, dpr);
-  drawBackground(bgCtx, W, H, coords);
-  canvas._bg = bg;  // stash reference for dot pulse
-
-  let startTs = null;
-
-  function frame(ts){
-    if(!startTs) startTs = ts;
-    const elapsed  = ts - startTs;
-    // Ease-out cubic
-    const t        = Math.min(elapsed / DURATION, 1);
-    const progress = 1 - Math.pow(1 - t, 3);
-
-    ctx.clearRect(0, 0, W, H);
-
-    // Background (grid + zero line)
-    ctx.drawImage(bg, 0, 0, W*dpr, H*dpr, 0, 0, W, H);
-
-    // Animated curve up to current progress
-    const { lx, ly } = drawCurve(ctx, data, W, H, coords, progress);
-
-    if(t < 1){
-      _chartAnim = requestAnimationFrame(frame);
-    } else {
-      // Reveal complete — bake the full static chart into the bg canvas
-      // so the dot-pulse erases+restores cleanly
-      const bg2 = document.createElement('canvas');
-      bg2.width = W*dpr; bg2.height = H*dpr;
-      const ctx2 = bg2.getContext('2d');
-      ctx2.scale(dpr, dpr);
-      drawBackground(ctx2, W, H, coords);
-      drawCurve(ctx2, data, W, H, coords, 1);
-      canvas._bg = bg2;
-
-      // Hand off to pulsing dot
-      startDotPulse(canvas, lx, ly, lineCol);
-    }
-  }
-
-  _chartAnim = requestAnimationFrame(frame);
-
-  $('chart-meta').textContent =
-    pnlArrow(lastVal) + fmtPnl(lastVal) + ' cumulative (settled)';
-  $('chart-meta').className = 'section-meta ' + pnlCls(lastVal);
-}
-
-// ── Sport breakdown ───────────────────────────────────────────────
-function renderSportBreakdown(history){
-  const rows = $('sport-rows');
-  const settled = (history||[]).filter(h=>h._source==='state'||h.won!==undefined);
-  if(!settled.length){ rows.innerHTML='<div class="sport-empty">> NO DATA YET</div>'; return; }
-
-  const map = {};
-  for(const h of settled){
-    const q = cleanQ(h.question||h.marketSlug||'');
-    const sp = (h.category||sport(q)).slice(0,8);
-    if(!map[sp]) map[sp]={w:0,l:0,pnl:0};
-    if(h.won){ map[sp].w++; } else { map[sp].l++; }
-    map[sp].pnl += parseFloat(h.realizedPnl||h.pnl||0);
-  }
-
-  const entries = Object.entries(map).sort((a,b)=>(b[1].w+b[1].l)-(a[1].w+a[1].l));
-  const maxGames = Math.max(...entries.map(([,v])=>v.w+v.l));
-
-  // Render bars at width:0 first — we'll animate them in after paint
-  rows.innerHTML = entries.map(([sp,v], i)=>{
-    const total  = v.w + v.l;
-    const barPct = total > 0 ? (total / maxGames) * 100 : 0;
-    const winning = v.pnl >= 0;
-    const pnlStr  = fmtPnl(v.pnl);
-    return `<div class="sport-row">
-      <span class="sport-tag">${sp}</span>
-      <div class="sport-bar-wrap">
-        <div class="sport-bar-fill${winning?'':' losing'}"
-             data-target="${barPct.toFixed(2)}"
-             style="width:0%"></div>
-      </div>
-      <span class="sport-stat">${v.w}W/${v.l}L</span>
-      <span class="sport-pnl ${pnlCls(v.pnl)}">${pnlStr}</span>
-    </div>`;
-  }).join('');
-
-  // Stagger each bar's fill: 60ms apart, then shimmer once filled
-  rows.querySelectorAll('.sport-bar-fill').forEach((el, i) => {
-    const target = el.dataset.target;
-    setTimeout(() => {
-      el.style.width = target + '%';
-      // Start shimmer slightly after the fill transition ends (~900ms)
-      setTimeout(() => el.classList.add('shimmer'), 950);
-    }, i * 80);
-  });
-
-  const total = settled.length;
-  const wins  = settled.filter(h=>h.won).length;
-  $('sport-meta').textContent = total > 0 ? Math.round(wins/total*100)+'% overall win rate' : '';
-}
-
-// ── Scanner ───────────────────────────────────────────────────────
-function renderScanner(markets){
-  const list = $('scanner-list');
-  if(!markets||!markets.length){
-    list.innerHTML='<div class="empty">> AWAITING MARKET DATA_</div>'; return;
-  }
-  $('scanner-meta').textContent = markets.length+' candidates evaluated';
-  list.innerHTML = markets.slice(0,20).map(m=>{
-    const q   = cleanQ(m.question||'');
-    const est = m.est||m.bestAsk||0;
-    const inRange = est>=0.60&&est<=0.70;
-    const isLive  = !!m.isLive;
-    const league  = (m.league||sport(q)).toUpperCase().slice(0,7);
-    const vol = m.volume24h? '$'+(m.volume24h/1000).toFixed(0)+'k' : '—';
-    return `<div class="scanner-row">
-      <div class="scanner-live ${isLive?'active':'pre'}"></div>
-      <span class="scanner-q">${isLive?'🔴 ':''}>  ${q.slice(0,55)}</span>
-      <span class="scanner-price ${inRange?'c-green':'c-neutral'}">${est?(est*100).toFixed(0)+'¢':'—'}</span>
-      <span class="scanner-league">${league}</span>
-    </div>`;
-  }).join('');
-}
-
-// ── Active Positions ──────────────────────────────────────────────
-function renderPositions(positions){
-  $('pos-meta').textContent = positions.length+' open';
-  $('active-ct').textContent = positions.length;
-  $('open-sub').textContent  = positions.length+' positions';
-
-  if(!positions.length){
-    $('pos-list').innerHTML='<div class="empty">> NO ACTIVE POSITIONS_</div>'; return;
-  }
-
-  const liveSum = positions.reduce((a,p)=>a+parseFloat(p.openPnl||0),0);
-  const lpEl=$('open-pnl');
-  lpEl.textContent=pnlArrow(liveSum)+fmtPnl(liveSum);
-  lpEl.className='metric-value '+pnlCls(liveSum);
-  const osEl=$('open-sub'); if(osEl) osEl.textContent='unrealized · '+positions.length+' open position'+(positions.length===1?'':'s');
-  window._openPnl = liveSum; renderVerdict();
-
-  $('pos-list').innerHTML = positions.map(p=>{
-    const rawQ = p.question||p.slug||'Unknown';
-    const q    = cleanQ(rawQ).slice(0,60)||rawQ.slice(0,60);
-    const tag  = (p.category||sport(rawQ)).toUpperCase().slice(0,6);
-    const bet  = parseFloat(p.costBasis||0);
-    const prob = p.avgPrice!=null&&p.avgPrice>0?parseFloat(p.avgPrice):null;
-    const payout = prob&&bet?bet/prob:null;
-    const bid  = parseFloat(p.currentBid||0);
-    const openPnl = parseFloat(p.openPnl||0);
-    const ts   = (p.placedAt||'').slice(11,16)||'—';
-
-    // Progress bar: 0=entry price, 1=1.00 (full win)
-    const progressPct = prob&&bid?Math.max(0,Math.min(100,((bid-prob)/(1-prob))*100)):0;
-    const barColor    = openPnl>=0?'#2eff7b':'#ff4560';
-
-    return `<div class="pos-card">
-      <div class="pos-top">
-        <div class="pos-q">> ${q}</div>
-        <div class="pos-pnl ${pnlCls(openPnl)}">${fmtPnl(openPnl)}</div>
-      </div>
-      <div class="pos-meta">
-        <span class="pos-tag">${tag}</span>
-        <span class="pos-pill">bet <strong>${bet?'$'+bet.toFixed(2):'—'}</strong></span>
-        <span class="pos-pill">@ <strong>${prob?Math.round(prob*100)+'¢':'—'}</strong></span>
-        <span class="pos-pill">now <strong>${bid?Math.round(bid*100)+'¢':'—'}</strong></span>
-        ${payout?`<span class="pos-pill">win→<strong class="c-blue">$${payout.toFixed(2)}</strong></span>`:''}
-        <span class="pos-pill" style="margin-left:auto;color:var(--text-muted)">${ts}</span>
-      </div>
-      ${prob?`<div class="pos-progress"><div class="pos-progress-fill" style="width:${progressPct}%;background:${barColor}"></div></div>`:''}
-    </div>`;
-  }).join('');
-}
-
-// ── Bet History ───────────────────────────────────────────────────
-function renderHistory(data){
-  const settled = (data||[]).filter(a=>{
-    if(a._source==='state') return true;
-    if(a._type==='resolution') return true;
-    return false;
-  }).sort((a,b)=>(b.createTime||'')>(a.createTime||'')?1:-1);
-
-  $('hist-meta').textContent = settled.length+' settled';
-  if(!settled.length){
-    $('hist-list').innerHTML='<div class="empty">> NO HISTORY YET_</div>'; return;
-  }
-
-  $('hist-list').innerHTML = settled.slice(0,50).map(a=>{
-    const q    = cleanQ(a.question||a.marketSlug||'Unknown');
-    const pl   = parseFloat(a.realizedPnl||a.pnl||0);
-    const won  = a.won??(pl>0);
-    const date = (a.createTime||a.closedAt||'').slice(5,10)||'—';
-    return `<div class="hist-row">
-      <span class="hist-result ${won?'hist-win':'hist-loss'}">${won?'WIN':'LOSS'}</span>
-      <span class="hist-q">> ${q.slice(0,60)}</span>
-      <span class="hist-pnl ${pnlCls(pl)}">${fmtPnl(pl)}</span>
-      <span class="hist-date">${date}</span>
-    </div>`;
-  }).join('');
-}
-
-// ── Log ───────────────────────────────────────────────────────────
-function renderLog(logs){
-  const el=$('log-body');
-  if(!logs||!logs.length) return;
-  el.innerHTML=[...logs].reverse().map(l=>{
-    const ts=(l.ts||'').slice(11,19)||'--:--:--';
-    const raw='> '+(l.msg||'').slice(0,160);
-    // Strip emoji — they force full-size fallback fonts regardless of CSS font-size
-    const msg=raw.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]/gu,'').replace(/\s{2,}/g,' ').trim();
-    const cls='log-'+(l.type||'info');
-    return `<div class="log-line"><span class="log-ts">[${ts}]</span><span class="${cls}">${msg}</span></div>`;
-  }).join('');
-  $('log-meta').textContent=logs.length+' lines';
-  el.scrollTop=el.scrollHeight;
-}
-
-// ── Main poll ─────────────────────────────────────────────────────
-let _histHash = '';
-let _chartDrawn = false;
-
-async function refresh(){
+async function loadConfig(){
   try{
-    const [rootR, logR, posR, histR, statsR, mktR] = await Promise.allSettled([
-      fetch('/').then(r=>r.json()).catch(()=>null),
-      fetch('/log').then(r=>r.json()),
-      fetch('/api/positions').then(r=>r.json()),
-      fetch('/api/history').then(r=>r.json()),
-      fetch('/api/stats').then(r=>r.json()),
-      fetch('/markets').then(r=>r.json()),
-    ]);
+    const d = await (await fetch('/api/config')).json();
+    schema = d.schema||{}; config = d.config||{};
+    const groups = {};
+    for(const [k,s] of Object.entries(schema)){ (groups[s.group||'Other'] = groups[s.group||'Other'] || []).push([k,s]); }
+    $('controls').innerHTML = Object.entries(groups).map(function(pair){
+      const g = pair[0], items = pair[1];
+      return '<div class="group"><div class="gname">'+g.toUpperCase()+'</div>'+
+        items.map(function(it){
+          const k = it[0], s = it[1], v = config[k];
+          if(s.bool) return '<div class="field"><div class="fname">'+s.label+'</div>'+
+            '<div class="toggle" role="switch" tabindex="0" aria-checked="'+(!!v)+'" data-key="'+k+'"></div></div>';
+          const shown = s.pct ? Math.round(v*100) : v;
+          return '<div class="field"><div class="fname">'+s.label+'</div>'+
+            '<input type="number" data-key="'+k+'" data-pct="'+(!!s.pct)+'" value="'+shown+'" step="'+(s.pct?1:(s.step||1))+'">'+
+            '<span class="unit">'+(s.unit||'')+'</span></div>';
+        }).join('')+'</div>';
+    }).join('');
+    $('controls').querySelectorAll('.toggle').forEach(function(t){
+      const flip = function(){ const on = t.getAttribute('aria-checked')!=='true';
+        t.setAttribute('aria-checked', on); dirty[t.dataset.key]=on; };
+      t.onclick = flip;
+      t.onkeydown = function(e){ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); flip(); } };
+    });
+    $('controls').querySelectorAll('input').forEach(function(i){
+      i.oninput = function(){ const raw = parseFloat(i.value);
+        if(isFinite(raw)) dirty[i.dataset.key] = i.dataset.pct==='true' ? raw/100 : raw; };
+    });
+  }catch(e){ $('controls').innerHTML = '<div class="empty">settings unavailable — is mountConfigApi(app) added to index.js?</div>'; }
+}
+$('apply').onclick = async function(){
+  if(!Object.keys(dirty).length) return;
+  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dirty)});
+  dirty = {}; $('saved').classList.add('show');
+  setTimeout(function(){ $('saved').classList.remove('show'); }, 2200);
+  loadConfig();
+};
+$('reset').onclick = async function(){ await fetch('/api/config/reset',{method:'POST'}); dirty={}; loadConfig(); };
 
-    $('sdot').className   = 'status-dot';
-    $('stxt').textContent = 'ONLINE';
-
-    // Root — try / first, it may return JSON with stats nested inside
-    const root = (rootR.status==='fulfilled' && rootR.value && typeof rootR.value==='object') ? rootR.value : {};
-    // Stats — either from /api/stats or nested in root
-    const st = (statsR.status==='fulfilled' && statsR.value && typeof statsR.value==='object')
-      ? statsR.value
-      : (root.stats || root);
-
-    const isDry = root.settings?.dryRun !== false;
-
-    // Balance
-    const bp = isDry
-      ? parseFloat(st.dryBalance ?? root.stats?.dryBalance ?? 0)
-      : parseFloat(st.liveBalance ?? st.buyingPower ?? root.stats?.liveBalance ?? root.stats?.buyingPower ?? 0);
-    const balEl = $('balance');
-    balEl.textContent = '$'+bp.toFixed(2);
-    balEl.className   = 'metric-value '+(isDry?'c-yellow':'c-blue');
-    $('bal-sub').textContent = isDry?'paper balance':'polymarket';
-
-    // P/L
-    const totalPnl = parseFloat(st.totalPnl ?? st.pnl ?? 0);
-    const pnlEl = $('pnl');
-    pnlEl.textContent = pnlArrow(totalPnl)+fmtPnl(totalPnl);
-    pnlEl.className   = 'metric-value '+pnlCls(totalPnl);
-    $('pnl-sub').textContent = 'realized · settled bets';
-    window._settledPnl = totalPnl; renderVerdict();
-
-    // Record + win rate
-    const w=st.wins||0, l=st.losses||0, total=w+l;
-    $('record').textContent       = w+'W / '+l+'L';
-    $('win-rate').textContent     = total>0?Math.round(w/total*100)+'%':'—%';
-    $('win-rate').className       = 'sm-value '+(total>0&&w/total>=0.5?'c-green':'c-neutral');
-    $('win-rate-sub').textContent = 'of '+total+' settled';
-
-    // Avg bet
-    const waged   = parseFloat(st.totalWagered ?? st.wagered ?? 0);
-    const fills   = parseInt(st.totalBets ?? 0);
-    const avgBet  = fills>0 ? waged/fills : 0;
-    $('avg-bet').textContent  = fills>0?'$'+avgBet.toFixed(2):'$—';
-    const abs=$('avg-bet-sub'); if(abs) abs.textContent = 'per fill';
-    const vEl=$('volume');
-    if(vEl){
-      vEl.textContent = waged>=10000 ? '$'+(waged/1000).toFixed(1)+'k' : '$'+waged.toFixed(0);
-      const vs=$('volume-sub'); if(vs) vs.textContent = fills+' fills · lifetime';
-    }
-
-    // Open P/L — from positions or stats
-    const openPnl = parseFloat(st.openPnl ?? 0);
-    const openEl  = $('open-pnl');
-    openEl.textContent = pnlArrow(openPnl)+fmtPnl(openPnl);
-    openEl.className   = 'metric-value '+pnlCls(openPnl);
-    if(window._openPnl===undefined){ window._openPnl = openPnl; renderVerdict(); }
-
-    // Positions
-    const positions = posR.status==='fulfilled'?(posR.value||[]):[];
-    renderPositions(positions);
-
-    // History
-    const hist  = histR.status==='fulfilled'?(histR.value||[]):[];
-    const hHash = hist.length+'-'+(hist[0]?.createTime||'')+(hist[hist.length-1]?.createTime||'');
-    if(hHash!==_histHash){
-      _histHash=hHash;
-      renderHistory(hist);
-      renderSportBreakdown(hist);
-      const newData=buildChartData(hist);
-      const newSig=newData.join(',');
-      if(!_chartDrawn||newSig!==chartData.join(',')){
-        chartData=newData;_chartDrawn=true;drawChart(chartData);
-      }
-    }
-
-    if(mktR.status==='fulfilled') renderScanner(mktR.value||[]);
-    if(logR.status==='fulfilled') renderLog((logR.value||[]).slice(0,100));
-
-  } catch(e){
-    $('sdot').className   = 'status-dot off';
-    $('stxt').textContent = 'OFFLINE';
-  }
+async function loadFunnel(){
+  try{
+    const f = await (await fetch('/api/funnel')).json();
+    if(!f.stages || !f.stages.length){ $('fmeta').textContent='waiting for scan…'; return; }
+    const max = Math.max.apply(null, f.stages.map(function(s){return s.count;}).concat([1]));
+    $('stages').innerHTML = f.stages.map(function(s){
+      return '<div class="stage"><div class="srow"><span class="sname">'+s.name.toUpperCase()+
+        '</span><span class="scount">'+s.count+'</span></div>'+
+        '<div class="track"><div class="fill" style="width:'+Math.max(2,(s.count/max)*100)+'%"></div></div></div>';
+    }).join('');
+    const age = f.ageMs==null ? '—' : (f.ageMs<60000 ? Math.round(f.ageMs/1000)+'s ago' : Math.round(f.ageMs/60000)+'m ago');
+    const band = f.band ? Math.round(f.band[0]*100)+'–'+Math.round(f.band[1]*100)+'¢' : '';
+    $('fmeta').textContent = band+' · $'+f.betSize+' · '+age;
+    $('ver').textContent = (f.version||'')+(f.paused?' · PAUSED':'');
+    $('mode').textContent = f.paused ? 'PAUSED' : (f.mode||'—');
+    $('dot').style.background = f.paused ? 'var(--amber)' : 'var(--up)';
+    if(f.slots) $('slots').textContent = f.slots.used + (f.slots.max<9999 ? '/'+f.slots.max : '');
+  }catch(e){}
 }
 
-// On resize: redraw chart in place without re-animating
-window.addEventListener('resize',()=>{
-  if(!chartData.length) return;
-  if(_chartAnim){ cancelAnimationFrame(_chartAnim); _chartAnim=null; }
-  if(_dotAnim){   cancelAnimationFrame(_dotAnim);   _dotAnim=null; }
-  const canvas=$('pnl-chart');
-  const wrap=canvas.parentElement;
-  const dpr=window.devicePixelRatio||1;
-  const W=wrap.clientWidth;
-  const H=wrap.clientHeight;
-  canvas.width=W*dpr; canvas.height=H*dpr;
-  canvas.style.width=W+'px'; canvas.style.height=H+'px';
-  const ctx=canvas.getContext('2d');
-  ctx.scale(dpr,dpr);
-  const coords=makeCoords(chartData,W,H);
-  const bg=document.createElement('canvas');
-  bg.width=W*dpr; bg.height=H*dpr;
-  const bgCtx=bg.getContext('2d');
-  bgCtx.scale(dpr,dpr);
-  drawBackground(bgCtx,W,H,coords);
-  canvas._bg=bg;
-  ctx.drawImage(bg,0,0,W*dpr,H*dpr,0,0,W,H);
-  const {lx,ly}=drawCurve(ctx,chartData,W,H,coords,1);
-  const lastVal=chartData[chartData.length-1];
-  startDotPulse(canvas,lx,ly,lastVal>=0?'#2eff7b':'#ff4560');
-});
+async function loadStats(){
+  try{
+    const d = await (await fetch('/')).json();
+    const s = d.stats||{};
+    const realized = parseFloat(s.pnl||0), open = parseFloat(s.openPnl||0), net = realized+open;
+    $('net').textContent = money(net); $('net').className = 'vnum '+cls(net);
+    $('realized').textContent = money(realized);
+    $('open').textContent = money(open);
+    const bal = (s.liveBalance!=null) ? s.liveBalance : s.dryBalance;
+    if(bal!=null){ $('bal').textContent = '$'+Number(bal).toFixed(2);
+      $('balsub').textContent = (d.settings&&d.settings.dryRun) ? 'paper' : 'cash'; }
+    $('wr').textContent = s.winRate||'—';
+    $('wrsub').textContent = (s.wins||0)+'W / '+(s.losses||0)+'L';
+  }catch(e){}
+  try{
+    const st = await (await fetch('/api/stats')).json();
+    const w = Number(st.totalWagered||0);
+    $('vol').textContent = w>=10000 ? '$'+(w/1000).toFixed(1)+'k' : '$'+w.toFixed(0);
+    $('volsub').textContent = (st.totalBets||0)+' fills';
+  }catch(e){}
+}
 
-// ── Chart drag-to-inspect ─────────────────────────────────────────
-(function(){
-  const wrap  = $('chart-wrap');
-  const vline = $('chart-vline');
-  const badge = $('chart-badge');
-  const dot   = $('chart-dot-cross');
-  let active = false;
+async function loadPositions(){
+  try{
+    const p = await (await fetch('/api/positions')).json();
+    if(!p.length){ $('positions').innerHTML='<div class="empty">none open</div>'; return; }
+    $('positions').innerHTML = p.slice(0,20).map(function(x){
+      const pl = x.openPnl;
+      return '<div class="row"><span class="q">'+String(x.question||x.slug||'').slice(0,44)+'</span>'+
+        '<span class="px">'+(x.avgPrice?Math.round(x.avgPrice*100)+'¢':'—')+'→'+
+        (x.currentBid?Math.round(x.currentBid*100)+'¢':'—')+'</span>'+
+        '<span class="pl '+cls(pl)+'">'+(pl==null?'—':money(pl))+'</span></div>';
+    }).join('');
+  }catch(e){}
+}
 
-  // Make sure overflow is hidden so nothing bleeds outside
-  wrap.style.overflow = 'hidden';
-  wrap.style.position = 'relative';
+async function loadLog(){
+  try{
+    const l = await (await fetch('/log')).json();
+    $('log').innerHTML = l.slice(0,60).map(function(e){
+      return '<div class="'+(e.type||'')+'">'+String(e.msg||'').replace(/</g,'&lt;')+'</div>';
+    }).join('');
+  }catch(e){}
+}
 
-  function getX(e){
-    const r  = wrap.getBoundingClientRect();
-    const cx = e.touches ? e.touches[0].clientX : e.clientX;
-    return Math.max(0, Math.min(cx - r.left, r.width - 1));
-  }
-
-  function show(e){
-    if(!chartData || chartData.length < 2) return;
-    e.preventDefault();
-
-    const r  = wrap.getBoundingClientRect();
-    const W  = r.width;
-    const H  = r.height;
-    if(W < 2 || H < 2) return;
-
-    const coords = makeCoords(chartData, W, H);
-    const rx  = getX(e);
-    const idx = Math.round((rx / W) * (chartData.length - 1));
-    const ci  = Math.max(0, Math.min(idx, chartData.length - 1));
-    const val = chartData[ci];
-    const px  = Math.max(0, Math.min(coords.toX(ci), W - 1));
-    const py  = Math.max(0, Math.min(coords.toY(val), H - 1));
-    const col = val >= 0 ? '#2eff7b' : '#ff4560';
-    const colA = val >= 0 ? 'rgba(46,255,123,0.45)' : 'rgba(255,69,96,0.45)';
-
-    vline.style.display    = 'block';
-    vline.style.left       = px + 'px';
-    vline.style.background = colA;
-
-    dot.style.display     = 'block';
-    dot.style.left        = px + 'px';
-    dot.style.top         = py + 'px';
-    dot.style.borderColor = col;
-
-    const sign = val >= 0 ? '+' : '';
-    badge.textContent      = sign + '$' + Math.abs(val).toFixed(2);
-    badge.style.display    = 'block';
-    badge.style.color      = col;
-    badge.style.borderColor = colA;
-
-    // Force a paint so offsetWidth is accurate
-    const bW = 72;
-    const margin = 10;
-    const bX = px + margin + bW > W ? px - bW - margin : px + margin;
-    const bY = Math.max(4, Math.min(py - 14, H - 24));
-    badge.style.left = Math.max(0, Math.min(bX, W - bW)) + 'px';
-    badge.style.top  = bY + 'px';
-  }
-
-  function hide(){
-    active = false;
-    vline.style.display = badge.style.display = dot.style.display = 'none';
-  }
-
-  wrap.addEventListener('touchstart',  e=>{ active=true; show(e); }, {passive:false});
-  wrap.addEventListener('touchmove',   e=>{ if(active) show(e); },  {passive:false});
-  wrap.addEventListener('touchend',    hide);
-  wrap.addEventListener('touchcancel', hide);
-  wrap.addEventListener('mousedown',   e=>{ active=true; show(e); });
-  wrap.addEventListener('mousemove',   e=>{ if(active) show(e); });
-  wrap.addEventListener('mouseup',     hide);
-  wrap.addEventListener('mouseleave',  hide);
-  wrap.style.cursor = 'crosshair';
-})();
-
-// ── Boot — START POLLING ──────────────────────────────────────────
-refresh();
-setInterval(refresh, 4000);
+function tick(){ loadFunnel(); loadStats(); loadPositions(); loadLog(); }
+loadConfig(); tick(); setInterval(tick, 4000);
 </script>
 </body>
 </html>
