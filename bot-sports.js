@@ -111,7 +111,8 @@ let MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qu
 // TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
 // caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
 // SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
-const LEAGUE_FOCUS  = [];      // ALL sports/markets allowed
+let LEAGUE_FOCUS  = [];      // whitelist — empty means all sports allowed
+let LEAGUE_BLOCK  = [];      // blacklist — always excluded
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
 // their opener is the structural edge condition.
@@ -367,6 +368,8 @@ async function applyLiveConfig() {
     if (c.TP_PRICE      != null) TP_PRICE      = c.TP_PRICE;
     if (c.KILL_ENABLED  != null) KILL_ENABLED  = c.KILL_ENABLED;
     if (c.KILL_FLOOR    != null) KILL_FLOOR    = c.KILL_FLOOR;
+    if (Array.isArray(c.LEAGUE_FOCUS)) LEAGUE_FOCUS = c.LEAGUE_FOCUS;
+    if (Array.isArray(c.LEAGUE_BLOCK)) LEAGUE_BLOCK = c.LEAGUE_BLOCK;
     PAUSED = !!c.PAUSED;
   } catch { /* keep last-known config */ }
 }
@@ -536,14 +539,16 @@ async function _runScanCycleInner() {
       const prev = openerRef.get(m.slug);
       if (prev == null || m.px > prev) openerRef.set(m.slug, m.px);
     }
-    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0, nearLowRejects = 0;
+    let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0, nearLowRejects = 0, sportRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
       .filter(m => {
-        if (!LEAGUE_FOCUS.length) return true;
         const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
-        return LEAGUE_FOCUS.some(t => hay.includes(t));
+        if (LEAGUE_BLOCK.length && LEAGUE_BLOCK.some(t => hay.includes(t))) { sportRejects++; return false; }
+        if (!LEAGUE_FOCUS.length) return true;
+        if (LEAGUE_FOCUS.some(t => hay.includes(t))) return true;
+        sportRejects++; return false;
       })
       .filter(m => {
         // LIVE ONLY: never enter before a match starts.
@@ -623,6 +628,7 @@ async function _runScanCycleInner() {
         if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
         return a.px - b.px;                                // tie-break: cheaper
       });
+    if (sportRejects)   console.log(`  🚷 Sport filter: ${sportRejects} excluded by your sport settings`);
     if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
     if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
     if (nearLowRejects) console.log(`  📍 Not near low: ${nearLowRejects} above trailing low +${(NEAR_LOW_TOL*100).toFixed(0)}¢`);
@@ -909,6 +915,7 @@ async function _runScanCycleInner() {
         noDiscount:typeof discountRejects !== "undefined" ? discountRejects : 0,
         notNearLow:typeof nearLowRejects  !== "undefined" ? nearLowRejects  : 0,
         thinBook:  typeof thinRejects     !== "undefined" ? thinRejects     : 0,
+        sportFilter: typeof sportRejects  !== "undefined" ? sportRejects    : 0,
       },
     });
   } catch {}
