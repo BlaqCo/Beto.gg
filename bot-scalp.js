@@ -26,13 +26,26 @@ export const SCALP = {
   SCAN_MS:     20_000,   // own cadence, offset from the live bot
   TRACK_MAX:   30,       // markets quoted per cycle (API-friendly)
 
+  // ── STRATEGY MODE ──────────────────────────────────────────────
+  // "revert"   — buy dips expecting a bounce.  TESTED: 41.9% over 93 trades
+  //              against a 68.9% break-even. Comprehensively disproven.
+  // "momentum" — the inverse, which the same data supports: 51 of 93 moves
+  //              CONTINUED. Buy strength, not weakness.
+  MODE:        "momentum",
+
   // Only these leagues. Round-based esports overshoot most reliably.
   // Empty array = every live market.
   LEAGUES:     ["CS2", "CSGO", "COUNTER-STRIKE", "VALORANT", "LOL", "LEAGUE-OF-LEGENDS", "LCK", "LEC", "LPL", "LCS"],
 
   PX_MIN:      0.35,     // wider zone = more candidates
   PX_MAX:      0.85,
-  DIP_MIN:     0.06,     // loosened: catch more setups (was 9¢)
+  DIP_MIN:     0.06,     // revert mode: dip size that triggers a buy
+  RISE_MIN:    0.05,     // momentum mode: rise from the recent low that triggers
+  // Momentum wants the opposite exit shape from mean reversion: let the move
+  // run, cut fast. With fees, +7¢/−4¢ needs ~45% — beatable if continuation
+  // really is the 58% side.
+  TAKE_MOM:    0.07,
+  STOP_MOM:    0.04,
   DIP_WINDOW:  10 * 60_000, // loosened from 6 min
 
   BANKROLL:    500,      // paper starting balance
@@ -54,6 +67,7 @@ const feeFor = (px, usd) => SCALP.FEE_COEF * (usd / Math.max(px, 0.01)) * Math.m
 
 // ── isolated state ───────────────────────────────────────────────
 const high   = new Map();  // slug → { px, ts }
+const low    = new Map();  // slug → { px, ts }  (momentum baseline)
 const cooldown = new Map();  // slug → timestamp we last exited it
 const reEntries = new Map(); // slug → how many times we've traded it
 const open   = new Map();  // slug → paper position
@@ -86,12 +100,21 @@ export function scalpStats() {
       timeout: closed.filter(t => t.reason === "timeout").length,
     },
     avgBounce: dips.length ? +(dips.reduce((a, b) => a + b, 0) / dips.length * 100).toFixed(2) : null,
+    mode: SCALP.MODE,
     breakEvenNeeded: (() => {
-      const px = (SCALP.PX_MIN + SCALP.PX_MAX) / 2;
-      const win = SCALP.STAKE * (SCALP.TAKE / px) - feeFor(px, SCALP.STAKE);
-      const loss = SCALP.STAKE * (SCALP.STOP / px) + feeFor(px, SCALP.STAKE);
+      const px = 0.60;
+      const take = SCALP.MODE === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
+      const stop = SCALP.MODE === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
+      const win = SCALP.STAKE * (take / px) - feeFor(px, SCALP.STAKE);
+      const loss = SCALP.STAKE * (stop / px) + feeFor(px, SCALP.STAKE);
       return +(loss / (win + loss) * 100).toFixed(1);
     })(),
+    // Excursion data — how far trades actually run in each direction.
+    // This is what tells us the right take/stop next time.
+    avgMaxFavourable: (() => { const a = closed.map(t => t.maxBounce).filter(x => x != null);
+      return a.length ? +(a.reduce((x, y) => x + y, 0) / a.length * 100).toFixed(2) : null; })(),
+    avgMaxAdverse: (() => { const a = closed.map(t => t.maxAdverse).filter(x => x != null);
+      return a.length ? +(a.reduce((x, y) => x + y, 0) / a.length * 100).toFixed(2) : null; })(),
     repeatMarkets: [...reEntries.entries()].filter(([, n]) => n > 1).length,
     maxTradesOneMarket: reEntries.size ? Math.max(...reEntries.values()) : 0,
     byLeague: Object.values(closed.reduce((acc, t) => {
@@ -154,12 +177,15 @@ export async function runScalpCycle() {
       const q = quotes.get(slug);
       if (!q) continue;
       const bid = q.bid;                                   // what we'd sell into
-      p.maxBounce = Math.max(p.maxBounce ?? 0, bid - p.entry);
+      p.maxBounce  = Math.max(p.maxBounce ?? 0, bid - p.entry);   // best excursion
+      p.maxAdverse = Math.min(p.maxAdverse ?? 0, bid - p.entry);   // worst excursion
       p.minPx = Math.min(p.minPx ?? bid, bid);
 
+      const take = p.mode === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
+      const stop = p.mode === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
       let reason = null;
-      if (bid >= p.entry + SCALP.TAKE)          reason = "bounce";
-      else if (bid <= p.entry - SCALP.STOP)     reason = "break";
+      if (bid >= p.entry + take)                reason = "bounce";
+      else if (bid <= p.entry - stop)           reason = "break";
       else if (now - p.ts >= SCALP.MAX_HOLD_MS) reason = "timeout";
       if (!reason) continue;
 
@@ -167,8 +193,10 @@ export async function runScalpCycle() {
       const gross  = shares * bid - p.stake;
       const fee    = feeFor(bid, shares * bid);            // exit is a taker sale
       const pnl    = +(gross - fee).toFixed(3);
-      closed.push({ slug, q: p.q, league: p.league, entry: p.entry, exit: bid, reason, pnl,
-                    heldMin: +((now - p.ts) / 60000).toFixed(1), maxBounce: p.maxBounce });
+      closed.push({ slug, q: p.q, league: p.league, mode: p.mode || SCALP.MODE,
+                    entry: p.entry, exit: bid, reason, pnl,
+                    heldMin: +((now - p.ts) / 60000).toFixed(1),
+                    maxBounce: p.maxBounce, maxAdverse: p.maxAdverse });
       open.delete(slug);
       // RE-ENTRY: re-baseline this market's high-water at the exit price and
       // restart its clock, so a fresh dip later is a fresh trade. Without this
@@ -195,6 +223,27 @@ export async function runScalpCycle() {
       const cd = cooldown.get(slug);
       if (cd && now - cd < SCALP.COOLDOWN_MS) continue;   // just exited — let it settle
 
+      const l = low.get(slug);
+      if (!l || ask < l.px) low.set(slug, { px: ask, ts: now });
+
+      // ── MOMENTUM: buy continuation off a recent low ──
+      if (SCALP.MODE === "momentum") {
+        const base = low.get(slug);
+        if (!base) continue;
+        const rise = ask - base.px;
+        const freshLow = now - base.ts <= SCALP.DIP_WINDOW;
+        if (!freshLow || rise < SCALP.RISE_MIN) continue;
+        if (ask < SCALP.PX_MIN || ask > SCALP.PX_MAX) continue;
+        const lg2 = (SCALP.LEAGUES.find(t => `${m.slug} ${m.question}`.toUpperCase().includes(t)) || "OTHER");
+        open.set(slug, { q: m.question || slug, league: lg2, entry: bid, stake: SCALP.STAKE,
+                         ts: now, maxBounce: 0, maxAdverse: 0, minPx: bid, high: ask, mode: "momentum" });
+        low.set(slug, { px: ask, ts: now });     // re-baseline so it doesn't retrigger
+        const n2 = (reEntries.get(slug) || 0) + 1;
+        console.log(`🧪 MOMENTUM ENTRY (paper) ${Math.round(bid*100)}¢ after +${Math.round(rise*100)}¢ ` +
+                    `off ${Math.round(base.px*100)}¢${n2 > 1 ? ` [#${n2}]` : ""} | ${(m.question || slug).slice(0, 32)}`);
+        continue;
+      }
+
       const h = high.get(slug);
       if (!h || ask > h.px) { high.set(slug, { px: ask, ts: now }); continue; }
       // Price is back near its high → restart the freshness clock so the
@@ -217,9 +266,10 @@ export async function runScalpCycle() {
 
     if (cycles % 10 === 0) {
       const s = scalpStats();
-      console.log(`🧪 SCALP LAB: equity $${s.equity} (start $${s.bankrollStart}, ${s.roiPct >= 0 ? "+" : ""}${s.roiPct}%) | ` +
+      console.log(`🧪 SCALP LAB [${s.mode}]: equity $${s.equity} (start $${s.bankrollStart}, ${s.roiPct >= 0 ? "+" : ""}${s.roiPct}%) | ` +
                   `${s.trades} trades | bounce ${s.bounceRate ?? "—"}% | win ${s.winRate ?? "—"}% (need ${s.breakEvenNeeded}%) | ` +
-                  `${s.openCount} open | exits B${s.exits.bounce}/S${s.exits.break}/T${s.exits.timeout}`);
+                  `${s.openCount} open | exits W${s.exits.bounce}/L${s.exits.break}/T${s.exits.timeout} | ` +
+                  `MFE ${s.avgMaxFavourable ?? "—"}¢ MAE ${s.avgMaxAdverse ?? "—"}¢`);
     }
   } catch (err) {
     console.log(`🧪 scalp lab error (ignored): ${err.message}`);
@@ -233,7 +283,7 @@ export function startScalpLab() {
     console.log("🧪 Scalp lab OFF (set SCALP_PAPER=true to run it in paper mode)");
     return null;
   }
-  console.log(`🧪 SCALP LAB ON — ${SCALP.LEAGUES.length ? SCALP.LEAGUES.slice(0,2).join("/") : "all sports"}, ` +
+  console.log(`🧪 SCALP LAB ON [${SCALP.MODE.toUpperCase()}] — ${SCALP.LEAGUES.length ? SCALP.LEAGUES.slice(0,3).join("/") : "all sports"}, ` +
               `paper bankroll $${SCALP.BANKROLL}, $${SCALP.STAKE}/trade, ` +
               `dip ≥${Math.round(SCALP.DIP_MIN*100)}¢, take +${Math.round(SCALP.TAKE*100)}¢, ` +
               `stop −${Math.round(SCALP.STOP*100)}¢`);
