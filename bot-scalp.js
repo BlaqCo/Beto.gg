@@ -28,7 +28,7 @@ export const SCALP = {
 
   // Only these leagues. Round-based esports overshoot most reliably.
   // Empty array = every live market.
-  LEAGUES:     ["CS2", "VALORANT", "CSGO", "COUNTER-STRIKE"],
+  LEAGUES:     ["CS2", "CSGO", "COUNTER-STRIKE", "VALORANT", "LOL", "LEAGUE-OF-LEGENDS", "LCK", "LEC", "LPL", "LCS"],
 
   PX_MIN:      0.35,     // wider zone = more candidates
   PX_MAX:      0.85,
@@ -36,7 +36,7 @@ export const SCALP = {
   DIP_WINDOW:  10 * 60_000, // loosened from 6 min
 
   BANKROLL:    500,      // paper starting balance
-  STAKE:       10,       // paper dollars per scalp
+  STAKE:       70,       // paper dollars per scalp
   // Risk/reward must respect the observed bounce rate: break-even is
   // stop/(stop+take), so a 4¢/5¢ pair needs ~56% — under the 61% seen so far.
   // The old 3¢/8¢ pair needed 73% and could never work.
@@ -44,7 +44,8 @@ export const SCALP = {
   STOP:        0.05,     // exit −5¢
   MAX_SPREAD:  0.05,     // loosened from 3¢
   MAX_HOLD_MS: 20 * 60_000,
-  MAX_OPEN:    10,
+  MAX_OPEN:    5,
+  COOLDOWN_MS: 60_000,   // brief pause before re-entering the SAME market
 
   FEE_COEF:    0.03,     // entry assumed maker (free); exit pays taker
 };
@@ -53,6 +54,8 @@ const feeFor = (px, usd) => SCALP.FEE_COEF * (usd / Math.max(px, 0.01)) * Math.m
 
 // ── isolated state ───────────────────────────────────────────────
 const high   = new Map();  // slug → { px, ts }
+const cooldown = new Map();  // slug → timestamp we last exited it
+const reEntries = new Map(); // slug → how many times we've traded it
 const open   = new Map();  // slug → paper position
 const closed = [];         // completed paper scalps
 let cycles = 0, lastRun = 0, running = false, peakPnl = 0;
@@ -89,6 +92,8 @@ export function scalpStats() {
       const loss = SCALP.STAKE * (SCALP.STOP / px) + feeFor(px, SCALP.STAKE);
       return +(loss / (win + loss) * 100).toFixed(1);
     })(),
+    repeatMarkets: [...reEntries.entries()].filter(([, n]) => n > 1).length,
+    maxTradesOneMarket: reEntries.size ? Math.max(...reEntries.values()) : 0,
     byLeague: Object.values(closed.reduce((acc, t) => {
       const k = t.league || "OTHER";
       (acc[k] ||= { league: k, n: 0, bounce: 0, pnl: 0 });
@@ -165,6 +170,12 @@ export async function runScalpCycle() {
       closed.push({ slug, q: p.q, league: p.league, entry: p.entry, exit: bid, reason, pnl,
                     heldMin: +((now - p.ts) / 60000).toFixed(1), maxBounce: p.maxBounce });
       open.delete(slug);
+      // RE-ENTRY: re-baseline this market's high-water at the exit price and
+      // restart its clock, so a fresh dip later is a fresh trade. Without this
+      // the stale high timestamp aged out and the game was done for good.
+      high.set(slug, { px: Math.max(bid, p.entry), ts: now });
+      cooldown.set(slug, now);
+      reEntries.set(slug, (reEntries.get(slug) || 0) + 1);
       const running_pnl = closed.reduce((a, t) => a + t.pnl, 0);
       if (running_pnl > peakPnl) peakPnl = running_pnl;
       console.log(`🧪 SCALP ${reason.toUpperCase()} ${Math.round(p.entry*100)}¢→${Math.round(bid*100)}¢ ` +
@@ -181,8 +192,14 @@ export async function runScalpCycle() {
       const ask = q.ask, bid = q.bid;
       if (!(ask > 0 && bid > 0 && ask > bid && ask - bid <= SCALP.MAX_SPREAD)) continue;
 
+      const cd = cooldown.get(slug);
+      if (cd && now - cd < SCALP.COOLDOWN_MS) continue;   // just exited — let it settle
+
       const h = high.get(slug);
       if (!h || ask > h.px) { high.set(slug, { px: ask, ts: now }); continue; }
+      // Price is back near its high → restart the freshness clock so the
+      // market stays tradeable instead of ageing out permanently.
+      if (ask >= h.px - 0.01) { high.set(slug, { px: h.px, ts: now }); continue; }
 
       const dip = h.px - ask;
       const fresh = now - h.ts <= SCALP.DIP_WINDOW;
@@ -193,8 +210,9 @@ export async function runScalpCycle() {
       const lg = (SCALP.LEAGUES.find(t => `${m.slug} ${m.question}`.toUpperCase().includes(t)) || "OTHER");
       open.set(slug, { q: m.question || slug, league: lg, entry: bid, stake: SCALP.STAKE,
                        ts: now, maxBounce: 0, minPx: bid, high: h.px });
+      const n = (reEntries.get(slug) || 0) + 1;
       console.log(`🧪 SCALP ENTRY (paper) ${Math.round(bid*100)}¢ after −${Math.round(dip*100)}¢ ` +
-                  `from ${Math.round(h.px*100)}¢ | ${(m.question || slug).slice(0, 34)}`);
+                  `from ${Math.round(h.px*100)}¢${n > 1 ? ` [trade #${n} on this game]` : ""} | ${(m.question || slug).slice(0, 34)}`);
     }
 
     if (cycles % 10 === 0) {
