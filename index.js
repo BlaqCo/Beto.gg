@@ -591,6 +591,15 @@ app.get("/api/stats", async (req, res) => {
 });
 
 // Scalp lab — paper only, read-only, off unless SCALP_PAPER=true
+app.get("/api/latency", async (req, res) => {
+  try {
+    const lab = await import("./lab-latency.js");
+    res.json(lab.latencyStats());
+  } catch (e) {
+    res.json({ enabled: false, error: e.message });
+  }
+});
+
 app.get("/api/scalp", async (req, res) => {
   try {
     const lab = await import("./bot-scalp.js");
@@ -743,5 +752,13 @@ async function loadBots() {
     lab.startScalpLab();
   } catch (err) {
     console.log("🧪 Scalp lab not loaded:", err.message);
+  }
+
+  // Latency lab — measurement only, off unless LATENCY_LAB=true
+  try {
+    const llab = await import("./lab-latency.js");
+    llab.startLatencyLab();
+  } catch (err) {
+    console.log("⏱ Latency lab not loaded:", err.message);
   }
 })();
