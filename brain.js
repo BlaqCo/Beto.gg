@@ -11,6 +11,7 @@
  */
 
 import { getConfig, getFunnel } from "./config.js";
+import * as tracker from "./tracker.js";
 
 // ── league inference ─────────────────────────────────────────────
 // Slugs look like aec-atp-foo-bar-2026-08-09 / aec-itfwo-… / aec-mlb-…
@@ -240,6 +241,8 @@ function answerSettings(s) {
 }
 
 const QUESTIONS = [
+  { re: /\b(analytics|tracker|what.*(data|learned)|edge (report|table)|segments?|breakdown)\b/i,
+    fn: () => "__ANALYTICS__" },
   { re: /\b(promising|look good|worth betting|what.*(watch|tracking|board)|any (good )?(games|plays|bets))\b/i,
     fn: (s) => answerPromising(s) },
   { re: /\b(suggest|recommend|what).*(edge|band|range)\b|\bbest (edge|band|range)\b/i,
@@ -293,6 +296,15 @@ async function askClaude(text, s) {
     lastScanSecondsAgo: s.lastScanAgeMs == null ? null : Math.round(s.lastScanAgeMs / 1000),
   };
   try {
+    const a = await tracker.analytics();
+    if (a?.settled) facts.trackedEdge = {
+      settled: a.settled, winRate: a.winRate, breakEvenNeeded: a.breakEvenAvg,
+      edgePoints: a.edge, roiPct: a.roi,
+      beatingBreakEven: a.green.map(x => `${x.key} ${x.winRate}% over ${x.n}`),
+      losing: a.red.map(x => `${x.key} ${x.winRate}% over ${x.n}`),
+    };
+  } catch {}
+  try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
@@ -317,10 +329,29 @@ async function askClaude(text, s) {
 }
 
 /** Answer a question. Returns { answer, source }. */
+function renderAnalytics(a) {
+  if (!a || !a.settled) return "No tracked bets yet. The ledger starts filling as bets settle.";
+  const line = x => `${x.key}: ${x.winRate}% over ${x.n} (need ${x.breakEven}%) → ${x.edge >= 0 ? "+" : ""}${x.edge} pts, ${x.pnl >= 0 ? "+$" : "−$"}${Math.abs(x.pnl).toFixed(2)}`;
+  const parts = [`${a.settled} settled · ${a.winRate}% vs ${a.breakEvenAvg}% needed · ${a.pnl >= 0 ? "+$" : "−$"}${Math.abs(a.pnl).toFixed(2)} (ROI ${a.roi}%)`];
+  if (a.green.length) parts.push("BEATING BREAK-EVEN:\n" + a.green.map(line).join("\n"));
+  if (a.red.length)   parts.push("LOSING:\n" + a.red.map(line).join("\n"));
+  if (!a.green.length && !a.red.length)
+    parts.push("No segment has ${a.minN}+ bets yet — keep collecting.".replace("${a.minN}", a.minN));
+  parts.push(a.verdict);
+  return parts.join("\n\n");
+}
+
 export async function answer(text, history = []) {
   const s = await snapshot(history);
   for (const q of QUESTIONS) {
-    if (q.re.test(text)) return { answer: q.fn(s, history, text), source: "data" };
+    if (q.re.test(text)) {
+      const out = q.fn(s, history, text);
+      if (out === "__ANALYTICS__") {
+        try { return { answer: renderAnalytics(await tracker.analytics()), source: "tracker" }; }
+        catch (e) { return { answer: `Tracker unavailable: ${e.message}`, source: "data" }; }
+      }
+      return { answer: out, source: "data" };
+    }
   }
   const ai = await askClaude(text, s);
   if (ai) return { answer: ai, source: "model" };
