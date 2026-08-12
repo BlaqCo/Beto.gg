@@ -591,6 +591,15 @@ app.get("/api/stats", async (req, res) => {
 });
 
 // Scalp lab — paper only, read-only, off unless SCALP_PAPER=true
+app.get("/api/analytics", async (req, res) => {
+  try {
+    const t = await import("./tracker.js");
+    res.json(await t.analytics({ minN: Number(req.query?.minN) || 5 }));
+  } catch (e) {
+    res.json({ settled: 0, error: e.message });
+  }
+});
+
 app.get("/api/latency", async (req, res) => {
   try {
     const lab = await import("./lab-latency.js");
