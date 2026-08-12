@@ -170,6 +170,9 @@ button:active{transform:translateY(1px)}
 #toast.bad{border-left-color:var(--down)}
 #toast .tt{font-family:'Archivo';font-weight:700;font-size:11px;letter-spacing:.12em;margin-bottom:3px}
 #toast.ok .tt{color:var(--up)}#toast.bad .tt{color:var(--down)}
+.pick{color:var(--cyan);font-weight:700}
+.opp{color:var(--dim)}
+.vs{color:#3A4A6B;font-size:10px}
 .verdictline{padding:11px 14px;font-size:11px;line-height:1.6;color:var(--text);
   border-bottom:1px solid var(--line);background:#0A1120}
 .verdictline.good{color:var(--up)}.verdictline.bad{color:var(--down)}.verdictline.mid{color:var(--amber)}
@@ -304,6 +307,36 @@ button:active{transform:translateY(1px)}
 const $ = id => document.getElementById(id);
 const money = n => (Number(n)>=0?'+':'−')+'$'+Math.abs(Number(n)||0).toFixed(2);
 const cls = n => Number(n)>0?'up':Number(n)<0?'down':'';
+const esc = t => String(t||'').replace(/</g,'&lt;');
+const titleCase = t => String(t||'').replace(/\b[a-z]/g, c => c.toUpperCase());
+
+// Turn "Who will win in the upcoming esports event" into "Imp vs Alka",
+// falling back to the slug when the title carries no names. Returns HTML
+// with the side the bot took highlighted.
+function matchupHtml(raw, slug, pick){
+  let t = String(raw||'').replace(/^\[.*?\]\s*/,'').trim();
+  t = t.replace(/^(Counter-Strike|Valorant|League of Legends|CS2|Dota\s*2)\s*:\s*/i,'');
+  t = t.replace(/\s+[-–—]\s+(Map|Game|Set|Match)\s*\d+.*$/i,'');
+  t = t.replace(/\s+Winner\s*$/i,'');
+  let m = t.match(/^(.{2,42}?)\s+vs\.?\s+(.{2,42}?)$/i);
+  if(!m){
+    const parts = String(slug||'').split('-').filter(Boolean);
+    const i = parts[0]==='aec' ? 1 : 0;
+    const seg = parts.slice(i+1).filter(p => !/^\d{2,4}$/.test(p));
+    if(seg.length>=2) m = [null, titleCase(seg[0]), titleCase(seg[1])];
+  }
+  if(!m) return '<span class="opp">'+esc(t.slice(0,38))+'</span>';
+  const a = m[1].trim(), b = m[2].trim();
+  const p = String(pick||'').toLowerCase().trim();
+  let side = 'a';
+  if(p){
+    if(b.toLowerCase().includes(p) || p.includes(b.toLowerCase())) side = 'b';
+    else if(a.toLowerCase().includes(p) || p.includes(a.toLowerCase())) side = 'a';
+  }
+  const A = side==='a' ? '<span class="pick">'+esc(a)+'</span>' : '<span class="opp">'+esc(a)+'</span>';
+  const B = side==='b' ? '<span class="pick">'+esc(b)+'</span>' : '<span class="opp">'+esc(b)+'</span>';
+  return A + '<span class="vs"> v </span>' + B;
+}
 let schema = {}, config = {}, dirty = {};
 
 async function loadConfig(){
@@ -375,7 +408,7 @@ async function loadPositions(){
     if(!p.length){ $('positions').innerHTML='<div class="empty">none open</div>'; return; }
     $('positions').innerHTML = p.slice(0,20).map(function(x){
       const pl = x.openPnl;
-      return '<div class="row"><span class="q">'+String(x.question||x.slug||'').slice(0,44)+'</span>'+
+      return '<div class="row"><span class="q">'+matchupHtml(x.question, x.slug, x.pick||x.outcome||x.question)+'</span>'+
         '<span class="px">'+(x.avgPrice?Math.round(x.avgPrice*100)+'¢':'—')+'→'+
         (x.currentBid?Math.round(x.currentBid*100)+'¢':'—')+'</span>'+
         '<span class="pl '+cls(pl)+'">'+(pl==null?'—':money(pl))+'</span></div>';
@@ -466,7 +499,7 @@ async function loadHistory(){
   $('history').innerHTML = HIST.slice(0,40).map(function(b,i){
     return '<div class="hrow" tabindex="0" data-i="'+i+'">'+
       '<span class="hres '+(b.won?'w':'l')+'">'+(b.won?'WON':'LOST')+'</span>'+
-      '<span class="hq">'+b.question.slice(0,40)+'</span>'+
+      '<span class="hq">'+matchupHtml(b.question, b.slug, b.pick)+'</span>'+
       '<span class="hwhen">'+ago(b.when)+'</span>'+
       '<span class="hpl '+cls(b.pnl)+'">'+money(b.pnl)+'</span></div>';
   }).join('');
@@ -478,7 +511,7 @@ async function loadHistory(){
 }
 function showBet(b){
   if(!b) return;
-  $('dTitle').textContent = b.question || 'Bet';
+  $('dTitle').innerHTML = matchupHtml(b.question, b.slug, b.pick);
   $('dSub').textContent = [ (b.league||'').toUpperCase(), b.kind||'', b.slug||'' ]
     .filter(Boolean).join(' · ').slice(0,90);
   $('dEntry').textContent = b.entry!=null ? Math.round(b.entry*100)+'¢' : '—';
@@ -518,7 +551,7 @@ async function loadScalp(){
     $('scalpRecent').innerHTML = blHtml + (s.recent||[]).slice(0,8).map(function(t){
       const tag = t.reason==='bounce'?'w':'l';
       return '<div class="row"><span class="hres '+tag+'">'+t.reason.toUpperCase()+'</span>'+
-        '<span class="q">'+String(t.q||'').slice(0,34)+'</span>'+
+        '<span class="q">'+matchupHtml(t.q, t.slug, null)+'</span>'+
         '<span class="px">'+Math.round(t.entry*100)+'¢→'+Math.round(t.exit*100)+'¢</span>'+
         '<span class="pl '+cls(t.pnl)+'">'+money(t.pnl)+'</span></div>';
     }).join('') || '<div class="empty">no paper trades yet</div>';
@@ -545,7 +578,7 @@ async function loadLatency(){
     $('latRecent').innerHTML = (s.recent||[]).slice(0,8).map(function(r){
       const ok = r.gapMs!=null;
       return '<div class="row"><span class="hres '+(ok?'w':'l')+'">'+(ok?(r.gapMs/1000).toFixed(1)+'S':'NONE')+'</span>'+
-        '<span class="q">'+String(r.q||'').slice(0,30)+'</span>'+
+        '<span class="q">'+matchupHtml(r.q, r.slug, null)+'</span>'+
         '<span class="px">'+String(r.note||'')+'</span>'+
         '<span class="pl '+cls(r.move)+'">'+(r.move>=0?'+':'')+Math.round(r.move*100)+'¢</span></div>';
     }).join('') || '<div class="empty">no events captured yet</div>';
