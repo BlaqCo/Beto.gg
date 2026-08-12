@@ -170,6 +170,15 @@ button:active{transform:translateY(1px)}
 #toast.bad{border-left-color:var(--down)}
 #toast .tt{font-family:'Archivo';font-weight:700;font-size:11px;letter-spacing:.12em;margin-bottom:3px}
 #toast.ok .tt{color:var(--up)}#toast.bad .tt{color:var(--down)}
+.seg{display:flex;align-items:center;gap:9px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:11px}
+.seg:last-child{border-bottom:0}
+.segdim{font-size:9px;letter-spacing:.1em;color:#3A4A6B;width:52px;flex:0 0 auto}
+.segkey{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.segbar{width:64px;height:5px;border-radius:99px;background:#0A1120;overflow:hidden;flex:0 0 auto}
+.segbar i{display:block;height:100%;border-radius:99px}
+.segedge{width:58px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;flex:0 0 auto}
+.seghead{padding:9px 14px 4px;font-size:9px;letter-spacing:.16em;color:var(--cyan)}
+.seghead.bad{color:var(--down)}
 .pick{color:var(--cyan);font-weight:700}
 .opp{color:var(--dim)}
 .vs{color:#3A4A6B;font-size:10px}
@@ -248,6 +257,18 @@ button:active{transform:translateY(1px)}
 <div class="panel">
   <div class="phead"><h3>OPEN POSITIONS</h3></div>
   <div id="positions"><div class="empty">none open</div></div>
+</div>
+
+<div class="panel" id="edgePanel">
+  <div class="phead"><h3>EDGE TRACKER</h3><span class="labtag" id="edgeTag">—</span></div>
+  <div class="labgrid">
+    <div class="cell"><div class="clabel">EDGE</div><div class="cval" id="eEdge">—</div><div class="csub" id="eVs">—</div></div>
+    <div class="cell"><div class="clabel">SETTLED</div><div class="cval" id="eN">—</div><div class="csub" id="eWL">—</div></div>
+    <div class="cell"><div class="clabel">P&amp;L</div><div class="cval" id="ePnl">—</div><div class="csub" id="eRoi">—</div></div>
+    <div class="cell"><div class="clabel">WIN RATE</div><div class="cval" id="eWr">—</div><div class="csub" id="eBe">—</div></div>
+  </div>
+  <div class="verdictline" id="eVerdict">collecting…</div>
+  <div id="edgeSegs"></div>
 </div>
 
 <div class="panel" id="latPanel" style="display:none">
@@ -585,7 +606,41 @@ async function loadLatency(){
   }catch(e){ $('latPanel').style.display='none'; }
 }
 
-function tick(){ loadFunnel(); loadStats(); loadPositions(); loadHistory(); loadLatency(); loadScalp(); loadLog(); }
+async function loadEdge(){
+  try{
+    const a = await (await fetch('/api/analytics?t='+Date.now())).json();
+    if(!a || a.settled==null){ $('edgePanel').style.display='none'; return; }
+    $('edgePanel').style.display='';
+    $('edgeTag').textContent = a.persisted ? 'SAVED' : 'SESSION';
+    const e = a.edge;
+    $('eEdge').textContent = e==null?'—':(e>=0?'+':'')+e+' pts';
+    $('eEdge').className = 'cval '+(e==null?'':e>0?'up':e<0?'down':'');
+    $('eVs').textContent = 'vs break-even';
+    $('eN').textContent = a.settled; $('eWL').textContent = a.wins+'W / '+a.losses+'L';
+    $('ePnl').textContent = a.pnl==null?'—':money(a.pnl);
+    $('ePnl').className = 'cval '+cls(a.pnl);
+    $('eRoi').textContent = a.roi==null?'—':'ROI '+a.roi+'%';
+    $('eWr').textContent = a.winRate==null?'—':a.winRate+'%';
+    $('eBe').textContent = a.breakEvenAvg==null?'—':'need '+a.breakEvenAvg+'%';
+    const v=$('eVerdict'); v.textContent = a.verdict||'';
+    v.className = 'verdictline '+(e==null?'':e>2?'good':e>-2?'mid':'bad');
+    const seg = x => {
+      const w = Math.min(100, Math.abs(x.edge)*2);
+      const col = x.edge>=0 ? 'var(--up)' : 'var(--down)';
+      return '<div class="seg"><span class="segdim">'+x.dimension.toUpperCase()+'</span>'+
+        '<span class="segkey">'+esc(x.key)+' <span class="opp">'+x.winRate+'% · '+x.n+'</span></span>'+
+        '<span class="segbar"><i style="width:'+w+'%;background:'+col+'"></i></span>'+
+        '<span class="segedge '+cls(x.edge)+'">'+(x.edge>=0?'+':'')+x.edge+'</span></div>';
+    };
+    let html='';
+    if(a.green && a.green.length) html += '<div class="seghead">BEATING BREAK-EVEN</div>'+a.green.map(seg).join('');
+    if(a.red && a.red.length)     html += '<div class="seghead bad">LOSING</div>'+a.red.map(seg).join('');
+    if(!html) html = '<div class="empty">need '+a.minN+'+ bets per segment before ranking</div>';
+    $('edgeSegs').innerHTML = html;
+  }catch(e){ $('edgePanel').style.display='none'; }
+}
+
+function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); }
 loadConfig(); tick(); setInterval(tick, 4000);
 </script>
 </body>
