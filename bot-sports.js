@@ -15,6 +15,7 @@
 import * as state from "./state.js";
 import * as pm from "./polymarket-us.js";
 import * as cfgStore from "./config.js";
+import * as tracker from "./tracker.js";
 
 const recordBet         = state.recordBet;
 const hasActiveBet      = state.hasActiveBet      || (() => false);
@@ -274,6 +275,7 @@ async function processExits() {
       }
 
       closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
+      try { tracker.recordSettle(slug, { won, pnl, exitPrice: settle, reason: "expiry" }); } catch {}
       calRecord(league, bet.entryPrice, won);
       calReport();
       liveMarks.delete(slug);
@@ -300,6 +302,7 @@ async function processExits() {
         if (res.ok) {
           const pnl = +(bet.betSize * gainPct).toFixed(2);
           closeBet(slug, { exitPrice: bid, reason: "take_profit", pnl });
+          try { tracker.recordSettle(slug, { won: pnl > 0, pnl, exitPrice: bid, reason: "take_profit" }); } catch {}
           exits.push({ slug, reason: "take_profit", pnl });
           console.log(`  💰 TAKE PROFIT ${cents(bet.entryPrice)}→${cents(bid)} (+${(gainPct*100).toFixed(0)}%) ≈ +$${pnl} | ${bet.marketQuestion?.slice(0, 38)}`);
           continue;
@@ -862,6 +865,20 @@ async function _runScanCycleInner() {
     });
 
     filledThis = true;     // reservation becomes permanent
+    // Persistent ledger: record WHY this bet was taken, not just that it was.
+    try {
+      const ref = openerRef.get(m.slug);
+      tracker.recordEntry({
+        slug: m.slug, question: m.question, league: m.league,
+        entry: entryPrice, size: betSize,
+        spread: (m.ask != null && m.bid != null) ? m.ask - m.bid : null,
+        depth: book?.askQty ?? null,
+        discount: ref != null ? ref - entryPrice : null,
+        live: !!m.isLive,
+        minsIn: m.gameStartIso ? (Date.now() - new Date(m.gameStartIso).getTime()) / 60000 : null,
+        maker: !!(r && r.maker),
+      });
+    } catch {}
     betsPlaced++;
     const payout = (betSize / entryPrice).toFixed(2);
     console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
