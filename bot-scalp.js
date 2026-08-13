@@ -31,7 +31,20 @@ export const SCALP = {
   //              against a 68.9% break-even. Comprehensively disproven.
   // "momentum" — the inverse, which the same data supports: 51 of 93 moves
   //              CONTINUED. Buy strength, not weakness.
-  MODE:        "momentum",
+  //
+  // "event" — NEW, and the only one the data supports. The latency lab found
+  //           297 score/period events: 78% repriced, median 17.1s later, 7¢
+  //           average move. So a score change is a genuine information signal
+  //           with a ~17s window. We wait for the price to CONFIRM direction
+  //           (it must tick up, since we can only go long), then ride the rest.
+  MODE:        "event",
+
+  EV_WINDOW_MS:  25_000,   // an event stays actionable this long
+  EV_CONFIRM:    0.015,    // price must move ≥1.5¢ in our favour first
+  EV_MAX_CHASE:  0.045,    // ...but don't enter if it already ran >4.5¢
+  TAKE_EV:       0.05,     // +5¢  → break-even 52.5%
+  STOP_EV:       0.03,     // −3¢
+  EV_HOLD_MS:    120_000,  // the move completes in ~17s; 2 min is generous
 
   // Only these leagues. Round-based esports overshoot most reliably.
   // Empty array = every live market.
@@ -69,6 +82,8 @@ const feeFor = (px, usd) => SCALP.FEE_COEF * (usd / Math.max(px, 0.01)) * Math.m
 const high   = new Map();  // slug → { px, ts }
 const low    = new Map();  // slug → { px, ts }  (momentum baseline)
 const cooldown = new Map();  // slug → timestamp we last exited it
+const evState  = new Map();  // slug → { score, period, px }
+const evArmed  = new Map();  // slug → { at, pxAtEvent, note }
 const reEntries = new Map(); // slug → how many times we've traded it
 const open   = new Map();  // slug → paper position
 const closed = [];         // completed paper scalps
@@ -103,8 +118,8 @@ export function scalpStats() {
     mode: SCALP.MODE,
     breakEvenNeeded: (() => {
       const px = 0.60;
-      const take = SCALP.MODE === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
-      const stop = SCALP.MODE === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
+      const take = SCALP.MODE === "event" ? SCALP.TAKE_EV : SCALP.MODE === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
+      const stop = SCALP.MODE === "event" ? SCALP.STOP_EV : SCALP.MODE === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
       const win = SCALP.STAKE * (take / px) - feeFor(px, SCALP.STAKE);
       const loss = SCALP.STAKE * (stop / px) + feeFor(px, SCALP.STAKE);
       return +(loss / (win + loss) * 100).toFixed(1);
@@ -181,12 +196,13 @@ export async function runScalpCycle() {
       p.maxAdverse = Math.min(p.maxAdverse ?? 0, bid - p.entry);   // worst excursion
       p.minPx = Math.min(p.minPx ?? bid, bid);
 
-      const take = p.mode === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
-      const stop = p.mode === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
+      const take = p.mode === "event" ? SCALP.TAKE_EV : p.mode === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
+      const stop = p.mode === "event" ? SCALP.STOP_EV : p.mode === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
+      const hold = p.mode === "event" ? SCALP.EV_HOLD_MS : SCALP.MAX_HOLD_MS;
       let reason = null;
-      if (bid >= p.entry + take)                reason = "bounce";
-      else if (bid <= p.entry - stop)           reason = "break";
-      else if (now - p.ts >= SCALP.MAX_HOLD_MS) reason = "timeout";
+      if (bid >= p.entry + take)      reason = "bounce";
+      else if (bid <= p.entry - stop) reason = "break";
+      else if (now - p.ts >= hold)    reason = "timeout";
       if (!reason) continue;
 
       const shares = p.stake / p.entry;
@@ -196,7 +212,8 @@ export async function runScalpCycle() {
       closed.push({ slug, q: p.q, league: p.league, mode: p.mode || SCALP.MODE,
                     entry: p.entry, exit: bid, reason, pnl,
                     heldMin: +((now - p.ts) / 60000).toFixed(1),
-                    maxBounce: p.maxBounce, maxAdverse: p.maxAdverse });
+                    maxBounce: p.maxBounce, maxAdverse: p.maxAdverse,
+                    evNote: p.evNote || null, evLagSec: p.evLagSec ?? null });
       open.delete(slug);
       // RE-ENTRY: re-baseline this market's high-water at the exit price and
       // restart its clock, so a fresh dip later is a fresh trade. Without this
@@ -222,6 +239,43 @@ export async function runScalpCycle() {
 
       const cd = cooldown.get(slug);
       if (cd && now - cd < SCALP.COOLDOWN_MS) continue;   // just exited — let it settle
+
+      // ── EVENT MODE ────────────────────────────────────────────
+      if (SCALP.MODE === "event") {
+        const prevEv = evState.get(slug);
+        const score = m.evScore ?? null, period = m.evPeriod ?? null;
+        evState.set(slug, { score, period, px: ask });
+
+        // 1) arm on a score/period change
+        if (prevEv) {
+          const changed = (score != null && prevEv.score != null && score !== prevEv.score)
+                       || (period != null && prevEv.period != null && period !== prevEv.period);
+          if (changed && !evArmed.has(slug)) {
+            evArmed.set(slug, { at: now, pxAtEvent: prevEv.px,
+                                note: score !== prevEv.score ? `score ${prevEv.score}→${score}` : `period ${prevEv.period}→${period}` });
+            console.log(`🧪 ARMED: ${prevEv.score}→${score} @ ${Math.round(prevEv.px*100)}¢ | ${(m.question||slug).slice(0,32)}`);
+          }
+        }
+
+        // 2) enter once the price confirms an upward move (we can only go long)
+        const armed = evArmed.get(slug);
+        if (armed) {
+          const moved = ask - armed.pxAtEvent;
+          if (now - armed.at > SCALP.EV_WINDOW_MS) { evArmed.delete(slug); continue; }
+          if (moved >= SCALP.EV_CONFIRM && moved <= SCALP.EV_MAX_CHASE
+              && ask >= SCALP.PX_MIN && ask <= SCALP.PX_MAX
+              && (ask - bid) <= SCALP.MAX_SPREAD) {
+            const lg3 = (SCALP.LEAGUES.find(t => `${m.slug} ${m.question}`.toUpperCase().includes(t)) || "OTHER");
+            open.set(slug, { q: m.question || slug, league: lg3, entry: bid, stake: SCALP.STAKE,
+                             ts: now, maxBounce: 0, maxAdverse: 0, minPx: bid, mode: "event",
+                             evNote: armed.note, evLagSec: +((now - armed.at) / 1000).toFixed(1) });
+            evArmed.delete(slug);
+            console.log(`🧪 EVENT ENTRY (paper) ${Math.round(bid*100)}¢ | +${Math.round(moved*100)}¢ ` +
+                        `${((now - armed.at)/1000).toFixed(0)}s after ${armed.note} | ${(m.question||slug).slice(0,30)}`);
+          }
+        }
+        continue;
+      }
 
       const l = low.get(slug);
       if (!l || ask < l.px) low.set(slug, { px: ask, ts: now });
