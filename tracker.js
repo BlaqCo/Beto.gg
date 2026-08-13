@@ -67,7 +67,7 @@ export async function recordEntry(ctx) {
 }
 
 /** Called when the bet settles (or is sold). */
-export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry" } = {}) {
+export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry", fallback = null } = {}) {
   let entry = null;
   try {
     if (URL && TOKEN) {
@@ -77,7 +77,18 @@ export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry
     }
   } catch { /* fall through to memory */ }
   if (!entry) { entry = memOpen.get(slug) || null; memOpen.delete(slug); }
-  if (!entry) return null;                     // never tracked — nothing to join
+  if (!entry && fallback) {
+    // Bet predates the tracker (or the entry record was lost). Record it with
+    // the context we do have rather than dropping the result entirely.
+    entry = {
+      slug, question: fallback.question || "", league: (fallback.league || "OTHER").toUpperCase(),
+      entry: +Number(fallback.entry || 0).toFixed(4), size: +Number(fallback.size || 0).toFixed(2),
+      spread: null, depth: null, discount: null, live: null, minsIn: null,
+      fill: "unknown", hour: new Date().getUTCHours(),
+      at: fallback.at || new Date().toISOString(), partial: true,
+    };
+  }
+  if (!entry || !(entry.entry > 0)) return null;   // no usable context
 
   const row = {
     ...entry,
