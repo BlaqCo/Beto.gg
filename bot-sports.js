@@ -274,8 +274,15 @@ async function processExits() {
         console.log(`   Bet: $${bet.betSize} @ ${cents(bet.entryPrice)} | Lost: -$${bet.betSize.toFixed(2)} | Net P/L: -$${bet.betSize.toFixed(2)}`);
       }
 
-      closeBet(slug, { exitPrice: settle, reason: "expiry", pnl });
-      try { tracker.recordSettle(slug, { won, pnl, exitPrice: settle, reason: "expiry" }); } catch {}
+      // Pass the outcome EXPLICITLY. Previously only pnl/exitPrice went through
+      // and state.js had to infer it — which is how 116W/0L happened.
+      closeBet(slug, { exitPrice: settle, reason: "expiry", pnl,
+                       won, status: won ? "won" : "lost", result: won ? "win" : "loss" });
+      try {
+        tracker.recordSettle(slug, { won, pnl, exitPrice: settle, reason: "expiry",
+          fallback: { slug, question: bet.marketQuestion, league,
+                      entry: bet.entryPrice, size: bet.betSize, at: bet.placedAt } });
+      } catch {}
       calRecord(league, bet.entryPrice, won);
       calReport();
       liveMarks.delete(slug);
@@ -301,8 +308,13 @@ async function processExits() {
         const res = DRY_RUN ? { ok: true } : await closePositionLive(slug);
         if (res.ok) {
           const pnl = +(bet.betSize * gainPct).toFixed(2);
-          closeBet(slug, { exitPrice: bid, reason: "take_profit", pnl });
-          try { tracker.recordSettle(slug, { won: pnl > 0, pnl, exitPrice: bid, reason: "take_profit" }); } catch {}
+          closeBet(slug, { exitPrice: bid, reason: "take_profit", pnl,
+                           won: pnl > 0, status: pnl > 0 ? "won" : "lost", result: pnl > 0 ? "win" : "loss" });
+          try {
+            tracker.recordSettle(slug, { won: pnl > 0, pnl, exitPrice: bid, reason: "take_profit",
+              fallback: { slug, question: bet.marketQuestion, league: (bet.entryCoin || "SPORT").toUpperCase(),
+                          entry: bet.entryPrice, size: bet.betSize, at: bet.placedAt } });
+          } catch {}
           exits.push({ slug, reason: "take_profit", pnl });
           console.log(`  💰 TAKE PROFIT ${cents(bet.entryPrice)}→${cents(bid)} (+${(gainPct*100).toFixed(0)}%) ≈ +$${pnl} | ${bet.marketQuestion?.slice(0, 38)}`);
           continue;
