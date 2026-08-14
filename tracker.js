@@ -17,6 +17,8 @@
  * A segment only counts as an edge if its realised win rate beats that.
  */
 
+import { breakEven as feeBreakEven } from "./fees.js";
+
 const URL   = process.env.UPSTASH_REDIS_REST_URL   || process.env.REDIS_REST_URL   || null;
 const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.REDIS_REST_TOKEN || null;
 const KEY_TRADES = "beto:trades";     // list of settled trades (JSON)
@@ -40,7 +42,9 @@ async function redis(cmd) {
   return (await res.json())?.result ?? null;
 }
 
-export const breakEven = px => px + 0.03 * Math.min(px, 1 - px);
+// Correct model (docs.polymarket.us/fees): Θ × p × (1−p), taker 0.06,
+// maker −0.0125. Maker fills need a LOWER win rate because of the rebate.
+export const breakEven = (px, isMaker = false) => feeBreakEven(px, isMaker);
 
 /** Called the moment a bet fills. */
 export async function recordEntry(ctx) {
@@ -133,7 +137,7 @@ function segment(rows, keyFn, label) {
     (g[k] ||= { key: String(k), n: 0, w: 0, pnl: 0, staked: 0, beSum: 0 });
     g[k].n++; if (r.won) g[k].w++;
     g[k].pnl += r.pnl; g[k].staked += r.size;
-    g[k].beSum += breakEven(r.entry);
+    g[k].beSum += breakEven(r.entry, r.fill === "maker");
   }
   return Object.values(g).map(x => {
     const rate = x.w / x.n;
@@ -157,7 +161,7 @@ export async function analytics({ minN = 5 } = {}) {
   const wins = rows.filter(r => r.won).length;
   const pnl = rows.reduce((a, r) => a + r.pnl, 0);
   const staked = rows.reduce((a, r) => a + r.size, 0);
-  const avgBe = n ? rows.reduce((a, r) => a + breakEven(r.entry), 0) / n : null;
+  const avgBe = n ? rows.reduce((a, r) => a + breakEven(r.entry, r.fill === "maker"), 0) / n : null;
 
   const byLeague = segment(rows, r => r.league, "league");
   const byBucket = segment(rows, r => bucketOf(r.entry), "price");
