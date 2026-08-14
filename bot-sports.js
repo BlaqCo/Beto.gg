@@ -16,6 +16,7 @@ import * as state from "./state.js";
 import * as pm from "./polymarket-us.js";
 import * as cfgStore from "./config.js";
 import * as tracker from "./tracker.js";
+import * as fees from "./fees.js";
 
 const recordBet         = state.recordBet;
 const hasActiveBet      = state.hasActiveBet      || (() => false);
@@ -75,9 +76,7 @@ function calReport() {
     const [lg, bucket] = k.split("|");
     const n = v.w + v.l, rate = v.w / n;
     const midPx = (parseInt(bucket) + 2) / 100;          // bucket midpoint price
-    const stake = 10, contracts = stake / midPx;
-    const fee   = 0.03 * contracts * Math.min(midPx, 1 - midPx);
-    const be    = (stake + fee) / contracts;              // true break-even win rate
+    const be    = fees.breakEven(midPx, false);           // true break-even win rate
     return { lg, bucket, n, rate, be, edge: rate - be };
   }).filter(r => r.n >= 3).sort((a, b) => b.edge - a.edge);
   if (!rows.length) return;
@@ -91,8 +90,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 10;       // flat $1
-let BET_HIGH_USD  = 10;       // flat $1 (no edge scaling)
+let BET_LOW_USD   = 1;       // flat $1
+let BET_HIGH_USD  = 1;       // flat $1 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -100,11 +99,12 @@ const sizeForPx = px => {
 };
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.58;    // band floor: 57¢
-let FAV_MAX       = 0.68;    // band cap: 68¢
-const FEE_COEF      = 0.03;    // VERIFIED from order ticket: fee = coef × contracts × min(p,1-p)
-// $10 @ 48% → 20.20 contracts → $0.30 fee  ⇒  0.03 × 20.20 × 0.48 = $0.29 ✓
-const feeFor = (px, sizeUsd) => FEE_COEF * (sizeUsd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
+let FAV_MIN       = 0.58;    // band floor: 58¢
+let FAV_MAX       = 0.66;    // band cap: 66¢
+// Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
+const feeFor = (px, sizeUsd, isMaker = false) =>
+  fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
+  - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
 let MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qualify
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
@@ -121,8 +121,8 @@ let LEAGUE_BLOCK  = [];      // blacklist — always excluded
 // Verified from the order ticket: fee = 3% × contracts × min(p, 1−p).
 // Per CONTRACT that is 0.03 × min(p,1−p) — i.e. a cost expressed directly
 // in price terms: 1.26¢ at 57¢, 1.05¢ at 65¢, 0.78¢ at 74¢.
-const FEE_COEF_PX   = 0.03;
-const feePx = px => FEE_COEF_PX * Math.min(px, 1 - px);
+// (fee coefficient now lives in fees.js)
+const feePx = px => fees.costPerContract(px, false);
 // An entry must be discounted from its high-water by MORE than the fee it
 // costs, plus a margin — otherwise the "edge" is swallowed by the fee.
 let EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
