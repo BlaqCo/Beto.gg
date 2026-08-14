@@ -19,6 +19,7 @@
  */
 
 import * as pm from "./polymarket-us.js";
+import * as fees from "./fees.js";
 
 // ── settings ─────────────────────────────────────────────────────
 export const SCALP = {
@@ -76,7 +77,9 @@ export const SCALP = {
   FEE_COEF:    0.03,     // entry assumed maker (free); exit pays taker
 };
 
-const feeFor = (px, usd) => SCALP.FEE_COEF * (usd / Math.max(px, 0.01)) * Math.min(px, 1 - px);
+// Correct model: taker Θ0.06 × p(1−p). Entries are assumed maker (a rebate),
+// exits are takers. This is why round-trip scalping is so fee-heavy.
+const feeFor = (px, usd) => fees.takerFee(usd / Math.max(px, 0.01), px);
 
 // ── isolated state ───────────────────────────────────────────────
 const high   = new Map();  // slug → { px, ts }
@@ -120,9 +123,7 @@ export function scalpStats() {
       const px = 0.60;
       const take = SCALP.MODE === "event" ? SCALP.TAKE_EV : SCALP.MODE === "momentum" ? SCALP.TAKE_MOM : SCALP.TAKE;
       const stop = SCALP.MODE === "event" ? SCALP.STOP_EV : SCALP.MODE === "momentum" ? SCALP.STOP_MOM : SCALP.STOP;
-      const win = SCALP.STAKE * (take / px) - feeFor(px, SCALP.STAKE);
-      const loss = SCALP.STAKE * (stop / px) + feeFor(px, SCALP.STAKE);
-      return +(loss / (win + loss) * 100).toFixed(1);
+      return +(fees.breakEvenRoundTrip(px, take, stop, { entryMaker: false, exitMaker: false }) * 100).toFixed(1);
     })(),
     // Excursion data — how far trades actually run in each direction.
     // This is what tells us the right take/stop next time.
