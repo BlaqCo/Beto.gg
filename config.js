@@ -17,12 +17,12 @@ const KEY = "beto:config:sports";
 // ── Defaults ─────────────────────────────────────────────────────
 // Each entry: value, label, group, and the input hint the dashboard uses.
 export const SCHEMA = {
-  BET_SIZE:      { v: 1,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
+  BET_SIZE:      { v: 7.5,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
   MAX_CONC:      { v: 9999,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
   ENTRIES_SCAN:  { v: 9999,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
 
-  FAV_MIN:       { v: 0.57,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
-  FAV_MAX:       { v: 0.68,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
+  FAV_MIN:       { v: 0.64,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
+  FAV_MAX:       { v: 0.90,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   PRIORITY_PX:   { v: 0.61,  label: "Priority below",      group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   EDGE_MARGIN:   { v: 0.01,  label: "Edge over fee",       group: "Edge",    unit: "¢",  step: 0.005,min: 0,    max: 0.10, pct: true },
   NEAR_LOW_TOL:  { v: 0.01,  label: "Near-low tolerance",  group: "Edge",    unit: "¢",  step: 0.005,min: 0,    max: 0.10, pct: true },
@@ -30,11 +30,16 @@ export const SCHEMA = {
   MIN_LIVE_MIN:  { v: 0,     label: "Wait after tip-off",  group: "Timing",  unit: "min",step: 1,    min: 0,   max: 120 },
   MAKER_MODE:    { v: true,  label: "Post maker orders",   group: "Timing",  bool: true },
 
-  DCA_ENABLED:   { v: true,  label: "Second buy on dip",   group: "Manage",  bool: true },
+  DCA_ENABLED:   { v: false,  label: "Second buy on dip",   group: "Manage",  bool: true },
   DCA_DROP_PCT:  { v: 0.15,  label: "Dip trigger",         group: "Manage",  unit: "%",  step: 0.01, min: 0.05, max: 0.60, pct: true },
   DCA_ADD_MULT:  { v: 0.50,  label: "Dip add size",        group: "Manage",  unit: "×",  step: 0.1,  min: 0.1,  max: 3 },
   TP_ENABLED:    { v: true,  label: "Take profit",         group: "Manage",  bool: true },
-  TP_PRICE:      { v: 0.80,  label: "Sell at price",       group: "Manage",  unit: "¢",  step: 0.01, min: 0.50, max: 0.99, pct: true },
+  TP_PRICE:      { v: 0.95,  label: "Sell at price",       group: "Manage",  unit: "¢",  step: 0.01, min: 0.50, max: 0.99, pct: true },
+
+  SL_ENABLED:    { v: true,  label: "Stop loss",            group: "Manage",  bool: true },
+  SL_PRICE:      { v: 0.29,  label: "Sell if drops to",      group: "Manage",  unit: "¢",  step: 0.01, min: 0.02, max: 0.60, pct: true },
+  HALFWAY_ONLY:  { v: true,  label: "Wait until halfway",    group: "Timing",  bool: true },
+  MIN_PROGRESS:  { v: 0.50,  label: "Match progress needed", group: "Timing",  unit: "%",  step: 0.05, min: 0, max: 0.95, pct: true },
 
   KILL_ENABLED:  { v: false, label: "Circuit breaker",     group: "Safety",  bool: true },
   KILL_FLOOR:    { v: 120,   label: "Stop below",          group: "Safety",  unit: "$",  step: 10,   min: 0,   max: 100000 },
