@@ -17,6 +17,7 @@ import * as pm from "./polymarket-us.js";
 import * as cfgStore from "./config.js";
 import * as tracker from "./tracker.js";
 import * as fees from "./fees.js";
+import * as wsFeed from "./ws-feed.js";
 
 const recordBet         = state.recordBet;
 const hasActiveBet      = state.hasActiveBet      || (() => false);
@@ -141,6 +142,9 @@ function matchProgress(m) {
   const per = String(m.evPeriod || "").trim();
   const sc  = String(m.evScore  || "").trim();
   let mm;
+  // halves first — "2nd Half" would otherwise match the innings pattern
+  if (/2nd half|second half|ht|half.?time/i.test(per))         return 0.75;
+  if (/1st half|first half/i.test(per))                        return 0.25;
   // tennis / table tennis — "2nd Set"
   if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, (+mm[1] - 0.5) / 3);
   // baseball — "Bot 5th" / "Top 7th"
@@ -148,8 +152,6 @@ function matchProgress(m) {
   // basketball / hockey — "Q3", "3rd Quarter", "P2"
   if ((mm = per.match(/q(?:uarter)?\s*(\d)/i)))              return Math.min(1, (+mm[1] - 0.5) / 4);
   if ((mm = per.match(/p(?:eriod)?\s*(\d)/i)))               return Math.min(1, (+mm[1] - 0.5) / 3);
-  if (/2nd half|second half/i.test(per))                       return 0.75;
-  if (/1st half|first half/i.test(per))                        return 0.25;
   // esports — "Map 2" / "Game 3"
   if ((mm = per.match(/(?:map|game)\s*(\d)/i)))              return Math.min(1, (+mm[1] - 0.5) / 3);
   // CS-style round score "13-9" → first to 13
@@ -305,6 +307,8 @@ async function processExits() {
     const slug = bet.marketConditionId;
 
     // Only exit path: market settlement
+    // Prefer the streamed price for exit checks — a 20s poll can miss a stop.
+    const streamed = wsFeed.livePrice(slug);
     const settle = await getSettlement(slug);
     if (settle !== null) {
       const won = settle === 1;
@@ -346,7 +350,9 @@ async function processExits() {
       console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | Δ${pct(move)} | holding to close | ${bet.marketQuestion?.slice(0, 40)}`);
 
       // ── STOP LOSS ── the market has collapsed; cut it.
-      if (SL_ENABLED && !DRY_RUN_SELL_GUARD && bid && bid <= SL_PRICE) {
+      const exitBid = (streamed?.bid != null) ? streamed.bid : bid;
+      if (SL_ENABLED && !DRY_RUN_SELL_GUARD && exitBid && exitBid <= SL_PRICE) {
+        const bid = exitBid;
         const shares = bet.betSize / bet.entryPrice;
         const pnl = +(shares * bid - bet.betSize).toFixed(2);
         const res = DRY_RUN ? { ok: true } : await closePositionLive(slug);
@@ -367,9 +373,10 @@ async function processExits() {
 
       // ── TAKE PROFIT ──
       // Sell into the BID (what we'd actually receive) once the gain hits target.
-      const tpHit = bid && (TP_MODE === "price"
-        ? bid >= TP_PRICE
-        : bid >= bet.entryPrice * (1 + TP_GAIN_PCT));
+      const tpBid = (streamed?.bid != null) ? streamed.bid : bid;
+      const tpHit = tpBid && (TP_MODE === "price"
+        ? tpBid >= TP_PRICE
+        : tpBid >= bet.entryPrice * (1 + TP_GAIN_PCT));
       if (TP_ENABLED && tpHit) {
         const gainPct = (bid - bet.entryPrice) / bet.entryPrice;
         const res = DRY_RUN ? { ok: true } : await closePositionLive(slug);
@@ -494,6 +501,7 @@ async function _runScanCycleInner() {
 
   console.log(`📊 polymarket.us: ${markets.length} full-game moneylines`);
 
+  try { wsFeed.setWatchlist(getAllActiveBets().map(b => b.marketConditionId)); } catch {}
   const exits = await processExits();
 
   // ── Balance ──────────────────────────────────────────────────
