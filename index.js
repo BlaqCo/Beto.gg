@@ -600,6 +600,11 @@ app.get("/api/analytics", async (req, res) => {
   }
 });
 
+app.get("/api/ws", async (req, res) => {
+  try { const f = await import("./ws-feed.js"); res.json(f.wsStatus()); }
+  catch (e) { res.json({ enabled: false, error: e.message }); }
+});
+
 app.get("/api/latency", async (req, res) => {
   try {
     const lab = await import("./lab-latency.js");
@@ -761,6 +766,14 @@ async function loadBots() {
     lab.startScalpLab();
   } catch (err) {
     console.log("🧪 Scalp lab not loaded:", err.message);
+  }
+
+  // Real-time price feed for open positions — off unless WS_FEED=true
+  try {
+    const feed = await import("./ws-feed.js");
+    feed.startWsFeed();
+  } catch (err) {
+    console.log("📡 WS feed not loaded:", err.message);
   }
 
   // Latency lab — measurement only, off unless LATENCY_LAB=true
