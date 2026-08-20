@@ -90,8 +90,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 1;       // flat $1
-let BET_HIGH_USD  = 1;       // flat $1 (no edge scaling)
+let BET_LOW_USD   = 7.5;     // flat $7.50
+let BET_HIGH_USD  = 7.5;     // flat $7.50 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -99,8 +99,8 @@ const sizeForPx = px => {
 };
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.58;    // band floor: 58¢
-let FAV_MAX       = 0.66;    // band cap: 66¢
+let FAV_MIN       = 0.64;    // entry floor: 64% to win
+let FAV_MAX       = 0.90;    // cap kept clear of the 95¢ take-profit
 // Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
@@ -112,7 +112,7 @@ let MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qu
 // TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
 // caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
 // SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
-let LEAGUE_FOCUS  = [];      // whitelist — empty means all sports allowed
+let LEAGUE_FOCUS  = [];      // no restrictions — every sport allowed
 let LEAGUE_BLOCK  = [];      // blacklist — always excluded
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
@@ -129,7 +129,51 @@ let EDGE_MARGIN   = 0.01;   // 1¢ of edge required ON TOP of the fee
 // Wait this many minutes AFTER tip-off before entering: lets the early
 // swing happen so we buy into a settled, informed price rather than the
 // opening churn. 0 = enter as soon as the market goes live.
-let MIN_LIVE_MIN  = 0;      // no trailing wait — enter as soon as it's live
+let MIN_LIVE_MIN  = 0;      // superseded by the halfway gate below
+// ── HALFWAY GATE ── only enter once a match is at least this far through.
+// Progress is read from the live period/score where possible (sets, innings,
+// quarters, maps, CS rounds); when that is unavailable we fall back to
+// elapsed time against a per-sport typical duration.
+let HALFWAY_ONLY  = true;
+let MIN_PROGRESS  = 0.5;
+
+function matchProgress(m) {
+  const per = String(m.evPeriod || "").trim();
+  const sc  = String(m.evScore  || "").trim();
+  let mm;
+  // tennis / table tennis — "2nd Set"
+  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, (+mm[1] - 0.5) / 3);
+  // baseball — "Bot 5th" / "Top 7th"
+  if ((mm = per.match(/(?:top|bot|bottom)?\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, (+mm[1] - 0.5) / 9);
+  // basketball / hockey — "Q3", "3rd Quarter", "P2"
+  if ((mm = per.match(/q(?:uarter)?\s*(\d)/i)))              return Math.min(1, (+mm[1] - 0.5) / 4);
+  if ((mm = per.match(/p(?:eriod)?\s*(\d)/i)))               return Math.min(1, (+mm[1] - 0.5) / 3);
+  if (/2nd half|second half/i.test(per))                       return 0.75;
+  if (/1st half|first half/i.test(per))                        return 0.25;
+  // esports — "Map 2" / "Game 3"
+  if ((mm = per.match(/(?:map|game)\s*(\d)/i)))              return Math.min(1, (+mm[1] - 0.5) / 3);
+  // CS-style round score "13-9" → first to 13
+  if ((mm = sc.match(/^(\d{1,2})\s*[-:]\s*(\d{1,2})$/))) {
+    const a = +mm[1], b = +mm[2], lead = Math.max(a, b);
+    if (lead <= 16) return Math.min(1, lead / 13);
+    return Math.min(1, (a + b) / 18);                          // soccer-ish minutes
+  }
+  // fallback: elapsed time against a rough typical duration
+  if (m.gameStartIso) {
+    const mins = (Date.now() - new Date(m.gameStartIso).getTime()) / 60000;
+    if (mins < 0) return 0;
+    const hay = `${m.league || ""} ${m.slug || ""}`.toUpperCase();
+    const typical = /MLB|BASEBALL|NPB|KBO/.test(hay) ? 180
+                  : /NBA|BASKETBALL/.test(hay)       ? 135
+                  : /NFL|FOOTBALL/.test(hay)         ? 190
+                  : /NHL|HOCKEY/.test(hay)           ? 150
+                  : /SOCCER|EPL|UCL|LIGA/.test(hay)  ? 105
+                  : /CS2|VALORANT|LOL|ESPORT/.test(hay) ? 45
+                  : 95;                                        // tennis default
+    return Math.min(1, mins / typical);
+  }
+  return null;
+}
 // ── PRICE-DRIFT STUDY ────────────────────────────────────────────
 // Records each market's price at first sight (pre-game or first live look)
 // and compares it to the price at the MIN_LIVE_MIN mark, so we can answer
@@ -141,7 +185,7 @@ const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // the bottom of the range we've watched, not just any pullback.
 let NEAR_LOW_TOL  = 0.01;
 // Prices at/below this get first claim on slots (cheap-entry priority).
-let PRIORITY_PX   = 0.61;   // ≤61¢ gets first claim
+let PRIORITY_PX   = 0.68;   // cheaper entries get first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 let DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 let MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
@@ -151,7 +195,7 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
                               // 2¢ was tighter than normal drift, so nothing ever confirmed)
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
-let DCA_ENABLED   = true;   // ON: one add per market, ONLY at a real discount
+let DCA_ENABLED   = false;  // OFF — no averaging down
 let DCA_DROP_PCT  = 0.15;   // price ≥15% BELOW entry → add (60¢ → 51¢)
 let DCA_ADD_MULT  = 0.50;   // add 50% of the initial (scaled) bet
 let DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
@@ -161,7 +205,10 @@ let TP_ENABLED    = true;
 // settlement is +72% (58¢) down to +43% (70¢). So gain-mode at 0.80 could
 // never fire. Default is PRICE mode: sell when the market reaches 80¢.
 const TP_MODE       = "price";  // "price" | "gain"
-let TP_PRICE      = 0.80;     // price mode: sell at 80¢
+let TP_PRICE      = 0.95;     // take profit when probability hits 95%
+// ── STOP LOSS ── sell if the market collapses to this price.
+let SL_ENABLED    = true;
+let SL_PRICE      = 0.29;
 let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
 let KILL_ENABLED  = false;  // circuit breaker OFF
@@ -298,6 +345,26 @@ async function processExits() {
       liveMarks.set(slug, { price: bid, pnl: +exitPnl(bet, bid).toFixed(2), movePct: move, ts: Date.now() });
       console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} | ${cents(bet.entryPrice)}→${cents(bid)} | Δ${pct(move)} | holding to close | ${bet.marketQuestion?.slice(0, 40)}`);
 
+      // ── STOP LOSS ── the market has collapsed; cut it.
+      if (SL_ENABLED && !DRY_RUN_SELL_GUARD && bid && bid <= SL_PRICE) {
+        const shares = bet.betSize / bet.entryPrice;
+        const pnl = +(shares * bid - bet.betSize).toFixed(2);
+        const res = DRY_RUN ? { ok: true } : await closePositionLive(slug);
+        if (res.ok) {
+          closeBet(slug, { exitPrice: bid, reason: "stop_loss", pnl,
+                           won: false, status: "lost", result: "loss" });
+          try {
+            tracker.recordSettle(slug, { won: false, pnl, exitPrice: bid, reason: "stop_loss",
+              fallback: { slug, question: bet.marketQuestion, league: (bet.entryCoin || "SPORT").toUpperCase(),
+                          entry: bet.entryPrice, size: bet.betSize, at: bet.placedAt } });
+          } catch {}
+          exits.push({ slug, reason: "stop_loss", pnl });
+          console.log(`  🛑 STOP LOSS ${cents(bet.entryPrice)}→${cents(bid)} = $${pnl} | ${bet.marketQuestion?.slice(0, 38)}`);
+          continue;
+        }
+        console.log(`  ⚠️ Stop-loss sell failed (${res.error}) — holding`);
+      }
+
       // ── TAKE PROFIT ──
       // Sell into the BID (what we'd actually receive) once the gain hits target.
       const tpHit = bid && (TP_MODE === "price"
@@ -361,6 +428,7 @@ async function processExits() {
 // ── LIVE CONFIG: re-read every scan so dashboard edits apply within one
 // cycle. No redeploy, no lost calibration ledger.
 let PAUSED = false;
+const DRY_RUN_SELL_GUARD = false;   // paper mode still simulates exits
 async function applyLiveConfig() {
   try {
     const c = await cfgStore.getConfig();
@@ -381,6 +449,10 @@ async function applyLiveConfig() {
     if (c.DCA_ADD_MULT  != null) DCA_ADD_MULT  = c.DCA_ADD_MULT;
     if (c.TP_ENABLED    != null) TP_ENABLED    = c.TP_ENABLED;
     if (c.TP_PRICE      != null) TP_PRICE      = c.TP_PRICE;
+    if (c.SL_ENABLED    != null) SL_ENABLED    = c.SL_ENABLED;
+    if (c.SL_PRICE      != null) SL_PRICE      = c.SL_PRICE;
+    if (c.HALFWAY_ONLY  != null) HALFWAY_ONLY  = c.HALFWAY_ONLY;
+    if (c.MIN_PROGRESS  != null) MIN_PROGRESS  = c.MIN_PROGRESS;
     if (c.KILL_ENABLED  != null) KILL_ENABLED  = c.KILL_ENABLED;
     if (c.KILL_FLOOR    != null) KILL_FLOOR    = c.KILL_FLOOR;
     if (Array.isArray(c.LEAGUE_FOCUS)) LEAGUE_FOCUS = c.LEAGUE_FOCUS;
@@ -568,6 +640,12 @@ async function _runScanCycleInner() {
       .filter(m => {
         // LIVE ONLY: never enter before a match starts.
         if (!m.isLive) { windowRejects++; return false; }
+        // HALFWAY: wait until the match is at least half played.
+        if (HALFWAY_ONLY) {
+          const prog = matchProgress(m);
+          if (prog == null || prog < MIN_PROGRESS) { earlyRejects++; return false; }
+          return true;
+        }
         if (MIN_LIVE_MIN <= 0) return true;
         // Minutes of play. Prefer the official start time; fall back to when
         // WE first saw it live (many esports/TT markets carry no start time,
