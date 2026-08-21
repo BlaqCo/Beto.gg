@@ -91,8 +91,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 7.5;     // flat $7.50
-let BET_HIGH_USD  = 7.5;     // flat $7.50 (no edge scaling)
+let BET_LOW_USD   = 7;       // flat $7
+let BET_HIGH_USD  = 7;       // flat $7 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -100,13 +100,13 @@ const sizeForPx = px => {
 };
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.63;    // entry floor: 63%
+let FAV_MIN       = 0.59;    // entry floor: 59%
 let FAV_MAX       = 0.71;    // entry cap: 71%
 // Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
   - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
-let MAX_CONC      = 9999;    // NO slot limit — bet as many live matches as qualify
+let MAX_CONC      = 4;       // 4 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -135,7 +135,14 @@ let MIN_LIVE_MIN  = 0;      // superseded by the halfway gate below
 // Progress is read from the live period/score where possible (sets, innings,
 // quarters, maps, CS rounds); when that is unavailable we fall back to
 // elapsed time against a per-sport typical duration.
-let HALFWAY_ONLY  = true;
+// OFF for now: a price set after half the match has been watched by everyone
+// is likely SHARPER, not softer. Testing entries without the gate.
+let HALFWAY_ONLY  = false;
+// PRE-GAME ONLY: skip live markets entirely and buy hours before tip-off.
+// Live books are where the fast bots operate; pre-game is thinner and slower.
+let PREGAME_ONLY  = true;
+let UPCOMING_MIN  = 4;      // hours before start — earliest we'll enter
+let UPCOMING_MAX  = 8;      // ...and latest
 let MIN_PROGRESS  = 0.5;
 
 function matchProgress(m) {
@@ -187,11 +194,15 @@ const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // the bottom of the range we've watched, not just any pullback.
 let NEAR_LOW_TOL  = 0.01;
 // Prices at/below this get first claim on slots (cheap-entry priority).
-let PRIORITY_PX   = 0.68;   // cheaper entries get first claim
+let PRIORITY_PX   = 0.62;   // ≤62¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 let DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 let MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
-const MAKER_WAIT_MS = 20000;  // how long a resting order waits before cancel
+const MAKER_WAIT_MS = 20000;  // live: cancel quickly, the price is moving
+// Pre-game there is no rush. A resting order that waits minutes is far more
+// likely to fill as a MAKER — flipping a ~2.6% fee into a rebate. This is the
+// real fee lever, worth ~1.8 points of win rate.
+const MAKER_WAIT_PREGAME_MS = 150000;
 const QUOTE_HOLD_MS = 15000;  // ~1 scan cycle: price must be seen twice
 const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apart;
                               // 2¢ was tighter than normal drift, so nothing ever confirmed)
@@ -202,14 +213,17 @@ let DCA_DROP_PCT  = 0.15;   // price ≥15% BELOW entry → add (60¢ → 51¢)
 let DCA_ADD_MULT  = 0.50;   // add 50% of the initial (scaled) bet
 let DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
-let TP_ENABLED    = true;
+let TP_ENABLED    = false;  // OFF — hold every position to settlement
 // NOTE: a +80% GAIN is unreachable in a 58-70¢ band — max possible profit at
 // settlement is +72% (58¢) down to +43% (70¢). So gain-mode at 0.80 could
 // never fire. Default is PRICE mode: sell when the market reaches 80¢.
 const TP_MODE       = "price";  // "price" | "gain"
 let TP_PRICE      = 0.95;     // take profit when probability hits 95%
 // ── STOP LOSS ── sell if the market collapses to this price.
-let SL_ENABLED    = true;
+// OFF: selling at 29¢ returned $3.00 on a position worth $3.25 — a ~$0.25
+// spread+fee leak every trigger, plus it forfeits the recoveries. Fee maths
+// on this exchange favours holding to settlement.
+let SL_ENABLED    = false;
 let SL_PRICE      = 0.29;
 let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
@@ -224,7 +238,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-let ENTRIES_SCAN  = 9999;    // no per-scan cap
+let ENTRIES_SCAN  = 4;       // aligned with 4-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -459,6 +473,9 @@ async function applyLiveConfig() {
     if (c.SL_ENABLED    != null) SL_ENABLED    = c.SL_ENABLED;
     if (c.SL_PRICE      != null) SL_PRICE      = c.SL_PRICE;
     if (c.HALFWAY_ONLY  != null) HALFWAY_ONLY  = c.HALFWAY_ONLY;
+    if (c.PREGAME_ONLY  != null) PREGAME_ONLY  = c.PREGAME_ONLY;
+    if (c.UPCOMING_MIN  != null) UPCOMING_MIN  = c.UPCOMING_MIN;
+    if (c.UPCOMING_MAX  != null) UPCOMING_MAX  = c.UPCOMING_MAX;
     if (c.MIN_PROGRESS  != null) MIN_PROGRESS  = c.MIN_PROGRESS;
     if (c.KILL_ENABLED  != null) KILL_ENABLED  = c.KILL_ENABLED;
     if (c.KILL_FLOOR    != null) KILL_FLOOR    = c.KILL_FLOOR;
@@ -592,8 +609,8 @@ async function _runScanCycleInner() {
     // starting within 6h so capital isn't parked half a day before tip-off.
     // ── ENTRY WINDOW: only games starting 4–12 hours from now.
     // Pre-game window entries only; live and near-tipoff games excluded.
-    const UPCOMING_MIN_H = 4;
-    const UPCOMING_MAX_H = 12;
+    const UPCOMING_MIN_H = UPCOMING_MIN;
+    const UPCOMING_MAX_H = UPCOMING_MAX;
     // Track opener references: keep updating while pre-game; freeze once live.
     // Stamp when each market was first observed live (trailing clock) and
     // track the lowest price seen while trailing.
@@ -646,6 +663,13 @@ async function _runScanCycleInner() {
         sportRejects++; return false;
       })
       .filter(m => {
+        // PRE-GAME ONLY: never touch a match that has already started.
+        if (PREGAME_ONLY) {
+          if (m.isLive) { windowRejects++; return false; }
+          if (m.hoursUntil == null) { windowRejects++; return false; }
+          if (m.hoursUntil < UPCOMING_MIN_H || m.hoursUntil > UPCOMING_MAX_H) { windowRejects++; return false; }
+          return true;
+        }
         // LIVE ONLY: never enter before a match starts.
         if (!m.isLive) { windowRejects++; return false; }
         // HALFWAY: wait until the match is at least half played.
@@ -909,7 +933,8 @@ async function _runScanCycleInner() {
       let r = null;
       if (MAKER_MODE && buyYesMaker && m.bid > 0 && m.ask > m.bid) {
         r = await buyYesMaker({ slug: m.slug, sizeUsd: BET_SIZE, bid: m.bid, ask: m.ask,
-                                tick: m.tick, minQty: m.minQty, waitMs: MAKER_WAIT_MS });
+                                tick: m.tick, minQty: m.minQty,
+                                waitMs: m.isLive ? MAKER_WAIT_MS : MAKER_WAIT_PREGAME_MS });
         if (r.filled) console.log(`  🎯 MAKER FILL @ ${cents(r.fillPrice)} (saved ~${cents(m.ask - r.fillPrice)} vs ask + no taker fee)`);
         else console.log(`  ↩︎ Maker unfilled — ${r.error}`);
       }
