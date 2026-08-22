@@ -91,8 +91,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 7;       // flat $7
-let BET_HIGH_USD  = 7;       // flat $7 (no edge scaling)
+let BET_LOW_USD   = 6;       // flat $6
+let BET_HIGH_USD  = 6;       // flat $6 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -106,7 +106,7 @@ let FAV_MAX       = 0.71;    // entry cap: 71%
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
   - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
-let MAX_CONC      = 4;       // 4 concurrent bets MAX
+let MAX_CONC      = 5;       // 5 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -141,8 +141,8 @@ let HALFWAY_ONLY  = false;
 // PRE-GAME ONLY: skip live markets entirely and buy hours before tip-off.
 // Live books are where the fast bots operate; pre-game is thinner and slower.
 let PREGAME_ONLY  = true;
-let UPCOMING_MIN  = 4;      // hours before start — earliest we'll enter
-let UPCOMING_MAX  = 8;      // ...and latest
+let UPCOMING_MIN  = 2;      // hours before start — earliest we'll enter
+let UPCOMING_MAX  = 12;     // ...and latest
 let MIN_PROGRESS  = 0.5;
 
 function matchProgress(m) {
@@ -238,7 +238,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-let ENTRIES_SCAN  = 4;       // aligned with 4-slot cap
+let ENTRIES_SCAN  = 5;       // aligned with 5-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
