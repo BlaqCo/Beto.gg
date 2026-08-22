@@ -142,7 +142,7 @@ let HALFWAY_ONLY  = false;
 // Live books are where the fast bots operate; pre-game is thinner and slower.
 let PREGAME_ONLY  = true;
 let UPCOMING_MIN  = 2;      // hours before start — earliest we'll enter
-let UPCOMING_MAX  = 12;     // ...and latest
+let UPCOMING_MAX  = 4;      // ...and latest
 let MIN_PROGRESS  = 0.5;
 
 function matchProgress(m) {
