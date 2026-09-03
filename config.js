@@ -17,12 +17,12 @@ const KEY = "beto:config:sports";
 // ── Defaults ─────────────────────────────────────────────────────
 // Each entry: value, label, group, and the input hint the dashboard uses.
 export const SCHEMA = {
-  BET_SIZE:      { v: 6,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
-  MAX_CONC:      { v: 5,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
-  ENTRIES_SCAN:  { v: 5,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
+  BET_SIZE:      { v: 7,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
+  MAX_CONC:      { v: 6,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
+  ENTRIES_SCAN:  { v: 6,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
 
-  FAV_MIN:       { v: 0.59,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
-  FAV_MAX:       { v: 0.71,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
+  FAV_MIN:       { v: 0.64,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
+  FAV_MAX:       { v: 0.76,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   PRIORITY_PX:   { v: 0.61,  label: "Priority below",      group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   EDGE_MARGIN:   { v: 0.01,  label: "Edge over fee",       group: "Edge",    unit: "¢",  step: 0.005,min: 0,    max: 0.10, pct: true },
   NEAR_LOW_TOL:  { v: 0.01,  label: "Near-low tolerance",  group: "Edge",    unit: "¢",  step: 0.005,min: 0,    max: 0.10, pct: true },
@@ -40,6 +40,9 @@ export const SCHEMA = {
   SL_PRICE:      { v: 0.29,  label: "Sell if drops to",      group: "Manage",  unit: "¢",  step: 0.01, min: 0.02, max: 0.60, pct: true },
   HALFWAY_ONLY:  { v: false,  label: "Wait until halfway",    group: "Timing",  bool: true },
   MIN_PROGRESS:  { v: 0.50,  label: "Match progress needed", group: "Timing",  unit: "%",  step: 0.05, min: 0, max: 0.95, pct: true },
+
+  LEARN_ENABLED: { v: true,  label: "Learn from results",   group: "Edge",    bool: true },
+  LEARN_MIN_N:   { v: 12,    label: "Bets before learning", group: "Edge",    unit: "",   step: 1, min: 5, max: 200 },
 
   KILL_ENABLED:  { v: false, label: "Circuit breaker",     group: "Safety",  bool: true },
   KILL_FLOOR:    { v: 120,   label: "Stop below",          group: "Safety",  unit: "$",  step: 10,   min: 0,   max: 100000 },
