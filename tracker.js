@@ -155,6 +155,50 @@ function segment(rows, keyFn, label) {
 
 const bucketOf = px => { const lo = Math.floor(px * 100 / 3) * 3; return `${lo}-${lo + 2}¢`; };
 
+// ── SELF-LEARNING GATE ───────────────────────────────────────────
+// The bot consults its own settled results before betting. A league or
+// price bucket that has enough history AND is losing by a clear margin
+// gets skipped. This is the difference between a bot that repeats a
+// mistake and one that stops making it.
+let verdictCache = { map: null, ts: 0 };
+const VERDICT_TTL = 60_000;
+
+export async function segmentVerdicts({ minN = 12, cutoff = -4 } = {}) {
+  if (verdictCache.map && Date.now() - verdictCache.ts < VERDICT_TTL) return verdictCache.map;
+  const map = { leagues: {}, buckets: {}, goodLeagues: {} };
+  try {
+    const a = await analytics({ minN });
+    for (const x of a.byLeague) {
+      if (x.n >= minN && x.edge <= cutoff) map.leagues[x.key] = x;
+      else if (x.n >= minN && x.edge > 0)  map.goodLeagues[x.key] = x;   // proven earner
+    }
+    for (const x of a.byBucket) if (x.n >= minN && x.edge <= cutoff) map.buckets[x.key] = x;
+  } catch {}
+  verdictCache = { map, ts: Date.now() };
+  return map;
+}
+
+/** Should this candidate be skipped based on our own results? */
+export async function shouldSkip(league, entryPx, opts = {}) {
+  const v = await segmentVerdicts(opts);
+  const lg = (league || "OTHER").toUpperCase();
+  if (v.leagues[lg]) {
+    const x = v.leagues[lg];
+    return { skip: true, why: `${lg} is ${x.edge} pts below break-even over ${x.n} bets` };
+  }
+  // A league with a proven positive record isn't blocked by a price bucket
+  // that other leagues dragged down — otherwise one bad sport poisons a
+  // price range for every sport.
+  if (v.goodLeagues[lg]) return { skip: false };
+  const lo = Math.floor(entryPx * 100 / 3) * 3;
+  const key = `${lo}-${lo + 2}¢`;
+  if (v.buckets[key]) {
+    const x = v.buckets[key];
+    return { skip: true, why: `${key} bucket is ${x.edge} pts below break-even over ${x.n} bets` };
+  }
+  return { skip: false };
+}
+
 export async function analytics({ minN = 5 } = {}) {
   const rows = await getTrades();
   const n = rows.length;
