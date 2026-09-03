@@ -638,9 +638,12 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 6.00;   // $7 flat, small buffer
-const ORDER_MAX_USD = 7.50;   // nothing larger than ~$7
+const ORDER_MIN_USD = 5.00;   // $6 flat, small buffer
+const ORDER_MAX_USD = 6.50;   // nothing larger than ~$6
 const MAX_OPEN_POSITIONS = 6;  // hard slot cap enforced AT THE ORDER GATE
+// ONE BET PER MARKET, ALWAYS. With DCA removed there is no legitimate reason
+// to add to a position, so allowAddOn is ignored while this is true.
+const NO_STACKING = true;
 
 export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false, override = false }) {
   if (override) {
@@ -659,7 +662,7 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
         console.log(`🛑 [TRIPWIRE] ${open}/${MAX_OPEN_POSITIONS} slots already full — order REFUSED | ${slug}`);
         return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS} reached` };
       }
-      if (pos[slug] && !allowAddOn) {
+      if (pos[slug] && (NO_STACKING || !allowAddOn)) {
         console.log(`🛑 [TRIPWIRE] Already holding ${slug} — no stacking — REFUSED`);
         return { filled: false, error: "already holding this market" };
       }
