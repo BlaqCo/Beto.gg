@@ -17,12 +17,12 @@ const KEY = "beto:config:sports";
 // ── Defaults ─────────────────────────────────────────────────────
 // Each entry: value, label, group, and the input hint the dashboard uses.
 export const SCHEMA = {
-  BET_SIZE:      { v: 7,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
+  BET_SIZE:      { v: 6,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
   MAX_CONC:      { v: 6,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
   ENTRIES_SCAN:  { v: 6,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
 
-  FAV_MIN:       { v: 0.64,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
-  FAV_MAX:       { v: 0.76,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
+  FAV_MIN:       { v: 0.57,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
+  FAV_MAX:       { v: 0.65,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   PRIORITY_PX:   { v: 0.61,  label: "Priority below",      group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   EDGE_MARGIN:   { v: 0.01,  label: "Edge over fee",       group: "Edge",    unit: "¢",  step: 0.005,min: 0,    max: 0.10, pct: true },
   NEAR_LOW_TOL:  { v: 0.01,  label: "Near-low tolerance",  group: "Edge",    unit: "¢",  step: 0.005,min: 0,    max: 0.10, pct: true },
@@ -31,8 +31,6 @@ export const SCHEMA = {
   MAKER_MODE:    { v: true,  label: "Post maker orders",   group: "Timing",  bool: true },
 
   DCA_ENABLED:   { v: false,  label: "Second buy on dip",   group: "Manage",  bool: true },
-  DCA_DROP_PCT:  { v: 0.15,  label: "Dip trigger",         group: "Manage",  unit: "%",  step: 0.01, min: 0.05, max: 0.60, pct: true },
-  DCA_ADD_MULT:  { v: 0.50,  label: "Dip add size",        group: "Manage",  unit: "×",  step: 0.1,  min: 0.1,  max: 3 },
   TP_ENABLED:    { v: false,  label: "Take profit",         group: "Manage",  bool: true },
   TP_PRICE:      { v: 0.95,  label: "Sell at price",       group: "Manage",  unit: "¢",  step: 0.01, min: 0.50, max: 0.99, pct: true },
 
