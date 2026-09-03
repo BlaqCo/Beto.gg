@@ -91,8 +91,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 6;       // flat $6
-let BET_HIGH_USD  = 6;       // flat $6 (no edge scaling)
+let BET_LOW_USD   = 7;       // flat $7
+let BET_HIGH_USD  = 7;       // flat $7 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -100,13 +100,13 @@ const sizeForPx = px => {
 };
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.59;    // entry floor: 59%
-let FAV_MAX       = 0.71;    // entry cap: 71%
+let FAV_MIN       = 0.64;    // entry floor: 64%
+let FAV_MAX       = 0.76;    // entry cap: 76%
 // Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
   - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
-let MAX_CONC      = 5;       // 5 concurrent bets MAX
+let MAX_CONC      = 6;       // 6 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -140,9 +140,16 @@ let MIN_LIVE_MIN  = 0;      // superseded by the halfway gate below
 let HALFWAY_ONLY  = false;
 // PRE-GAME ONLY: skip live markets entirely and buy hours before tip-off.
 // Live books are where the fast bots operate; pre-game is thinner and slower.
-let PREGAME_ONLY  = true;
-let UPCOMING_MIN  = 2;      // hours before start — earliest we'll enter
-let UPCOMING_MAX  = 4;      // ...and latest
+// ── SELF-LEARNING ── the bot consults its own tracker before betting and
+// refuses segments (league or price bucket) that its record shows are losing.
+// Needs LEARN_MIN_N settled bets in that segment before it will act.
+let LEARN_ENABLED = true;
+let LEARN_MIN_N   = 12;
+let LEARN_CUTOFF  = -4;     // points below break-even that counts as "proven losing"
+
+let PREGAME_ONLY  = false;  // live games allowed again
+let UPCOMING_MIN  = 0;      // pre-game entries allowed right up to tip-off
+let UPCOMING_MAX  = 4;      // ...and up to 4h before start
 let MIN_PROGRESS  = 0.5;
 
 function matchProgress(m) {
@@ -194,7 +201,7 @@ const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // the bottom of the range we've watched, not just any pullback.
 let NEAR_LOW_TOL  = 0.01;
 // Prices at/below this get first claim on slots (cheap-entry priority).
-let PRIORITY_PX   = 0.62;   // ≤62¢ gets first claim
+let PRIORITY_PX   = 0.68;   // ≤68¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 let DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
 let MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
@@ -238,7 +245,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-let ENTRIES_SCAN  = 5;       // aligned with 5-slot cap
+let ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -474,6 +481,8 @@ async function applyLiveConfig() {
     if (c.SL_PRICE      != null) SL_PRICE      = c.SL_PRICE;
     if (c.HALFWAY_ONLY  != null) HALFWAY_ONLY  = c.HALFWAY_ONLY;
     if (c.PREGAME_ONLY  != null) PREGAME_ONLY  = c.PREGAME_ONLY;
+    if (c.LEARN_ENABLED != null) LEARN_ENABLED = c.LEARN_ENABLED;
+    if (c.LEARN_MIN_N   != null) LEARN_MIN_N   = c.LEARN_MIN_N;
     if (c.UPCOMING_MIN  != null) UPCOMING_MIN  = c.UPCOMING_MIN;
     if (c.UPCOMING_MAX  != null) UPCOMING_MAX  = c.UPCOMING_MAX;
     if (c.MIN_PROGRESS  != null) MIN_PROGRESS  = c.MIN_PROGRESS;
@@ -847,12 +856,20 @@ async function _runScanCycleInner() {
   // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
   for (const b of getAllActiveBets()) everBet.add(b.slug);
 
-  let entryErrors = 0;
+  let entryErrors = 0, learnSkips = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
     if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
+
+    // ── SELF-LEARNING: skip segments our own record says are losing ──
+    if (LEARN_ENABLED) {
+      try {
+        const v = await tracker.shouldSkip(m.league, m.ask, { minN: LEARN_MIN_N, cutoff: LEARN_CUTOFF });
+        if (v.skip) { learnSkips++; console.log(`  🧠 Skipping — ${v.why} | ${m.question?.slice(0, 34)}`); continue; }
+      } catch {}
+    }
     if (hasActiveBet(m.slug)) continue;
     if (!DRY_RUN && ownedSlugs.has(m.slug)) {
       console.log(`  ⏭ Already holding ${m.slug.slice(0, 24)} on Polymarket`);
@@ -1060,6 +1077,7 @@ async function _runScanCycleInner() {
     });
   } catch {}
 
+  if (learnSkips) console.log(`  🧠 Self-learning gate skipped ${learnSkips} candidate(s) from proven-losing segments`);
   console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)}`);
 
   const s = getStats();
