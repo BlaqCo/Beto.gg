@@ -91,8 +91,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 7;       // flat $7
-let BET_HIGH_USD  = 7;       // flat $7 (no edge scaling)
+let BET_LOW_USD   = 6;       // flat $6
+let BET_HIGH_USD  = 6;       // flat $6 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -100,8 +100,8 @@ const sizeForPx = px => {
 };
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.64;    // entry floor: 64%
-let FAV_MAX       = 0.76;    // entry cap: 76%
+let FAV_MIN       = 0.57;    // entry floor: 57%
+let FAV_MAX       = 0.65;    // entry cap: 65%
 // Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
@@ -215,10 +215,6 @@ const QUOTE_TOL     = 0.05;   // tolerance between sightings (scans are ~18s apa
                               // 2¢ was tighter than normal drift, so nothing ever confirmed)
 const quoteSeen     = new Map(); // slug → { px, since }
 // ── DCA / ADD-ON RULES (one add per market, ever) ──
-let DCA_ENABLED   = false;  // OFF — no averaging down
-let DCA_DROP_PCT  = 0.15;   // price ≥15% BELOW entry → add (60¢ → 51¢)
-let DCA_ADD_MULT  = 0.50;   // add 50% of the initial (scaled) bet
-let DCA_FLOOR_PX  = 0.25;   // never add below this — game is likely decided
 // ── TAKE PROFIT: close when unrealized gain hits this % of cost ──
 let TP_ENABLED    = false;  // OFF — hold every position to settlement
 // NOTE: a +80% GAIN is unreachable in a 58-70¢ band — max possible profit at
@@ -237,7 +233,6 @@ let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 let KILL_ENABLED  = false;  // circuit breaker OFF
 let KILL_FLOOR    = 120;    // total value (cash + open positions) — below this, NO new bets
 let   KILLED        = false;
-const addedOn       = new Set(); // slugs that already used their single add
 // ── TIER STRATEGY: main-tour tennis is priced by real money; ITF/table
 // tennis books are thin and soft (source of the 6-loss cluster). Soft-tier
 // markets must clear a much higher liquidity bar to qualify at all.
@@ -311,7 +306,6 @@ async function adoptOrphanPositions() {
         entryCoin: "ADOPTED",
         orderId: `adopted_${Date.now()}`,
       });
-      addedOn.add(slug);   // adopted positions don't get an add-on: entry basis is an average, not a single fill
       console.log(`  🧲 ADOPTED position ${slug.slice(0,30)} | entry ${cents(entry)} | $${size}`);
     }
   } catch (e) {
@@ -417,35 +411,7 @@ async function processExits() {
         console.log(`  ⚠️ Take-profit sell failed (${res.error}) — holding`);
       }
 
-      // ── ONE-TIME ADD-ON (DCA) ──
-      if (DCA_ENABLED && !DRY_RUN && !addedOn.has(slug)) {
-        const ask2 = bbo?.ask;
-        // DOWNWARD DCA ONLY: price has fallen ≥DCA_DROP_PCT below entry
-        // (65¢ entry → trigger at 50¢) and is still above the floor.
-        const trigger = +(bet.entryPrice * (1 - DCA_DROP_PCT)).toFixed(4);
-        const dip = ask2 && ask2 <= trigger && ask2 >= DCA_FLOOR_PX;
-        if (dip) {
-          const addUsd = +(BET_SIZE * DCA_ADD_MULT).toFixed(2);
-          // getBuyingPower() returns an OBJECT, not a number (this mismatch
-          // crashed processExits and stopped settlements from being recorded).
-          const balObj = await getBuyingPower();
-          const bal = Number(balObj?.buyingPower ?? balObj?.currentBalance ?? 0);
-          if (bal >= addUsd) {
-            addedOn.add(slug);   // claim BEFORE ordering — one add, ever
-            const r = await buyYesFOK({ slug, sizeUsd: addUsd, ask: ask2,
-                                        tick: bet.tick || 0.01, minQty: bet.minQty || 0.01,
-                                        allowAddOn: true });
-            if (r.filled) {
-              console.log(`  ➕ DCA BUY $${addUsd} @ ${cents(r.fillPrice)} (entry ${cents(bet.entryPrice)}, −${(DCA_DROP_PCT*100).toFixed(0)}%) | ${bet.marketQuestion?.slice(0, 38)}`);
-            } else {
-              console.log(`  ➕ Add-on not filled (${r.error})`);
-            }
-          } else {
-            console.log(`  ➕ Add-on skipped — balance $${(Number(bal) || 0).toFixed(2)} < $${addUsd}`);
-          }
-        }
-      }
-    } else {
+      // (DCA removed — one bet per market, no averaging down)
       console.log(`  📊 HOLD ⚽ ${(bet.entryCoin || "SPORT").padEnd(5)} $${bet.betSize} @ ${cents(bet.entryPrice)} | awaiting settlement | ${bet.marketQuestion?.slice(0, 40)}`);
     }
   }
@@ -472,9 +438,6 @@ async function applyLiveConfig() {
     if (c.NEAR_LOW_TOL  != null) NEAR_LOW_TOL  = c.NEAR_LOW_TOL;
     if (c.MIN_LIVE_MIN  != null) MIN_LIVE_MIN  = c.MIN_LIVE_MIN;
     if (c.MAKER_MODE    != null) MAKER_MODE    = c.MAKER_MODE;
-    if (c.DCA_ENABLED   != null) DCA_ENABLED   = c.DCA_ENABLED;
-    if (c.DCA_DROP_PCT  != null) DCA_DROP_PCT  = c.DCA_DROP_PCT;
-    if (c.DCA_ADD_MULT  != null) DCA_ADD_MULT  = c.DCA_ADD_MULT;
     if (c.TP_ENABLED    != null) TP_ENABLED    = c.TP_ENABLED;
     if (c.TP_PRICE      != null) TP_PRICE      = c.TP_PRICE;
     if (c.SL_ENABLED    != null) SL_ENABLED    = c.SL_ENABLED;
@@ -881,6 +844,7 @@ async function _runScanCycleInner() {
     // concurrent code path can order it too. Released only if we don't fill.
     everBet.add(m.slug);
     let filledThis = false;
+    let orderSent = false;      // true once ANY order has been transmitted
     try {
 
     let entryPrice = m.ask;
@@ -948,6 +912,7 @@ async function _runScanCycleInner() {
     if (!DRY_RUN) {
       attempts++;
       let r = null;
+      orderSent = true;
       if (MAKER_MODE && buyYesMaker && m.bid > 0 && m.ask > m.bid) {
         r = await buyYesMaker({ slug: m.slug, sizeUsd: BET_SIZE, bid: m.bid, ask: m.ask,
                                 tick: m.tick, minQty: m.minQty,
@@ -971,8 +936,10 @@ async function _runScanCycleInner() {
         r = await buyYesFOK({ slug: m.slug, sizeUsd: BET_SIZE, ask: m.ask, tick: m.tick, minQty: m.minQty });
       }
       if (!r.filled) {
-        console.log(`  ⚠️ Entry not filled (${r.error}) | ${m.question.slice(0, 40)}`);
-        everBet.delete(m.slug);  // release reservation — nothing filled
+        // KEEP the reservation. An order was sent; a maker fill can still land
+        // after we've been told "unfilled", and releasing here is how the same
+        // market got bought twice. It stays blocked for this process.
+        console.log(`  ⚠️ Entry not filled (${r.error}) — market stays reserved | ${m.question.slice(0, 36)}`);
         continue;
       }
       entryPrice = r.fillPrice;
@@ -1025,7 +992,9 @@ async function _runScanCycleInner() {
     } catch (err) {
       entryErrors++;
       console.log(`  💥 Entry error [${m.slug?.slice(0,28)}]: ${err.message} — continuing to next candidate`);
-      if (!filledThis) everBet.delete(m.slug);  // release reservation — nothing filled
+      // Only release if we never reached the order stage; otherwise a late
+      // fill could still exist and re-entry would double the position.
+      if (!filledThis && !orderSent) everBet.delete(m.slug);
       continue;
     }
   }
