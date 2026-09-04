@@ -1,9 +1,24 @@
 /**
  * polymarket-us.js — polymarket.us integration (no SDK; raw signed REST)
+ *
+ * OFFICIAL API REFERENCE: https://docs.polymarket.us/api-reference/market/overview
+ *
+ * KEY FACTS FROM DOCS:
+ * - GET /v1/markets?categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE
+ * - Price in BBO: bestBid/bestAsk are Amount objects: { value: "0.55", currency: "USD" }
+ * - Price in market list: bestBid/bestAsk are plain numbers
+ * - outcomePrices: JSON string "[\"0.62\",\"0.38\"]", index 0 = Yes
+ * - outcomes: JSON string "[\"Yes\",\"No\"]"
+ * - sportsMarketTypeV2 field: "MONEYLINE", "SPREAD", "TOTAL", "PROP"
+ * - gameStartTime field for game start
+ * - marketSides[].price = string price for that side, marketSides[].long = true for YES side
  */
 
 import axios from "axios";
 import crypto from "crypto";
+
+// ── VERSION BANNER: confirms which build is live ──
+console.log("🔖 polymarket-us.js v12-EDGE loaded — score-aware, ended-game block, discount gate support");
 
 const GATEWAY = "https://gateway.polymarket.us";
 const API     = "https://api.polymarket.us";
@@ -38,7 +53,9 @@ function getCreds() {
 function authHeaders(method, path) {
   const { keyId, privateKey } = getCreds();
   const timestamp = Date.now().toString();
-  const message = `${timestamp}${method}${path}`;
+  // Sign only the path WITHOUT query string — Polymarket US signs base path only
+  const basePath = path.split("?")[0];
+  const message = `${timestamp}${method}${basePath}`;
   const signature = crypto.sign(null, Buffer.from(message), privateKey).toString("base64");
   return {
     "X-PM-Access-Key": keyId,
@@ -56,47 +73,219 @@ async function signedRequest(method, path, body) {
     validateStatus: () => true,
   });
   if (res.status >= 200 && res.status < 300) return res.data;
+  if (res.status === 429) {
+    // Rate limited — wait and retry once
+    const retryAfter = parseInt(res.headers?.["retry-after"] || "5") * 1000;
+    await new Promise(r => setTimeout(r, Math.max(retryAfter, 5000)));
+    const res2 = await axios({
+      method, url: API + path, headers: authHeaders(method, path),
+      data: body ?? undefined, timeout: 15_000,
+      validateStatus: () => true,
+    });
+    if (res2.status >= 200 && res2.status < 300) return res2.data;
+    throw new Error(`429 rate limited (retry also failed)`);
+  }
   const msg = res.data?.message || res.data?.error || JSON.stringify(res.data)?.slice(0, 140) || `HTTP ${res.status}`;
   throw new Error(`${res.status}: ${msg}`);
 }
 
-// ── Public: sports moneyline markets ────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────
+const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+const parseArr = v => { try { return typeof v === "string" ? JSON.parse(v) : (Array.isArray(v) ? v : []); } catch { return []; } };
+
+// Amount object from BBO/book: { value: "0.55", currency: "USD" } OR plain number
+const amountVal = x => {
+  if (x == null) return null;
+  if (typeof x === "object") return num(x.value ?? x.amount);
+  return num(x);
+};
+
+// ── Price extraction (handles ALL field formats from docs) ────────
+function extractYesPrice(m) {
+  // 1) marketSides — most accurate: find the "long" side (YES)
+  const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
+  if (sides.length > 0) {
+    const longSide = sides.find(s => s.long === true);
+    const p = num(longSide?.price);
+    if (p) return p;
+  }
+
+  // 2) bestAsk from market list (plain number per docs)
+  const ask = num(m.bestAsk);
+  if (ask) return ask;
+
+  // 3) outcomePrices JSON string: "[\"0.62\",\"0.38\"]"
+  //    outcomes JSON string: "[\"Yes\",\"No\"]" — index 0 is YES
+  const prices   = parseArr(m.outcomePrices).map(Number).filter(n => n > 0 && n < 1);
+  const outcomes = parseArr(m.outcomes);
+  if (prices.length >= 2) {
+    const yi = outcomes.findIndex(o => /yes/i.test(String(o)));
+    const idx = yi >= 0 ? yi : prices.indexOf(Math.max(...prices));
+    return prices[idx] ?? Math.max(...prices);
+  }
+  if (prices.length === 1) return prices[0];
+
+  // 4) lastTradePrice or bestBid as final fallback
+  return num(m.lastTradePrice) ?? num(m.bestBid) ?? null;
+}
+
+// ── League detection ─────────────────────────────────────────────
+// ── slug is authoritative ────────────────────────────────────────
+// Slugs look like: aec-atp-hensea-meerot-2026-08-11, mlb-ath-sea-2026-09-03,
+// aec-nbasl-gs-okc-2026-07, aec-cs2-imp-alka-2026-08-09.
+// The token right after the optional "aec-" prefix IS the league. Reading it
+// from there beats guessing from question text, which produced NBA tags on
+// football markets and WNBA tags on tennis markets.
+const SLUG_LEAGUE = {
+  mlb:"MLB", npb:"MLB", kbo:"MLB", baseball:"MLB",
+  nba:"NBA", nbasl:"NBA", ncaamb:"NBA", basketball:"NBA",
+  wnba:"WNBA", ncaawb:"WNBA",
+  nfl:"NFL", ncaafb:"NFL", football:"NFL", cfl:"NFL",
+  nhl:"NHL", hockey:"NHL",
+  atp:"TENNIS", wta:"TENNIS", itf:"TENNIS", itfme:"TENNIS", itfwo:"TENNIS",
+  chal:"TENNIS", tennis:"TENNIS",
+  wtt:"TABLETENNIS", setka:"TABLETENNIS", tt:"TABLETENNIS",
+  cs2:"ESPORTS", csgo:"ESPORTS", valorant:"ESPORTS", val:"ESPORTS",
+  lol:"ESPORTS", dota2:"ESPORTS", dota:"ESPORTS", rl:"ESPORTS", esports:"ESPORTS",
+  epl:"SOCCER", laliga:"SOCCER", seriea:"SOCCER", bundesliga:"SOCCER",
+  ligue1:"SOCCER", mls:"SOCCER", ucl:"SOCCER", soccer:"SOCCER", fifa:"SOCCER",
+  ufc:"MMA", mma:"MMA", boxing:"MMA", box:"MMA",
+  cricket:"CRICKET", odi:"CRICKET", t20:"CRICKET",
+  golf:"GOLF", pga:"GOLF", darts:"DARTS",
+};
+function leagueFromSlug(slug) {
+  const parts = String(slug || "").toLowerCase().split("-").filter(Boolean);
+  if (!parts.length) return null;
+  const i = parts[0] === "aec" ? 1 : 0;
+  for (let k = i; k < Math.min(parts.length, i + 2); k++) {
+    const hit = SLUG_LEAGUE[parts[k]];
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function detectLeague(m) {
+  // 1) Slug — authoritative, checked before anything else.
+  const fromSlug = leagueFromSlug(m.slug || m.id || m.marketId);
+  if (fromSlug) return fromSlug;
+
+  // 2) The question often names the sport outright ("upcoming football event").
+  const qq = (m.question || m.title || "").toLowerCase();
+  const SPORT_WORD = [[/\bbaseball\b/,"MLB"],[/\bbasketball\b/,"NBA"],[/\bfootball\b/,"NFL"],
+                      [/\bhockey\b/,"NHL"],[/\btable[- ]?tennis\b/,"TABLETENNIS"],[/\btennis\b/,"TENNIS"],
+                      [/\besports?\b/,"ESPORTS"],[/\bsoccer\b/,"SOCCER"],[/\bcricket\b/,"CRICKET"],
+                      [/\bgolf\b/,"GOLF"],[/\bdarts\b/,"DARTS"],[/\bmma\b|\bufc\b|\bboxing\b/,"MMA"]];
+  for (const [re, lg] of SPORT_WORD) if (re.test(qq)) return lg;
+
+  const q   = (m.question || m.title || "").toLowerCase();
+  const cat = (m.category || "").toLowerCase();
+  const sub = (m.subcategory || "").toLowerCase();
+
+  // Use subcategory first (most specific — e.g. "MLB", "WNBA", "ATP")
+  if (sub) {
+    const s = sub.toUpperCase();
+    if (s.includes("MLB") || s.includes("BASEBALL")) return "MLB";
+    if (s.includes("NBA"))  return "NBA";
+    if (s.includes("WNBA")) return "WNBA";
+    if (s.includes("NFL"))  return "NFL";
+    if (s.includes("NHL"))  return "NHL";
+    if (s.includes("ATP") || s.includes("WTA") || s.includes("ITF") || s.includes("TENNIS")) return "TENNIS";
+    if (s.includes("CS2") || s.includes("VALORANT") || s.includes("LOL") || s.includes("ESPORT")) return "ESPORTS";
+    if (s.includes("MLS") || s.includes("WORLD CUP") || s.includes("SOCCER") || s.includes("UCL")) return "SOCCER";
+    if (sub.length <= 12) return sub.toUpperCase(); // use as-is for short subcategories
+  }
+
+  // Question text matching
+  if (/\bmlb\b|baseball|\b(phillies|dodgers|giants|astros|yankees|mets|cubs|red sox|athletics|tigers|nationals|braves|cardinals|padres|brewers|mariners|pirates|reds|rockies|orioles|rays|guardians|twins|royals|rangers|angels|diamondbacks)\b/i.test(q)) return "MLB";
+  if (/\bwnba\b|\b(mystics|sky|aces|liberty|fever|dream|sparks|storm|sun|lynx|wings|mercury|valkyries|firebirds)\b/i.test(q)) return "WNBA";
+  if (/\bnba\b|\b(celtics|lakers|warriors|bulls|heat|nuggets|bucks|suns|76ers|nets|knicks|raptors|mavericks|clippers|spurs|rockets|jazz|magic|pistons|hornets|hawks|pacers|grizzlies|kings|pelicans|blazers|thunder|timberwolves|cavaliers)\b/i.test(q)) return "NBA";
+  if (/\bnfl\b|\b(patriots|chiefs|cowboys|packers|steelers|bears|eagles|49ers|seahawks|ravens|bills|bengals|browns|colts|texans|jaguars|titans|broncos|raiders|chargers|dolphins|jets|falcons|saints|buccaneers|panthers|lions|vikings|rams)\b/i.test(q)) return "NFL";
+  if (/\btennis\b|wimbledon|\batp\b|\bwta\b|\bitf\b|french open|us open|australian open|(djokovic|alcaraz|sinner|swiatek|sabalenka|nadal|federer)/i.test(q)) return "TENNIS";
+  if (/esport|cs2|cs:go|\bdota\b|\blol\b|league of legends|valorant|overwatch|rocket league|starcraft/i.test(q)) return "ESPORTS";
+  if (/world cup|soccer|mls|premier league|la liga|bundesliga|serie a|champions league|ucl/i.test(q)) return "SOCCER";
+  if (/\bnhl\b|hockey|\b(bruins|rangers|maple leafs|canadiens|penguins|blackhawks|red wings|flyers|capitals|kings)\b/i.test(q)) return "NHL";
+
+  return "SPORT";
+}
+
+// ── Game market filter ───────────────────────────────────────────
+// DEAD SIMPLE: 
+// - Only accept markets with sportsMarketTypeV2 = "SPORTS_MARKET_TYPE_MONEYLINE"
+// - Reject sub-period props, season futures, player props
+// - Polymarket.us returns active:true, closed:true on live tradeable markets
+//   → DO NOT FILTER BY CLOSED FIELD
+// - DO NOT use GAME_VS regex for rejection
+
+function isGameMarket(m) {
+  const q = (m.question || m.title || "").trim();
+  
+  // MUST be active and NOT resolved
+  if (!q || m.active !== true || m.resolved === true) return false;
+
+  // REJECT: sub-period props (first half, 1st inning, first quarter, etc)
+  if (/first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h\b|h1\b|halftime|period\d|quarter\d/i.test(q)) {
+    return false;
+  }
+
+  // REJECT: season/futures (champion, pennant, world series, MVP, etc)
+  if (/champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|season record|playoff|postseason/i.test(q)) {
+    return false;
+  }
+
+  // REJECT: player props (hitting, scoring, passing, etc)
+  if (/will (score|throw|catch|run|make|hit|pass|strikeout|homerun|touchdown|goal|assist|rebound|block|steal|point|basket|field goal|extra point)/i.test(q)) {
+    return false;
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // ACCEPT ALL ACTIVE MARKETS — find the 2 live ones
+  // ════════════════════════════════════════════════════════════════
+  return true;
+}
+
+// ── Main fetch ───────────────────────────────────────────────────
 let _cache = null, _cacheTime = 0;
 const TTL = 20_000;
-const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
-
-// Sub-period markets to always exclude regardless of type
-const SUB_PERIOD = /first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter/i;
-
-// Season-long future patterns — exclude these even if they have a game start time
-const SEASON_FUTURE = /\b(champion|pennant|world series|super bowl|stanley cup|nba finals|wcf|ecf|alcs|nlcs|mvp|cy young|award|division winner|win the|make the playoffs|season total|over\/under \d+ wins)\b/i;
-
-// Game moneyline patterns — "vs/at" for team sports, "beat/defeat/over" for tennis/boxing
-const GAME_VS = /\bvs\.?\b|\bat\b|\bbeat\b|\bdefeat\b|\bover\b|\bwill .+ win .+ match|\bwill .+ (beat|defeat)/i;
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
 
-  // Fetch strategy: explicit sport-category endpoints + broad offsets
-  // Targets: MLB, Tennis, Esports, Soccer, NBA, NFL, WNBA + broad sweep
+  // OFFICIAL PARAMS from docs:
+  // categories=sports (plural, array-style)
+  // sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE (enum filter)
+  // gameStartTime via endDateMin/endDateMax
+  // volumeNumMin to filter out dead markets
+  const now = Date.now();
+
+  // OFFICIAL API PARAMS (docs.polymarket.us): date filters are
+  // startDateMin/startDateMax/endDateMin/endDateMax (ISO 8601).
+  // endDateMin=now-12h excludes stale resolved games SERVER-SIDE.
+  // sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE = moneylines only (NO PROPS).
+  const endMin   = new Date(now - 12 * 3600_000).toISOString();
+  const startMin = new Date(now - 24 * 3600_000).toISOString();
+  const startMax = new Date(now + 48 * 3600_000).toISOString();
+  const ML = "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE";
+
+  // ★★★ v10: OFFICIAL v2 SPORTS API (docs.polymarket.us/api-reference/sports) ★★★
+  // GET /v2/leagues/{slug}/events and /v2/sports/{slug}/events — this is what
+  // powers the app's league tabs (MLB, Esports, Golf, World Cup...).
+  // type=sport (default) = actual games, NOT futures. Events contain their markets.
+  // The old v1 tag sweeps are DEAD — the API now ignores tags= and returns the
+  // same stale Nov-2025 dump for every tag (proven in logs).
+  const LEAGUES = ["mlb","nba","nfl","nhl","wnba","epl","la-liga","serie-a",
+                   "bundesliga","ligue-1","mls","ucl","world-cup","kbo","npb",
+                   "atp","wta","itf","ufc","cs2","valorant","lol","dota-2"];
+  const SPORTS  = ["baseball","basketball","football","hockey","soccer","tennis",
+                   "mma","boxing","cricket","golf","esports","darts","table-tennis",
+                   "motorsports","rugby","volleyball","handball"];
+
   const urls = [
-    // Sport-specific category fetches
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=mlb`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=tennis`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=esports`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=soccer`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=nba`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=nfl`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=wnba`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&category=sports`,
-    // Direct moneyline param
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&sportsMarketType=SPORTS_MARKET_TYPE_MONEYLINE`,
-    // Broad sweep for anything not caught above
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=0`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=200`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=400`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=600`,
-    `${GATEWAY}/v1/markets?active=true&closed=false&limit=200&offset=800`,
+    // ── PRIMARY: v2 sports/league event sweeps (what the app itself uses) ──
+    ...SPORTS.map(s  => `${GATEWAY}/v2/sports/${s}/events?limit=50`),
+    ...LEAGUES.map(l => `${GATEWAY}/v2/leagues/${l}/events?limit=50`),
+    // ── Fallback: v1 date-filtered market queries (returned 5 real markets) ──
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
+    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}&limit=500`,
   ];
 
   const results = await Promise.allSettled(
@@ -104,195 +293,208 @@ export async function fetchSportsMoneylines() {
   );
 
   const seenKeys = new Set();
+  const marketSource = new Map(); // Track which endpoint returned each market
   let raw = [];
-  for (const r of results) {
+  let sportsCatCount = 0;
+  let moneylineCount = 0;
+  let shapeDumped = false;
+
+  // Normalize any response shape (v2 events / v1 markets) into market objects
+  const extractMarkets = (data) => {
+    const events = data?.events || (Array.isArray(data) ? data : null);
+    if (events && Array.isArray(events)) {
+      const mkts = [];
+      for (const ev of events) {
+        const evMarkets = ev?.markets || ev?.market ? (ev.markets || [ev.market]) : [];
+        for (const m of evMarkets) {
+          // Inherit game timing/live info from the parent event when missing
+          if (!m.gameStartTime) m.gameStartTime = ev.gameStartTime || ev.startTime || ev.startDate || null;
+          if (!m.endDate)       m.endDate       = ev.endDate || ev.endTime || null;
+          if (m.eventLive === undefined) m.eventLive = ev.live ?? ev.isLive ?? undefined;
+          if (!m.question)      m.question      = m.title || ev.title || ev.name || null;
+          // Live game state (Tier-1 data): score, period, finished flag
+          if (m.evScore  === undefined) m.evScore  = ev.score  ?? null;
+          if (m.evPeriod === undefined) m.evPeriod = ev.period ?? null;
+          if (m.evEnded  === undefined) m.evEnded  = ev.ended  ?? (ev.finishedTimestamp ? true : undefined);
+          mkts.push(m);
+        }
+        // Some responses may put markets fields directly on the event
+        if (!evMarkets.length && (ev?.slug || ev?.id) && (ev?.outcomePrices || ev?.bestAsk || ev?.marketSides)) {
+          mkts.push(ev);
+        }
+      }
+      return mkts;
+    }
+    return data?.markets || [];
+  };
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
     if (r.status !== "fulfilled") continue;
-    const arr = r.value?.data?.markets || [];
+    const data = r.value?.data;
+    const arr = extractMarkets(data);
+    const label = (urls[i].match(/\/v2\/(?:sports|leagues)\/([^/]+)\//) || [])[1]
+               || ((urls[i].match(/tags=([^&]*)/) || [])[1])
+               || "v1-datefilter";
+    if (arr.length) {
+      const first = arr[0];
+      console.log(`  🌐 ${decodeURIComponent(label)} → ${arr.length} | ${first?.question?.slice(0,30) || first?.slug || "-"} | start=${first?.gameStartTime || "-"}`);
+      // 🔬 Dump ONE raw sample so the exact v2 shape is visible in logs
+      if (!shapeDumped && urls[i].includes("/v2/")) {
+        shapeDumped = true;
+        console.log(`  🔬 V2 RAW SAMPLE: ${JSON.stringify(data).slice(0, 1200)}`);
+      }
+    }
+    const urlUsed = urls[i] || "";
+    const isLiveEndpoint = true; // v2 events endpoints serve current/live events
+    
     for (const m of arr) {
       const key = m.slug || m.id;
-      if (key && !seenKeys.has(key)) { seenKeys.add(key); raw.push(m); }
+      if (!key || seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      marketSource.set(key, { isLiveEndpoint });
+      // Authoritative league from the v2 endpoint this market came from —
+      // far more reliable than guessing from question text.
+      if (label && label !== "v1-datefilter" && !m._srcLeague) m._srcLeague = label.toUpperCase();
+      raw.push(m);
+      if ((m.category || "").toLowerCase().includes("sports")) sportsCatCount++;
+      if (m.sportsMarketTypeV2 === "SPORTS_MARKET_TYPE_MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE" || m.smt === "moneyline") moneylineCount++;
     }
   }
 
   if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`📡 [sports API] ${raw.length} unique markets from ${urls.length} endpoints`);
+  console.log(`🔖 v12-EDGE | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
 
-  // ── Price extraction helper ──────────────────────────────────
-  const parseArr = v => { try { return typeof v === "string" ? JSON.parse(v) : (Array.isArray(v) ? v : []); } catch { return []; } };
-
-  function extractPrice(m) {
-    // 1) bestBidQuote / bestAskQuote (V2 objects or plain numbers)
-    const bidQ = m.bestBidQuote ?? m.bestBid;
-    const askQ = m.bestAskQuote ?? m.bestAsk;
-    const bid = num(typeof bidQ === "object" ? bidQ?.price : bidQ);
-    const ask = num(typeof askQ === "object" ? askQ?.price : askQ);
-
-    // 2) outcomePrices — most common for binary YES/NO markets (MLB, tennis etc)
-    //    API returns "["0.62","0.38"]" — take the YES/higher side
-    const outcomes  = parseArr(m.outcomes);
-    const prices    = parseArr(m.outcomePrices).map(Number).filter(n => n > 0 && n < 1);
-    let est = null;
-    if (prices.length >= 2) {
-      // Find YES index or just take highest price (the favorite)
-      let yi = outcomes.findIndex(o => /yes/i.test(String(o)));
-      if (yi < 0) yi = prices.indexOf(Math.max(...prices)); // fallback: highest = favorite
-      if (yi >= 0 && yi < prices.length) est = prices[yi];
-      if (!est) est = Math.max(...prices); // absolute fallback
-    } else if (prices.length === 1) {
-      est = prices[0];
-    }
-
-    // 3) marketSides long price
-    if (est == null) {
-      const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
-      const longSide = sides.find(s => s.long === true);
-      if (longSide) est = num(longSide.price);
-    }
-
-    // 4) lastTradePrice / ask / bid as final fallbacks
-    if (est == null) est = ask ?? bid ?? num(m.lastTradePrice);
-
-    return { bid, ask, est };
+  // ── LOG ALL MARKETS to see what's actually available ──
+  for (const m of raw.slice(0, 10)) {
+    console.log(`  🎯 ${m.closed ? "❌ CLOSED" : "✅ OPEN"} | ${m.title || m.question} | closed=${m.closed} active=${m.active} resolved=${m.resolved}`);
   }
 
-  // ── Sport detection ───────────────────────────────────────────
-  const SPORT_TAGS = {
-    MLB:     /\bmlb\b|baseball|phillies|dodgers|giants|astros|yankees|cubs|mets|red sox|athletics|tigers|nationals|braves|cardinals|padres|brewers|mariners|pirates|reds|rockies|orioles|rays|guardians|twins|white sox|royals|rangers|angels|blue jays|diamondbacks/i,
-    NBA:     /\bnba\b|basketball.*nba|celtics|lakers|warriors|bulls|heat|nuggets|bucks|suns|76ers|nets|knicks|raptors|mavericks|clippers|spurs|rockets|jazz|magic|pistons|hornets|hawks|pacers|grizzlies|kings|pelicans|blazers|thunder|timberwolves|cavaliers/i,
-    NFL:     /\bnfl\b|football.*nfl|patriots|chiefs|cowboys|packers|steelers|bears|giants.*nfl|eagles|49ers|seahawks|ravens|bills|bengals|browns|colts|texans|jaguars|titans|broncos|raiders|chargers|dolphins|jets|falcons|saints|buccaneers|panthers|lions|vikings|rams|cardinals.*nfl/i,
-    WNBA:    /\bwnba\b/i,
-    TENNIS:  /\btennis\b|wimbledon|\batp\b|\bwta\b|french open|us open|australian open|roland garros|\bserve\b.*match|djokovic|alcaraz|sinner|swiatek|sabalenka|nadal|federer|osaka/i,
-    ESPORTS: /\besport|\bcs:?go\b|\bdota\b|\blol\b|league of legends|\bvalorant\b|\boverwatch\b|\bfortnite\b|\brocket league\b|\bcall of duty\b|\bstarcraft\b/i,
-    SOCCER:  /\bsoccer\b|\bfootball\b|\bmls\b|world cup|champions league|premier league|la liga|bundesliga|serie a|ligue 1|\bfc\b|\bfc \b|\bunited\b.*fc|real madrid|barcelona|chelsea|manchester|arsenal|liverpool|tottenham|juventus|milan|inter|psg|dortmund|ajax|porto|celtic/i,
-  };
-
-  function detectLeague(m) {
-    const q = m.question || m.title || "";
-    const cat = (m.category || "").toLowerCase();
-    const tags = Array.isArray(m.tags) ? m.tags : [];
-
-    // Check tags first (most reliable)
-    for (const t of tags) {
-      const abbr = t?.league?.abbreviation || t?.league?.name || t?.sport?.name;
-      if (abbr) return abbr.toUpperCase().slice(0, 12);
-    }
-
-    // Check category
-    if (cat === "mlb" || cat.includes("baseball")) return "MLB";
-    if (cat === "nba" || cat.includes("basketball")) return "NBA";
-    if (cat === "nfl" || cat.includes("football") && !cat.includes("soccer")) return "NFL";
-    if (cat === "wnba") return "WNBA";
-    if (cat === "tennis") return "TENNIS";
-    if (cat === "esports" || cat.includes("esport")) return "ESPORTS";
-    if (cat === "soccer" || cat.includes("soccer") || cat.includes("football")) return "SOCCER";
-
-    // Check question text
-    for (const [league, re] of Object.entries(SPORT_TAGS)) {
-      if (re.test(q)) return league;
-    }
-
-    return "SPORT";
-  }
-
-  // ── Game market filter ────────────────────────────────────────
-  const isGameMarket = m => {
-    const q = (m.question || m.title || "").trim();
-    if (!q) return false;
-    if (m.active === false || m.closed === true || m.resolved === true) return false;
-
-    // Exclude sub-period / props
-    if (SUB_PERIOD.test(q)) return false;
-    if (SEASON_FUTURE.test(q)) return false;
-
-    const cat = (m.category || "").toLowerCase();
-    const tags = Array.isArray(m.tags) ? m.tags : [];
-    const hasSportTag = tags.some(t => t?.sport?.name || t?.league?.name);
-    const isSportsCat = ["mlb","nba","nfl","wnba","tennis","esports","soccer","sports","football","baseball","basketball"].some(s => cat.includes(s));
-    const looksLikeSports = /(nba|nfl|mlb|nhl|mls|wnba|tennis|wimbledon|atp|wta|world cup|champions league|premier league|la liga|bundesliga|esport|cs:go|dota|valorant)/i.test(q);
-
-    if (!isSportsCat && !hasSportTag && !looksLikeSports) return false;
-
-    // Must look like a head-to-head matchup
-    if (!GAME_VS.test(q)) return false;
-
-    return true;
-  };
-
-  // ── Build output ──────────────────────────────────────────────
-  const now = Date.now();
+  // ── Build output ─────────────────────────────────────────
   const out = [];
+  const rej = { noslug: 0, active: 0, resolved: 0, prop: 0, stale: 0, faroff: 0, nodates: 0 };
 
   for (const m of raw) {
     const slug = m.slug || m.id || m.marketId;
-    if (!slug) continue;
-    if (!isGameMarket(m)) continue;
+    if (!slug) { rej.noslug++; continue; }
+    
+    // Relaxed: only reject when explicitly inactive/resolved.
+    // v2 event markets may omit these fields entirely.
+    if (m.active === false) { rej.active++; continue; }
+    // ── ENDED-GAME HARD BLOCK: the v2 feed says this game is FINISHED.
+    // Buying these is how "favorites" settle to zero minutes after entry.
+    if (m.evEnded === true || /final|^ft$|full.?time/i.test(String(m.evPeriod || ""))) { rej.stale++; continue; }
+    if (m.resolved === true || m.closed === true && m.eventLive === false) { rej.resolved++; continue; }
+
+    // ── NO PROPS: moneylines only ──
+    // Changelog Jul 9: soccer "to advance" is now ONE two-sided instrument —
+    // buying "YES" on it is NOT buying the favorite. Exclude entirely.
+    const slugL = String(slug).toLowerCase();
+    if (slugL.includes("to-advance") || slugL.includes("to_advance")) { rej.prop++; continue; }
+    const smt = (m.sportsMarketTypeV2 || m.sportsMarketType || "").toUpperCase();
+    if (smt.includes("TO_ADVANCE")) { rej.prop++; continue; }
+    if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") { rej.prop++; continue; }
+    // Text-based prop rejection for markets missing the type field
+    const qText = m.question || m.title || "";
+    if (/first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|will .* (score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|over\/under|\bspread\b|\btotal\b|player prop/i.test(qText)) { rej.prop++; continue; }
 
     const q = m.question || m.title || "";
-    const { bid, ask, est } = extractPrice(m);
+    const est = extractYesPrice(m);
 
-    // Time window: live OR starting within 12h
-    // If no gameStartTime, use endDate as proxy (must end within 12h or be active)
-    const gameStart = m.gameStartTime || m.game_start_time || m.startTime || null;
+    // ── DATE GATE (v10) ──
+    // Only gameStartTime is real game time. Markets whose parent event is
+    // flagged live bypass the gate entirely.
+    const gameStart = m.gameStartTime || null;
     let startMs = gameStart ? new Date(gameStart).getTime() : null;
     const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
+    const source = marketSource.get(slug) || { isLiveEndpoint: false };
+    const evLive = m.eventLive === true;
 
-    let passesTime = false;
-    if (startMs) {
-      const hoursOut = (startMs - now) / 3_600_000;
-      passesTime = startMs <= now || hoursOut <= 12; // live or within 12h
-    } else if (endMs) {
-      // No start time — accept if market ends within 24h and hasn't ended
-      const daysToEnd = (endMs - now) / (3_600_000 * 24);
-      passesTime = endMs > now && daysToEnd <= 1;
+    if (!evLive) {
+      if (startMs) {
+        const hoursOut = (startMs - now) / 3_600_000;
+        if (hoursOut < -8)  { rej.stale++;  continue; }  // started >8h ago → over
+        if (hoursOut > 24)  { rej.faroff++; continue; }  // starts >24h away
+      } else {
+        if (endMs && endMs < now) { rej.stale++; continue; }  // already ended
+        if (!endMs) { rej.nodates++; continue; }              // no dates → unverifiable
+        // ends in the future & no gameStart → keep (live games; book-state check guards entry)
+      }
     }
-    if (!passesTime) continue;
 
-    // Must have a usable price
-    const px = est ?? ask ?? bid;
-    if (!px) continue;
+    const detected  = detectLeague(m);
+    const league    = (detected && detected !== "SPORT") ? detected : (m._srcLeague || detected);
+    // A market is LIVE if:
+    // 1. It came from the LIVE endpoint (no closed=false filter), OR
+    // 2. It has a gameStartTime in the past (started < now)
+    // LIVE = the event is actually in progress: API live flag, or game
+    // started within the last 8h. (v11 fix: previously EVERY v2 market was
+    // flagged live, so live-first prioritization did nothing.)
+    const isLive    = m.eventLive === true ||
+                      (startMs && startMs <= now && (now - startMs) < 8 * 3_600_000);
+    const hoursUntil = isLive ? 0 : (startMs ? Math.round((startMs - now) / 3_600_000 * 10) / 10 : null);
 
-    const league = detectLeague(m);
-    if (startMs == null) startMs = endMs ?? now;
-    const isLive = startMs <= now;
-    const hoursUntil = isLive ? 0 : Math.round((startMs - now) / 3_600_000 * 10) / 10;
+    // Compute ask/bid from available fields (est may be null)
+    const displayPrice = est ?? 0.50; // default for sorting/display
+    const ask = (est ?? amountVal(m.bestAsk) ?? 0.50) || 0.50;
+    const bid = (amountVal(m.bestBid) ?? (est && est - 0.02 > 0 ? est - 0.02 : 0.48)) || 0.48;
 
     out.push({
       slug, question: q,
-      subtitle: m.subtitle || null,
+      subtitle: m.description?.slice(0, 80) || null,
       league,
-      ask: ask ?? est, bid: bid ?? est, est: est ?? ask ?? bid,
-      tick: num(m.orderPriceMinTickSize) || 0.01,
+      ask: Math.min(Math.max(ask, 0.01), 0.99), // ensure 0.01 - 0.99
+      bid: Math.min(Math.max(bid, 0.01), 0.99),
+      est: est || displayPrice,
+      tick:   num(m.orderPriceMinTickSize) || 0.01,
       minQty: num(m.minimumTradeQty) || 1,
       gameStartIso: gameStart,
-      endIso: m.endDate || null,
+      endIso:  m.endDate || null,
       category: m.category || "",
+      subcategory: m.subcategory || "",
       isLive,
       hoursUntil,
+      evScore:  m.evScore  ?? null,
+      evPeriod: m.evPeriod ?? null,
+      volume24h: num(m.volume24hr) || 0,
+      volumeTotal: num(m.volume) || 0,
+      lastTradePx: num(m.lastTradePx) || num(m.lastTradePrice) || null,
       sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
     });
   }
 
-  // Sort: live first, then soonest, then highest price
+  // Sort: live first → soonest → highest volume → highest price
   out.sort((a, b) => {
     if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
-    const aStart = a.gameStartIso ? new Date(a.gameStartIso).getTime() : now + 999_999_999;
-    const bStart = b.gameStartIso ? new Date(b.gameStartIso).getTime() : now + 999_999_999;
-    if (aStart !== bStart) return aStart - bStart;
+    const aS = a.gameStartIso ? new Date(a.gameStartIso).getTime() : now + 999_999_999;
+    const bS = b.gameStartIso ? new Date(b.gameStartIso).getTime() : now + 999_999_999;
+    if (aS !== bS) return aS - bS;
+    if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
     return (b.est || 0) - (a.est || 0);
   });
 
   const liveCount = out.filter(x => x.isLive).length;
-  const preCount  = out.length - liveCount;
-  console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} live, ${preCount} upcoming)`);
-  if (out.length > 0) {
-    console.log("  Sample markets: " + out.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${m.league} ${(m.est*100).toFixed(0)}¢ ${m.question.slice(0,30)}`).join(" | "));
+  console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} 🔴 live, ${out.length - liveCount} ⏳ upcoming)`);
+  console.log(`  ⛔ rejected: inactive=${rej.active} resolved=${rej.resolved} prop=${rej.prop} stale=${rej.stale} faroff=${rej.faroff} nodates=${rej.nodates}`);
+  for (const s of out.slice(0, 8)) {
+    console.log(`  ✅ SURVIVOR: ${s.slug} | ${s.question?.slice(0,35) || "-"} | gameStart=${s.gameStartTime || "-"} end=${s.endDate || "-"}`);
   }
+  if (out.length > 0) {
+    console.log("  Top markets: " + out.slice(0, 8).map(m =>
+      `${m.isLive ? "🔴" : "⏳"} ${m.league} ${(m.est * 100).toFixed(0)}¢ ${m.question.slice(0, 40)}`
+    ).join(" | "));
+  }
+  // Log how many per league for debugging
+  const byLeague = {};
+  out.forEach(m => { byLeague[m.league] = (byLeague[m.league] || 0) + 1; });
+  console.log("  By league: " + Object.entries(byLeague).map(([l,n]) => `${l}:${n}`).join(" "));
 
   _cache = out;
   _cacheTime = Date.now();
   return out;
 }
 
+// ── verifyCandidates ─────────────────────────────────────────────
 export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
   const checks = await Promise.all(cands.map(async c => {
     const bbo = await getBBO(c.slug);
@@ -303,17 +505,59 @@ export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
   return checks.filter(Boolean);
 }
 
+// ── getBBO ───────────────────────────────────────────────────────
+// BBO response: { marketData: { bestBid: { value: "0.54", currency: "USD" }, bestAsk: { value: "0.56" }, lastTradePx: {...}, currentPx: {...} } }
 export async function getBBO(slug) {
   try {
     const { data } = await axios.get(
       `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/bbo`, { timeout: 8_000 });
     const d = data?.marketData || data || {};
-    const val = x => (x && x.value != null) ? Number(x.value) : num(x);
-    return { bid: val(d.bestBid), ask: val(d.bestAsk),
-             last: val(d.lastTradePx) ?? val(d.lastTradePrice) };
-  } catch { return null; }
+    const result = {
+      bid:  amountVal(d.bestBid),
+      ask:  amountVal(d.bestAsk),
+      last: amountVal(d.lastTradePx) ?? amountVal(d.currentPx),
+    };
+    // DEBUG: log if BBO is suspiciously high
+    if (result.ask >= 0.95) {
+      console.log(`⚠️ [getBBO] HIGH ASK=${result.ask} | slug=${slug} | raw=${JSON.stringify({bid: d.bestBid, ask: d.bestAsk})}`);
+    }
+    return result;
+  } catch (err) {
+    console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
+    return null;
+  }
 }
 
+// ── getBookState ─────────────────────────────────────────────────
+// GROUND TRUTH tradeability check (official docs): the /book endpoint
+// returns state = MARKET_STATE_OPEN only if the market is trading NOW.
+// Stale/resolved markets return EXPIRED / TERMINATED / HALTED.
+let _bookShapeLogged = false;
+export async function getBookState(slug) {
+  try {
+    const { data } = await axios.get(
+      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/book`, { timeout: 8_000 });
+    if (!_bookShapeLogged) {
+      _bookShapeLogged = true;
+      console.log(`  🔬 BOOK RAW SAMPLE (${slug}): ${JSON.stringify(data).slice(0, 500)}`);
+    }
+    const d = data?.marketData || data || {};
+    const state = d.state || d.status || d.marketState || "UNKNOWN";
+    return {
+      state,
+      isOpen: /OPEN/i.test(String(state)),
+      bestBid: amountVal(d.bids?.[0]?.px) ?? amountVal(d.bestBid),
+      bestAsk: amountVal(d.offers?.[0]?.px) ?? amountVal(d.asks?.[0]?.px) ?? amountVal(d.bestAsk),
+      bidQty:  Number(d.bids?.[0]?.qty || 0),
+      askQty:  Number(d.offers?.[0]?.qty || d.asks?.[0]?.qty || 0),
+    };
+  } catch (err) {
+    // Network/404 → state UNKNOWN (fail-open); NOT a dead-market signal
+    return { state: "UNKNOWN", isOpen: false, bestBid: null, bestAsk: null, bidQty: 0, askQty: 0 };
+  }
+}
+
+// ── getSettlement ────────────────────────────────────────────────
 export async function getSettlement(slug) {
   try {
     const { data } = await axios.get(
@@ -326,6 +570,7 @@ export async function getSettlement(slug) {
   } catch { return null; }
 }
 
+// ── getBuyingPower ───────────────────────────────────────────────
 const money = x => {
   if (x == null) return null;
   if (typeof x === "object") return money(x.value ?? x.amount ?? x.units);
@@ -338,7 +583,7 @@ export async function getBuyingPower() {
   const b = await signedRequest("GET", "/v1/account/balances");
   let root = b?.balances ?? b ?? {};
   if (Array.isArray(root)) root = root[0] || {};
-  const buyingPower = money(root.buyingPower) ?? money(root.buying_power) ?? null;
+  const buyingPower    = money(root.buyingPower) ?? money(root.buying_power) ?? null;
   const currentBalance = money(root.currentBalance) ?? money(root.current_balance) ?? money(root.cashBalance) ?? null;
   if ((buyingPower == null || buyingPower === 0) && !_balShapeLogged) {
     _balShapeLogged = true;
@@ -347,33 +592,194 @@ export async function getBuyingPower() {
   return { buyingPower: buyingPower ?? 0, currentBalance: currentBalance ?? buyingPower ?? 0 };
 }
 
-export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01 }) {
-  const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
-  const qty = Math.floor(sizeUsd / limit);
-  if (qty < 1) return { filled: false, error: `size $${sizeUsd} < 1 contract @ ${limit.toFixed(2)}` };
+
+// ── buyYesMaker ──────────────────────────────────────────────────
+// POST a resting limit order at/near the MIDPOINT instead of paying the ask.
+// Why: taker orders pay the spread AND the 3% taker fee, and only fill when a
+// faster counterparty wants out (adverse selection). A resting maker order
+// buys cheaper, avoids the taker fee, and earns rebates. Cost: it may not fill.
+export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty = 0.01, waitMs = 20000, override = false }) {
+  if (override) {
+    console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
+  } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
+    console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
+    return { filled: false, error: `order size $${sizeUsd} outside allowed` };
+  }
+  try {
+    const pos = await getOpenPositions();
+    if (pos) {
+      const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
+      if (open >= MAX_OPEN_POSITIONS) return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS}` };
+      if (pos[slug]) return { filled: false, error: "already holding this market" };
+    }
+  } catch {}
+
+  if (!(bid > 0 && ask > 0 && ask > bid)) return { filled: false, error: "no two-sided book for maker order" };
+  // MAKER PRICING (fixed): the old code rounded the midpoint to the nearest
+  // tick, which on a 1¢ spread (bid .67 / ask .68) rounded UP to .68 — the ask.
+  // That crosses the book and fills as a TAKER, paying the 3% fee we were
+  // trying to avoid. Now: never price at or above the ask, and floor-round.
+  const mid = (bid + ask) / 2;
+  let price = Math.min(mid, ask - tick);          // strictly inside the spread
+  price = Math.floor(price / tick) * tick;        // floor, never round up into the ask
+  price = Math.round(price * 1000) / 1000;
+  if (price >= ask) price = +(ask - tick).toFixed(4);
+  if (price < bid) price = bid;                   // never worse than the current bid
+  if (!(price > 0.01 && price < 0.99)) return { filled: false, error: "maker price out of bounds" };
+
+  const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
+  let qty = Math.floor((sizeUsd / price) / step) * step;
+  qty = Math.round(qty * 1000) / 1000;
+  while (qty > step && qty * price > sizeUsd + 1e-9) qty = Math.round((qty - step) * 1000) / 1000;
+  if (!(qty > 0)) return { filled: false, error: "size too small for maker order" };
+
+  let id = null;
   try {
     const order = await signedRequest("POST", "/v1/orders", {
       marketSlug: slug,
-      intent: "ORDER_INTENT_BUY_LONG",
-      type: "ORDER_TYPE_LIMIT",
-      price: { value: limit.toFixed(2), currency: "USD" },
-      quantity: qty,
-      tif: "TIME_IN_FORCE_FILL_OR_KILL",
+      intent:     "ORDER_INTENT_BUY_LONG",
+      type:       "ORDER_TYPE_LIMIT",
+      price:      { value: price.toFixed(2), currency: "USD" },
+      quantity:   qty,
+      tif:        "TIME_IN_FORCE_GOOD_TILL_CANCEL",
     });
-    let state = order?.state, id = order?.id;
-    if (state === "ORDER_STATE_PENDING_NEW" && id) {
-      await new Promise(r => setTimeout(r, 1200));
+    id = order?.id;
+    if (!id) return { filled: false, error: `no order id (${order?.state || "unknown"})` };
+
+    // Poll for a fill, then cancel whatever hasn't filled.
+    const deadline = Date.now() + waitMs;
+    let state = order?.state;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 2500));
       try { state = (await signedRequest("GET", `/v1/order/${id}`))?.state; } catch {}
+      if (state === "ORDER_STATE_FILLED") {
+        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
+      }
+      if (state && /CANCEL|REJECT|EXPIRED/i.test(state)) break;
     }
-    if (state === "ORDER_STATE_FILLED") {
-      return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id };
+    try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {}
+    // A fill can land in the same instant we cancel — verify TWICE, two ways.
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const fin = await signedRequest("GET", `/v1/order/${id}`);
+      if (fin?.state === "ORDER_STATE_FILLED") {
+        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
+      }
+    } catch {}
+    // Positions are the ground truth — if the slug now shows a position, it filled.
+    try {
+      const pos2 = await getOpenPositions();
+      if (pos2 && pos2[slug] && pos2[slug].qtyBought > 0) {
+        console.log(`  ✅ Maker filled late (confirmed via positions) | ${slug}`);
+        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
+      }
+    } catch {}
+    return { filled: false, error: `maker unfilled @ ${price.toFixed(2)} (cancelled)`, orderId: id };
+  } catch (err) {
+    if (id) { try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {} }
+    return { filled: false, error: err.message };
+  }
+}
+
+// ── buyYesFOK ────────────────────────────────────────────────────
+// ── ORDER-SIZE TRIPWIRE ──────────────────────────────────────────
+// EVERY buy passes through here. Regardless of which code path calls,
+// orders outside these bounds are refused. Raise ORDER_MAX_USD if you
+// ever intentionally raise the flat bet above $5.
+const ORDER_MIN_USD = 8.00;   // $9 flat, small buffer
+const ORDER_MAX_USD = 9.50;   // nothing larger than ~$9
+const MAX_OPEN_POSITIONS = 3;  // hard slot cap enforced AT THE ORDER GATE
+// ONE BET PER MARKET, ALWAYS. With DCA removed there is no legitimate reason
+// to add to a position, so allowAddOn is ignored while this is true.
+const NO_STACKING = true;
+
+export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false, override = false }) {
+  if (override) {
+    console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
+  } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
+    console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
+    return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
+  }
+  // ── SLOT TRIPWIRE: count REAL open positions before every order.
+  // Enforced here so the cap holds no matter which code path calls.
+  try {
+    const pos = await getOpenPositions();
+    if (pos) {
+      const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
+      if (open >= MAX_OPEN_POSITIONS && !allowAddOn) {
+        console.log(`🛑 [TRIPWIRE] ${open}/${MAX_OPEN_POSITIONS} slots already full — order REFUSED | ${slug}`);
+        return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS} reached` };
+      }
+      if (pos[slug] && (NO_STACKING || !allowAddOn)) {
+        console.log(`🛑 [TRIPWIRE] Already holding ${slug} — no stacking — REFUSED`);
+        return { filled: false, error: "already holding this market" };
+      }
     }
+  } catch (e) { /* position check unavailable — size tripwire still applies */ }
+  const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
+  // PARTIAL CONTRACTS (API since Jun 8): decimal quantities allowed.
+  // Buy exactly sizeUsd worth, floored to the instrument's minQty step.
+  const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
+  let qty = Math.floor((sizeUsd / limit) / step) * step;
+  qty = Math.round(qty * 1000) / 1000;
+  // HARD CAP: cost can NEVER exceed sizeUsd
+  while (qty > step && qty * limit > sizeUsd + 1e-9) qty = Math.round((qty - step) * 1000) / 1000;
+  if (!(qty > 0)) return { filled: false, error: `size $${sizeUsd} too small @ ${limit.toFixed(3)}` };
+  try {
+    const order = await signedRequest("POST", "/v1/orders", {
+      marketSlug: slug,
+      intent:     "ORDER_INTENT_BUY_LONG",
+      type:       "ORDER_TYPE_LIMIT",
+      price:      { value: limit.toFixed(2), currency: "USD" },
+      quantity:   qty,
+      tif:        "TIME_IN_FORCE_FILL_OR_KILL",
+    });
+    let state = order?.state ?? order?.orderState ?? order?.status;
+    const id = order?.id ?? order?.orderId;
+    const filledOf = o => {
+      const q = parseFloat(o?.filledQuantity ?? o?.filledQty ?? o?.cumQty ?? o?.executedQuantity ?? 0);
+      return Number.isFinite(q) ? q : 0;
+    };
+    let filledQty = filledOf(order);
+
+    // Poll a few times: the API sometimes returns no state on the POST, and a
+    // single 1.2s look was declaring good orders "unknown" (they had filled).
+    if (!/FILLED/i.test(String(state)) && filledQty <= 0 && id) {
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 900));
+        try {
+          const o = await signedRequest("GET", `/v1/order/${id}`);
+          state = o?.state ?? o?.orderState ?? o?.status ?? state;
+          filledQty = filledOf(o) || filledQty;
+        } catch {}
+        if (/FILLED/i.test(String(state)) || filledQty > 0) break;
+        if (/CANCEL|REJECT|EXPIRED|KILL/i.test(String(state))) break;
+      }
+    }
+
+    if (/FILLED/i.test(String(state)) || filledQty > 0) {
+      const q = filledQty > 0 ? filledQty : qty;
+      return { filled: true, qty: q, fillPrice: limit, cost: +(q * limit).toFixed(2), orderId: id };
+    }
+
+    // Last resort: the portfolio is ground truth — a fill may have landed
+    // without the order endpoint ever reporting it.
+    try {
+      const pos = await getOpenPositions();
+      if (pos && pos[slug] && pos[slug].qtyBought > 0) {
+        console.log(`  ✅ Fill confirmed via positions (order reported "${state || "no state"}") | ${slug}`);
+        return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id };
+      }
+    } catch {}
+
+    if (!state) console.log(`  🔎 Order response had no state: ${JSON.stringify(order).slice(0, 220)}`);
     return { filled: false, error: `order ${state || "unknown"}`, orderId: id };
   } catch (err) {
     return { filled: false, error: err.message };
   }
 }
 
+// ── closePositionLive ─────────────────────────────────────────────
 export async function closePositionLive(slug) {
   try {
     await signedRequest("POST", "/v1/order/close-position", { marketSlug: slug });
@@ -383,15 +789,31 @@ export async function closePositionLive(slug) {
   }
 }
 
+// ── getOpenPositions ─────────────────────────────────────────────
 export async function getOpenPositions() {
   try {
-    const data = await signedRequest("GET", "/v1/portfolio/positions");
-    const positions = data?.positions || {};
+    // Pagination-ready (changelog v0.0.53): follow nextCursor until eof.
+    let positions = {};
+    let cursor = null;
+    for (let page = 0; page < 20; page++) {
+      const path = "/v1/portfolio/positions" + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : "");
+      const data = await signedRequest("GET", path);
+      Object.assign(positions, data?.positions || {});
+      if (data?.eof !== false || !data?.nextCursor) break;
+      cursor = data.nextCursor;
+    }
     const out = {};
     for (const [slug, p] of Object.entries(positions)) {
+      // Same field fallbacks as getOpenPositionsEnriched (proven against live API):
+      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? p?.netPosition ?? 0);
+      const avg = p?.avgPx != null ? parseFloat(p.avgPx) : null;
+      const cost = p?.cost?.value != null ? parseFloat(p.cost.value) : null;
+      const cashValue = p?.cashValue?.value != null ? parseFloat(p.cashValue.value) : null;
+      const meta = p?.marketMetadata || p?.market_metadata || {};
       out[slug] = {
-        qtyBought: Number(p?.qtyBought ?? 0),
-        netPosition: Number(p?.netPosition ?? 0),
+        qtyBought: qty, netPosition: qty,
+        avgPx: (avg && avg > 0.02 && avg < 0.99) ? +avg.toFixed(4) : null,
+        cost, cashValue, question: meta.title || meta.question || meta.name || null,
       };
     }
     return out;
@@ -400,6 +822,280 @@ export async function getOpenPositions() {
     return null;
   }
 }
+
+// ── getTradeHistory ──────────────────────────────────────────────
+// Fetches activities from /v1/portfolio/activities (correct endpoint per docs).
+// Filters to TRADE + POSITION_RESOLUTION types.
+// Activity shape:
+//   { type, trade: { marketSlug, price:{value,currency}, qtyDecimal, costBasis:{value}, realizedPnl:{value}, createTime, state }, positionResolution: { ... } }
+// Cached so repeated dashboard polls never re-hit the API.
+let _tradeCache = { data: null, ts: 0 };
+const TRADE_TTL = 120_000;   // 2 minutes
+
+export async function getTradeHistory({ limit = 500, force = false } = {}) {
+  if (!force && _tradeCache.data && Date.now() - _tradeCache.ts < TRADE_TTL) {
+    return _tradeCache.data;
+  }
+  try {
+    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+    const allActivities = [];
+    let cursor = null;
+    let page = 0;
+    // Pages are fetched with a gap: firing 10 requests back-to-back is what
+    // produced "429 rate limited" and left the history panel empty.
+    const MAX_PAGES = 3;
+
+    while (page < MAX_PAGES) {
+      if (page > 0) await new Promise(r => setTimeout(r, 1200));
+      const params = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
+      if (cursor) params.set("cursor", cursor);
+      const data = await signedRequest("GET", `/v1/portfolio/activities?${params}`);
+
+      // Log raw shape on first page so we can see real field names
+      if (page === 0) {
+        const sample = (data?.activities || [])[0];
+        if (sample) {
+          console.log(`📋 Activity sample: ${JSON.stringify(sample).slice(0, 500)}`);
+          console.log(`📋 Activity types found: ${[...new Set((data.activities||[]).map(a=>a.type))].join(", ")}`);
+        } else {
+          console.log(`📋 No activities returned. Response keys: ${JSON.stringify(Object.keys(data||{}))}`);
+        }
+      }
+
+      const acts = data?.activities || [];
+      allActivities.push(...acts);
+      if (!data?.nextCursor || acts.length === 0 || data?.eof) break;
+      cursor = data.nextCursor;
+      page++;
+      if (allActivities.length >= limit) break;
+    }
+
+    console.log(`📋 Total activities: ${allActivities.length}`);
+
+    const mapped = allActivities.map(a => {
+      // ACTIVITY_TYPE_TRADE — a buy or sell fill
+      if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
+        const t = a.trade;
+        const pl   = amtVal(t.realizedPnl) ?? 0;
+        const cost = amtVal(t.costBasis) ?? amtVal(t.cost) ?? 0;
+
+        // Price from aggressorExecution (fill price) or makerExecution
+        // aggressorExecution: { price: {value, currency}, quantity, ... }
+        const aggEx  = t.aggressorExecution || t.aggressor_execution || {};
+        const mkEx   = t.makerExecution     || t.maker_execution     || {};
+        const exPrice = amtVal(aggEx.lastPx) ?? amtVal(aggEx.price) ?? amtVal(mkEx.lastPx) ?? amtVal(mkEx.price) ?? amtVal(t.price) ?? null;
+
+        // Quantity from execution
+        const exQty = parseFloat(aggEx.quantity ?? aggEx.qty ?? mkEx.quantity ?? t.qtyDecimal ?? t.qty ?? 0);
+
+        // Side: aggressorExecution side or trade-level side
+        const rawSide = (aggEx.side || t.side || "").toUpperCase();
+        const side = rawSide || (cost > 0 && pl <= 0 ? "BUY" : "SELL");
+
+        // For a BUY: entryPrice = exPrice (the price you paid per contract)
+        // This is the reliable source — not cost/qty
+        const entryPrice = exPrice;
+
+        const slug = t.marketSlug || a.marketSlug || "";
+        const q    = t.marketTitle || t.question || t.marketSlug || "";
+        // Log first few trades to see full field structure
+        if (!getTradeHistory._logged || getTradeHistory._logged < 3) {
+          getTradeHistory._logged = (getTradeHistory._logged || 0) + 1;
+          console.log(`📋 Trade[${getTradeHistory._logged}]: ${slug.slice(0,30)} side=${side} price=${entryPrice} qty=${exQty} cost=${cost}`);
+          console.log(`📋   aggEx fields: ${JSON.stringify(Object.keys(aggEx))}`);
+          console.log(`📋   aggEx.price: ${JSON.stringify(aggEx.price)}`);
+        }
+        return {
+          _type:       "trade",
+          marketSlug:  slug,
+          question:    q,
+          price:       entryPrice,   // real fill price (0-1)
+          qty:         exQty,
+          costBasis:   cost,
+          realizedPnl: pl,
+          side,
+          createTime:  t.createTime || a.createTime || "",
+          state:       t.state || "",
+        };
+      }
+
+      // ACTIVITY_TYPE_POSITION_RESOLUTION — market settled WIN or LOSS
+      if (a.type === "ACTIVITY_TYPE_POSITION_RESOLUTION" && a.positionResolution) {
+        const r = a.positionResolution;
+        const beforeReal = amtVal(r.beforePosition?.realized) ?? 0;
+        const afterReal  = amtVal(r.afterPosition?.realized)  ?? 0;
+        // Incremental P/L from this resolution
+        const pl = afterReal - beforeReal;
+        // Also try direct pnl fields
+        const directPl = amtVal(r.pnl) ?? amtVal(r.realizedPnl) ?? null;
+        const finalPl  = directPl !== null ? directPl : pl;
+        const won = finalPl > 0
+          || r.side === "POSITION_RESOLUTION_SIDE_LONG"
+          || r.outcome === "YES" || r.outcome === "WON";
+        const question = r.afterPosition?.marketMetadata?.title
+          || r.beforePosition?.marketMetadata?.title
+          || r.marketTitle || r.marketSlug || "";
+        console.log(`📋 RESOLUTION: ${question.slice(0,40)} pl=$${finalPl.toFixed(2)} won=${won}`);
+        return {
+          _type:       "resolution",
+          marketSlug:  r.marketSlug || a.marketSlug || "",
+          question,
+          realizedPnl: finalPl,
+          createTime:  r.updateTime || r.createTime || a.createTime || "",
+          won,
+        };
+      }
+      return null;
+    }).filter(Boolean);
+
+    _tradeCache = { data: mapped, ts: Date.now() };
+    return mapped;
+
+  } catch (err) {
+    const rateLimited = /429|rate limit/i.test(err.message || "");
+    console.error(`⚠️ getTradeHistory failed: ${err.message}${rateLimited ? " — serving cached history" : ""}`);
+    if (_tradeCache.data) {
+      // Keep the stale copy alive rather than blanking the history panel,
+      // and hold off re-requesting for a while so we stop being throttled.
+      _tradeCache.ts = Date.now() - TRADE_TTL + 30_000;   // retry in ~30s
+      return _tradeCache.data;
+    }
+    return [];
+  }
+}
+
+
+export async function getOpenPositionsEnriched(stateBets = [], entryPriceCache = {}) {
+  try {
+    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
+    const data = await signedRequest("GET", "/v1/portfolio/positions");
+    const raw = data?.positions || {};
+
+    // Log full raw shape so we know exact field names
+    const slugs = Object.keys(raw);
+    if (slugs.length > 0) {
+      console.log(`🔍 Position keys (slugs): ${slugs.slice(0,5).join(" | ")}`);
+      console.log(`🔍 Position sample fields: ${JSON.stringify(Object.keys(raw[slugs[0]]||{}))}`);
+      console.log(`🔍 Position sample values: ${JSON.stringify(raw[slugs[0]]).slice(0,400)}`);
+      console.log(`🔍 State bet IDs: ${stateBets.slice(0,5).map(b=>b.marketConditionId).join(" | ")}`);
+    }
+
+    const out = [];
+    for (const [slug, p] of Object.entries(raw)) {
+      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
+      if (qty <= 0) continue;
+
+      // Dollar amounts from API
+      const costBasis = amtVal(p?.cost);
+      const cashValue = amtVal(p?.cashValue);
+      const realized  = amtVal(p?.realized);
+
+      // avgPx: the actual average fill price from the API — most reliable source
+      const apiAvgPx = p?.avgPx != null ? parseFloat(p.avgPx) : null;
+
+      // Market metadata
+      const meta = p?.marketMetadata || p?.market_metadata || {};
+      let question = meta.title || meta.question || meta.name ||
+                     p?.title || p?.question || null;
+      let category = meta.category || p?.category || "";
+      let entryPrice = null;
+      let placedAt = null;
+
+      // avgPx from API is ground truth for entry price when available
+      if (!entryPrice && apiAvgPx && apiAvgPx > 0.05 && apiAvgPx < 0.99) {
+        entryPrice = +apiAvgPx.toFixed(4);
+      }
+
+      // Cross-ref state bets — try multiple matching strategies
+      const stateBet = stateBets.find(b => {
+        const id = (b.marketConditionId || "").toLowerCase();
+        const s  = slug.toLowerCase();
+        return id === s
+          || id === s + "-yes"
+          || s === id + "-yes"
+          || s.startsWith(id.replace(/-yes$/,""))
+          || id.startsWith(s.replace(/-yes$/,""))
+          || (id.length > 8 && s.includes(id.slice(0,15)))
+          || (s.length > 8 && id.includes(s.slice(0,15)));
+      });
+
+      if (stateBet) {
+        if (!question)    question   = (stateBet.marketQuestion||"").replace(/^\[.*?\]\s*/,"") || null;
+        if (!category)    category   = stateBet.entryCoin || "";
+        if (!entryPrice)  entryPrice = stateBet.entryPrice || null;
+        if (!placedAt)    placedAt   = stateBet.placedAt || null;
+        console.log(`  ✅ Matched: ${slug.slice(0,30)} → entry=${entryPrice}`);
+      } else {
+        // No state match (state reset on restart)
+        // DO NOT derive entryPrice from cost/qty — qty scale is unreliable
+        // Try bodPosition fields from the API instead
+        const bod = p?.bodPosition || {};
+        const bodCost = amtVal(bod?.cost);
+        const bodQty  = parseFloat(bod?.qtyBought ?? 0);
+        if (!entryPrice && bodCost && bodQty > 0) {
+          const derived = +(bodCost / bodQty).toFixed(4);
+          // Only use if it's a sane probability (5% - 98%)
+          if (derived >= 0.05 && derived <= 0.98) {
+            entryPrice = derived;
+            console.log(`  📊 bodDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
+          }
+        }
+        // Try entryPriceCache from recent trade activities
+        if (!entryPrice && entryPriceCache[slug]) {
+          entryPrice = entryPriceCache[slug];
+          console.log(`  📊 CacheDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
+        }
+        if (!entryPrice) {
+          console.log(`  ❌ No entry price: ${slug.slice(0,40)} cost=${costBasis} qty=${qty}`);
+        }
+      }
+
+      // Payout = costBasis / entryPrice = contracts × $1 per contract
+      const payout = (costBasis && entryPrice && entryPrice > 0)
+        ? +(costBasis / entryPrice).toFixed(2) : null;
+
+      // Live BBO
+      let currentBid = null;
+      try {
+        const bbo = await getBBO(slug);
+        currentBid = bbo?.bid ?? null;
+      } catch {}
+
+      // P/L = (currentBid - entryPrice) * payout
+      let openPnl = null;
+      if (currentBid != null && entryPrice && payout) {
+        openPnl = +((currentBid - entryPrice) * payout).toFixed(2);
+      } else if (cashValue != null && costBasis != null) {
+        openPnl = +(cashValue - costBasis).toFixed(2);
+      }
+
+      const currentVal = (currentBid && payout)
+        ? +(currentBid * payout).toFixed(2) : cashValue;
+
+      out.push({
+        slug,
+        question:   question || slug,
+        category,
+        qty,
+        avgPrice:   entryPrice,
+        costBasis,
+        cashValue,
+        currentBid,
+        currentVal,
+        openPnl,
+        payout,
+        realized,
+        updateTime: p?.updateTime,
+        placedAt,
+      });
+    }
+    return out;
+  } catch (err) {
+    console.error("⚠️ getOpenPositionsEnriched failed:", err.message);
+    return [];
+  }
+}
+
 
 export async function preflightUS() {
   const msgs = [];
@@ -415,10 +1111,8 @@ export async function preflightUS() {
     }
   } catch (e) {
     msgs.push("❌ Auth/balance check failed: " + e.message);
-    msgs.push(`🔎 Sending Key ID: ${keyId.slice(0, 13)}… (${keyId.length} chars, ${looksUuid(keyId) ? "uuid ✓" : "⚠️ NOT uuid"})`);
-    if (/not found/i.test(e.message)) {
-      msgs.push("👉 Key doesn't exist server-side — generate new API keys at polymarket.us/developer");
-    }
+    msgs.push(`🔎 Key ID: ${keyId.slice(0, 13)}… (${keyId.length} chars, ${looksUuid(keyId) ? "uuid ✓" : "⚠️ NOT uuid"})`);
+    if (/not found/i.test(e.message)) msgs.push("👉 Generate new API keys at polymarket.us/developer");
     return { ok: false, messages: msgs };
   }
   return { ok: true, messages: msgs };
