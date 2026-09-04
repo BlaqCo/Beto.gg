@@ -591,6 +591,14 @@ app.get("/api/stats", async (req, res) => {
 });
 
 // Scalp lab — paper only, read-only, off unless SCALP_PAPER=true
+app.post("/api/history/clear", async (req, res) => {
+  try {
+    const t = await import("./tracker.js");
+    const out = await t.clearHistory({ alsoLocks: !!req.body?.alsoLocks });
+    res.json({ ok: true, ...out });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get("/api/analytics", async (req, res) => {
   try {
     const t = await import("./tracker.js");
