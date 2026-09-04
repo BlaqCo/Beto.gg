@@ -18,6 +18,8 @@ import * as cfgStore from "./config.js";
 import * as tracker from "./tracker.js";
 import * as fees from "./fees.js";
 import * as wsFeed from "./ws-feed.js";
+import * as model from "./model.js";
+import * as signal from "./signal.js";
 
 const recordBet         = state.recordBet;
 const hasActiveBet      = state.hasActiveBet      || (() => false);
@@ -91,8 +93,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 6;       // flat $6
-let BET_HIGH_USD  = 6;       // flat $6 (no edge scaling)
+let BET_LOW_USD   = 9;       // flat $9
+let BET_HIGH_USD  = 9;       // flat $9 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -106,14 +108,14 @@ let FAV_MAX       = 0.65;    // entry cap: 65%
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
   - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
-let MAX_CONC      = 6;       // 6 concurrent bets MAX
+let MAX_CONC      = 3;       // 3 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
 // TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
 // caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
 // SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
-let LEAGUE_FOCUS  = [];      // no restrictions — every sport allowed
+let LEAGUE_FOCUS  = ["MLB","BASEBALL","TENNIS","ATP","WTA","ITF"];  // only the modelled sports
 let LEAGUE_BLOCK  = [];      // blacklist — always excluded
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
@@ -143,13 +145,24 @@ let HALFWAY_ONLY  = false;
 // ── SELF-LEARNING ── the bot consults its own tracker before betting and
 // refuses segments (league or price bucket) that its record shows are losing.
 // Needs LEARN_MIN_N settled bets in that segment before it will act.
+// ── SIGNAL GATE ── only trade prices the market itself has validated:
+// real depth, tight spread, meaningful volume, quote agreeing with trades.
+let SIGNAL_ENABLED = true;
+let SIGNAL_MIN     = 55;
+
+// ── STATE MODEL ── require the scoreboard to imply a better win probability
+// than the price. This is the only non-circular signal in Polymarket's own
+// data: the price lags the game state (measured at ~17s, ~7¢).
+let MODEL_ENABLED  = true;
+let MODEL_EDGE_MIN = 0.03;   // shrunk edge required, on top of the fee
+
 let LEARN_ENABLED = true;
 let LEARN_MIN_N   = 12;
 let LEARN_CUTOFF  = -4;     // points below break-even that counts as "proven losing"
 
-let PREGAME_ONLY  = false;  // live games allowed again
+let PREGAME_ONLY  = false;  // LIVE matches only (see the window filter)
 let UPCOMING_MIN  = 0;      // pre-game entries allowed right up to tip-off
-let UPCOMING_MAX  = 4;      // ...and up to 4h before start
+let UPCOMING_MAX  = 0;      // 0 = live matches only, no pre-game
 let MIN_PROGRESS  = 0.5;
 
 function matchProgress(m) {
@@ -240,7 +253,7 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
-let ENTRIES_SCAN  = 6;       // aligned with 6-slot cap
+let ENTRIES_SCAN  = 3;       // aligned with 3-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -445,6 +458,10 @@ async function applyLiveConfig() {
     if (c.HALFWAY_ONLY  != null) HALFWAY_ONLY  = c.HALFWAY_ONLY;
     if (c.PREGAME_ONLY  != null) PREGAME_ONLY  = c.PREGAME_ONLY;
     if (c.LEARN_ENABLED != null) LEARN_ENABLED = c.LEARN_ENABLED;
+    if (c.MODEL_ENABLED != null) MODEL_ENABLED = c.MODEL_ENABLED;
+    if (c.MODEL_EDGE_MIN != null) MODEL_EDGE_MIN = c.MODEL_EDGE_MIN;
+    if (c.SIGNAL_ENABLED != null) SIGNAL_ENABLED = c.SIGNAL_ENABLED;
+    if (c.SIGNAL_MIN     != null) SIGNAL_MIN     = c.SIGNAL_MIN;
     if (c.LEARN_MIN_N   != null) LEARN_MIN_N   = c.LEARN_MIN_N;
     if (c.UPCOMING_MIN  != null) UPCOMING_MIN  = c.UPCOMING_MIN;
     if (c.UPCOMING_MAX  != null) UPCOMING_MAX  = c.UPCOMING_MAX;
@@ -557,7 +574,7 @@ async function _runScanCycleInner() {
       if (spread > maxSpread) {
         return null; // illiquid book — entering at the ask would burn the edge
       }
-      return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask };
+      return { ...m, ask: bbo.ask, bid: bbo.bid, px: bbo.ask, lastTradePx: bbo.last ?? m.lastTradePx ?? null };
     } catch (e) {
       console.log(`  ❌ BBO error for ${m.slug}: ${e.message}`);
       return null;
@@ -819,12 +836,34 @@ async function _runScanCycleInner() {
   // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
   for (const b of getAllActiveBets()) everBet.add(b.slug);
 
-  let entryErrors = 0, learnSkips = 0;
+  let entryErrors = 0, learnSkips = 0, signalSkips = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
     if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
+
+    // ── SIGNAL: is this price trustworthy enough to trade? ──
+    if (SIGNAL_ENABLED) {
+      const sg = signal.scoreMarket(m, null, BET_SIZE);
+      m._signal = sg;
+      if (sg.score < SIGNAL_MIN) {
+        signalSkips++;
+        console.log(`  📉 Signal ${sg.score}/${SIGNAL_MIN} (${sg.grade}) — ${sg.reasons.join(", ") || "low quality"} | ${m.question?.slice(0, 30)}`);
+        continue;
+      }
+    }
+
+    // ── STATE MODEL: the scoreboard must justify the price ──
+    if (MODEL_ENABLED) {
+      const sig = model.stateEdge(m, m.ask);
+      if (!sig)                      { modelSkips++; continue; }   // no model for this sport/state
+      if (sig.side === "ambiguous")  { modelSkips++; continue; }
+      const need = MODEL_EDGE_MIN + fees.costPerContract(m.ask, false);
+      if (sig.edge < need) { modelSkips++; continue; }
+      m._modelReason = sig.reason;
+      m._modelEdge = sig.edge;
+    }
 
     // ── SELF-LEARNING: skip segments our own record says are losing ──
     if (LEARN_ENABLED) {
@@ -913,7 +952,17 @@ async function _runScanCycleInner() {
       console.log(`  🚫 Book spread widened to ${((entryPrice - book.bestBid) * 100).toFixed(0)}¢ | ${m.question?.slice(0, 38)}`);
       continue;
     }
-    console.log(`  ✅ Attempting entry | ask=${cents(m.ask)}${book.askQty ? ` askQty=${book.askQty}` : ""} | ${m.question?.slice(0, 40)}`);
+    if (SIGNAL_ENABLED) {
+      const sg2 = signal.scoreMarket(m, book, BET_SIZE);
+      m._signal = sg2;
+      if (sg2.score < SIGNAL_MIN) {
+        signalSkips++;
+        console.log(`  📉 Signal ${sg2.score}/${SIGNAL_MIN} after depth check — ${sg2.reasons.join(", ")} | ${m.question?.slice(0, 30)}`);
+        everBet.delete(m.slug); try { tracker.releaseMarket(m.slug); } catch {}
+        continue;
+      }
+    }
+    console.log(`  ✅ Attempting entry | ask=${cents(m.ask)} signal=${m._signal?.score ?? "—"}${m._signal?.grade ? m._signal.grade : ""}${book.askQty ? ` askQty=${book.askQty}` : ""} | ${m.question?.slice(0, 36)}`);
 
     if (!DRY_RUN) {
       attempts++;
@@ -994,7 +1043,8 @@ async function _runScanCycleInner() {
     } catch {}
     betsPlaced++;
     const payout = (betSize / entryPrice).toFixed(2);
-    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 46)}`);
+    console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 40)}`);
+    if (m._modelReason) console.log(`     📐 ${m._modelReason} (+${(m._modelEdge * 100).toFixed(1)} pts)`);
     } catch (err) {
       entryErrors++;
       console.log(`  💥 Entry error [${m.slug?.slice(0,28)}]: ${err.message} — continuing to next candidate`);
@@ -1055,6 +1105,8 @@ async function _runScanCycleInner() {
     });
   } catch {}
 
+  if (signalSkips) console.log(`  📉 Signal gate skipped ${signalSkips} low-quality market(s)`);
+  if (modelSkips) console.log(`  📐 State model rejected ${modelSkips} candidate(s) — scoreboard didn't justify the price`);
   if (learnSkips) console.log(`  🧠 Self-learning gate skipped ${learnSkips} candidate(s) from proven-losing segments`);
   console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)}`);
 
