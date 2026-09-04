@@ -843,6 +843,12 @@ async function _runScanCycleInner() {
     // RESERVE FIRST: claim this market before any slow API call, so no
     // concurrent code path can order it too. Released only if we don't fill.
     everBet.add(m.slug);
+    // Durable claim — survives restarts, which in-memory everBet does not.
+    // This is what stopped the same market being bought again after a deploy.
+    try {
+      const got = await tracker.claimMarket(m.slug);
+      if (!got) { console.log(`  🔒 Already claimed (durable lock) | ${m.question?.slice(0, 36)}`); continue; }
+    } catch {}
     let filledThis = false;
     let orderSent = false;      // true once ANY order has been transmitted
     try {
@@ -884,14 +890,14 @@ async function _runScanCycleInner() {
       const fresh = await getBBO(m.slug);
       if (!fresh?.ask) {
         console.log(`  🚫 No fresh quote available — skipping | ${m.question?.slice(0, 38)}`);
-        everBet.delete(m.slug);
+        everBet.delete(m.slug); try { tracker.releaseMarket(m.slug); } catch {}
         continue;
       }
       entryPrice = fresh.ask;
       m.ask = fresh.ask;
       if (fresh.bid && (fresh.ask - fresh.bid) > 0.06) {
         console.log(`  🚫 Fresh spread ${((fresh.ask - fresh.bid) * 100).toFixed(0)}¢ too wide | ${m.question?.slice(0, 38)}`);
-        everBet.delete(m.slug);
+        everBet.delete(m.slug); try { tracker.releaseMarket(m.slug); } catch {}
         continue;
       }
     }
@@ -994,7 +1000,10 @@ async function _runScanCycleInner() {
       console.log(`  💥 Entry error [${m.slug?.slice(0,28)}]: ${err.message} — continuing to next candidate`);
       // Only release if we never reached the order stage; otherwise a late
       // fill could still exist and re-entry would double the position.
-      if (!filledThis && !orderSent) everBet.delete(m.slug);
+      if (!filledThis && !orderSent) {
+        everBet.delete(m.slug);
+        try { tracker.releaseMarket(m.slug); } catch {}
+      }
       continue;
     }
   }
