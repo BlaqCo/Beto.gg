@@ -50,6 +50,15 @@ export function mountConfigApi(app, opts = {}) {
     if (!text.trim()) return res.json({ ok: false, message: "Type a change, e.g. \"flat bets to $5, slots to 5\"" });
     try {
       // 1) Money-moving actions — armed first, executed only on confirmation.
+      // clear history is destructive — handled here so it needs no confirm token
+      if (/\b(clear|wipe|reset|delete)\b.*\b(history|records?|ledger|tracker|stats?)\b/i.test(text)) {
+        const t = await import("./tracker.js");
+        const alsoLocks = /\block|claims?\b/i.test(text);
+        const out = await t.clearHistory({ alsoLocks });
+        return res.json({ ok: true, kind: "action",
+          message: `Cleared ${out.cleared} stored trade${out.cleared === 1 ? "" : "s"}${alsoLocks ? " and all bet locks" : ""}. The edge tracker starts fresh.` });
+      }
+
       const act = actions.detectAction(text);
       if (act?.type === "confirm") return res.json(await actions.confirmPending());
       if (act?.type === "cancel")  { actions.cancelPending(); return res.json({ ok: true, kind: "action", message: "Cancelled — nothing was done." }); }
