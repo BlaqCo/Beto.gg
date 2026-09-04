@@ -640,14 +640,17 @@ app.listen(PORT, () => {
 });
 
 // ── Bot loaders + independent scanners ───────────────────────────
+let sportsLoadError = null;
 async function loadBots() {
   try {
     const botMod = await import("./bot-sports.js");
     sportsBot = botMod;
+    sportsLoadError = null;
     console.log("[INFO] Loaded bot-sports.js");
   } catch (err) {
-    console.error("Sports bot load error:", err.message);
-    console.error(err.stack?.split("\n").slice(0, 3).join(" | "));
+    sportsLoadError = `${err.message} | ${(err.stack || "").split("\n").slice(1, 3).join(" | ")}`;
+    console.error("❌❌ SPORTS BOT FAILED TO LOAD:", err.message);
+    console.error("❌ stack:", (err.stack || "").split("\n").slice(0, 4).join(" | "));
   }
   // Crypto bot disabled — not legal in California
   console.log("[INFO] Crypto bot disabled (CA regulations)");
@@ -754,7 +757,16 @@ async function loadBots() {
   setInterval(async () => {
     try {
       scanCount++;
-      if (scanCount % 10 === 1) console.log(`[DEBUG] Sports scan cycle #${scanCount} — sportsBot loaded: ${!!sportsBot}, has runScanCycle: ${!!(sportsBot?.runScanCycle)}`);
+      if (scanCount % 10 === 1) {
+        if (sportsBot?.runScanCycle) {
+          console.log(`[DEBUG] Sports scan cycle #${scanCount} — bot loaded OK`);
+        } else {
+          // Repeat the actual reason every time, so it is impossible to miss
+          // in a log window that started after boot.
+          console.error(`❌ Sports bot NOT LOADED (cycle #${scanCount}) — reason: ${sportsLoadError || "unknown"}`);
+          if (scanCount % 100 === 1) { console.error("❌ retrying import…"); await loadBots(); }
+        }
+      }
       if (sportsBot?.runScanCycle) {
         await sportsBot.runScanCycle();
       } else {
