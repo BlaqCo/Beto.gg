@@ -130,7 +130,53 @@ function extractYesPrice(m) {
 }
 
 // ── League detection ─────────────────────────────────────────────
+// ── slug is authoritative ────────────────────────────────────────
+// Slugs look like: aec-atp-hensea-meerot-2026-08-11, mlb-ath-sea-2026-09-03,
+// aec-nbasl-gs-okc-2026-07, aec-cs2-imp-alka-2026-08-09.
+// The token right after the optional "aec-" prefix IS the league. Reading it
+// from there beats guessing from question text, which produced NBA tags on
+// football markets and WNBA tags on tennis markets.
+const SLUG_LEAGUE = {
+  mlb:"MLB", npb:"MLB", kbo:"MLB", baseball:"MLB",
+  nba:"NBA", nbasl:"NBA", ncaamb:"NBA", basketball:"NBA",
+  wnba:"WNBA", ncaawb:"WNBA",
+  nfl:"NFL", ncaafb:"NFL", football:"NFL", cfl:"NFL",
+  nhl:"NHL", hockey:"NHL",
+  atp:"TENNIS", wta:"TENNIS", itf:"TENNIS", itfme:"TENNIS", itfwo:"TENNIS",
+  chal:"TENNIS", tennis:"TENNIS",
+  wtt:"TABLETENNIS", setka:"TABLETENNIS", tt:"TABLETENNIS",
+  cs2:"ESPORTS", csgo:"ESPORTS", valorant:"ESPORTS", val:"ESPORTS",
+  lol:"ESPORTS", dota2:"ESPORTS", dota:"ESPORTS", rl:"ESPORTS", esports:"ESPORTS",
+  epl:"SOCCER", laliga:"SOCCER", seriea:"SOCCER", bundesliga:"SOCCER",
+  ligue1:"SOCCER", mls:"SOCCER", ucl:"SOCCER", soccer:"SOCCER", fifa:"SOCCER",
+  ufc:"MMA", mma:"MMA", boxing:"MMA", box:"MMA",
+  cricket:"CRICKET", odi:"CRICKET", t20:"CRICKET",
+  golf:"GOLF", pga:"GOLF", darts:"DARTS",
+};
+function leagueFromSlug(slug) {
+  const parts = String(slug || "").toLowerCase().split("-").filter(Boolean);
+  if (!parts.length) return null;
+  const i = parts[0] === "aec" ? 1 : 0;
+  for (let k = i; k < Math.min(parts.length, i + 2); k++) {
+    const hit = SLUG_LEAGUE[parts[k]];
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function detectLeague(m) {
+  // 1) Slug — authoritative, checked before anything else.
+  const fromSlug = leagueFromSlug(m.slug || m.id || m.marketId);
+  if (fromSlug) return fromSlug;
+
+  // 2) The question often names the sport outright ("upcoming football event").
+  const qq = (m.question || m.title || "").toLowerCase();
+  const SPORT_WORD = [[/\bbaseball\b/,"MLB"],[/\bbasketball\b/,"NBA"],[/\bfootball\b/,"NFL"],
+                      [/\bhockey\b/,"NHL"],[/\btable[- ]?tennis\b/,"TABLETENNIS"],[/\btennis\b/,"TENNIS"],
+                      [/\besports?\b/,"ESPORTS"],[/\bsoccer\b/,"SOCCER"],[/\bcricket\b/,"CRICKET"],
+                      [/\bgolf\b/,"GOLF"],[/\bdarts\b/,"DARTS"],[/\bmma\b|\bufc\b|\bboxing\b/,"MMA"]];
+  for (const [re, lg] of SPORT_WORD) if (re.test(qq)) return lg;
+
   const q   = (m.question || m.title || "").toLowerCase();
   const cat = (m.category || "").toLowerCase();
   const sub = (m.subcategory || "").toLowerCase();
