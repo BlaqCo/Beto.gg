@@ -17,9 +17,9 @@ const KEY = "beto:config:sports";
 // ── Defaults ─────────────────────────────────────────────────────
 // Each entry: value, label, group, and the input hint the dashboard uses.
 export const SCHEMA = {
-  BET_SIZE:      { v: 6,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
-  MAX_CONC:      { v: 6,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
-  ENTRIES_SCAN:  { v: 6,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
+  BET_SIZE:      { v: 9,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
+  MAX_CONC:      { v: 3,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
+  ENTRIES_SCAN:  { v: 3,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
 
   FAV_MIN:       { v: 0.57,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
   FAV_MAX:       { v: 0.65,  label: "Price cap",           group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
@@ -39,6 +39,8 @@ export const SCHEMA = {
   HALFWAY_ONLY:  { v: false,  label: "Wait until halfway",    group: "Timing",  bool: true },
   MIN_PROGRESS:  { v: 0.50,  label: "Match progress needed", group: "Timing",  unit: "%",  step: 0.05, min: 0, max: 0.95, pct: true },
 
+  MODEL_ENABLED: { v: true,  label: "Require game-state edge", group: "Edge", bool: true },
+  MODEL_EDGE_MIN:{ v: 0.03,  label: "Model edge needed",     group: "Edge",   unit: "¢", step: 0.005, min: 0, max: 0.20, pct: true },
   LEARN_ENABLED: { v: true,  label: "Learn from results",   group: "Edge",    bool: true },
   LEARN_MIN_N:   { v: 12,    label: "Bets before learning", group: "Edge",    unit: "",   step: 1, min: 5, max: 200 },
 
