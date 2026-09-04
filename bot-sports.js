@@ -19,7 +19,15 @@ import * as tracker from "./tracker.js";
 import * as fees from "./fees.js";
 import * as wsFeed from "./ws-feed.js";
 import * as model from "./model.js";
-import * as signal from "./signal.js";
+
+// Optional modules — loaded defensively. A missing file here used to throw at
+// import time and take the WHOLE bot down ("sportsBot loaded: false"), which
+// is invisible unless you catch the boot log. Now the bot runs regardless and
+// simply reports what is missing.
+let signal = null;
+try { signal = await import("./signal.js"); }
+catch (e) { console.error(`⚠️ signal.js not loaded (${e.message}) — market-quality scoring disabled, bot continues`); }
+
 
 const recordBet         = state.recordBet;
 const hasActiveBet      = state.hasActiveBet      || (() => false);
@@ -844,7 +852,7 @@ async function _runScanCycleInner() {
     if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
 
     // ── SIGNAL: is this price trustworthy enough to trade? ──
-    if (SIGNAL_ENABLED) {
+    if (SIGNAL_ENABLED && signal?.scoreMarket) {
       const sg = signal.scoreMarket(m, null, BET_SIZE);
       m._signal = sg;
       if (sg.score < SIGNAL_MIN) {
@@ -952,7 +960,7 @@ async function _runScanCycleInner() {
       console.log(`  🚫 Book spread widened to ${((entryPrice - book.bestBid) * 100).toFixed(0)}¢ | ${m.question?.slice(0, 38)}`);
       continue;
     }
-    if (SIGNAL_ENABLED) {
+    if (SIGNAL_ENABLED && signal?.scoreMarket) {
       const sg2 = signal.scoreMarket(m, book, BET_SIZE);
       m._signal = sg2;
       if (sg2.score < SIGNAL_MIN) {
