@@ -179,6 +179,12 @@ button:active{transform:translateY(1px)}
 .segedge{width:58px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;flex:0 0 auto}
 .seghead{padding:9px 14px 4px;font-size:9px;letter-spacing:.16em;color:var(--cyan)}
 .seghead.bad{color:var(--down)}
+.minibtn{flex:0 0 auto;margin-left:auto;font-family:'Archivo';font-weight:700;font-size:9px;
+  letter-spacing:.12em;padding:6px 10px;border-radius:8px;border:1px solid var(--line);
+  background:#0A1120;color:var(--dim);cursor:pointer;width:auto}
+.minibtn:hover{border-color:var(--cyan);color:var(--cyan)}
+.minibtn.danger:hover{border-color:var(--down);color:var(--down)}
+.phead .saved+.minibtn{margin-left:8px}
 .pick{color:var(--cyan);font-weight:700}
 .opp{color:var(--dim)}
 .vs{color:#3A4A6B;font-size:10px}
@@ -295,12 +301,16 @@ button:active{transform:translateY(1px)}
 </div>
 
 <div class="panel">
-  <div class="phead"><h3>BET HISTORY</h3><span class="saved" id="histCount"></span></div>
+  <div class="phead"><h3>BET HISTORY</h3><span class="saved" id="histCount"></span>
+    <button class="minibtn danger" id="clearHist">CLEAR</button>
+  </div>
   <div id="history"><div class="empty">no settled bets yet</div></div>
 </div>
 
 <div class="panel">
-  <div class="phead"><h3>ACTIVITY</h3></div>
+  <div class="phead"><h3>ACTIVITY</h3>
+    <button class="minibtn" id="copyLog">COPY LOG</button>
+  </div>
   <div id="log"></div>
 </div>
 
@@ -639,6 +649,27 @@ async function loadEdge(){
     $('edgeSegs').innerHTML = html;
   }catch(e){ $('edgePanel').style.display='none'; }
 }
+
+$('copyLog').onclick = async function(){
+  const text = Array.from(document.querySelectorAll('#log div')).map(function(d){return d.textContent;}).join('\n');
+  if(!text){ toast(false,'Nothing in the log yet'); return; }
+  try{
+    if(navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else { const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+           document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    toast(true, 'Copied '+text.split('\n').length+' log lines');
+  }catch(e){ toast(false,'Copy failed — long-press the log to select instead'); }
+};
+
+$('clearHist').onclick = async function(){
+  if(!confirm('Clear all stored bet history? The edge tracker starts from zero.')) return;
+  try{
+    const r = await fetch('/api/history/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alsoLocks:false})});
+    const d = await r.json();
+    toast(!!d.ok, d.ok ? ('Cleared '+d.cleared+' stored trades') : (d.error||'Clear failed'));
+    loadEdge(); loadHistory();
+  }catch(e){ toast(false,'Could not reach the bot'); }
+};
 
 function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); }
 loadConfig(); tick(); setInterval(tick, 4000);
