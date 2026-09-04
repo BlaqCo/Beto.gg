@@ -111,7 +111,42 @@ export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry
     } else memTrades.push(row);
   } catch { memTrades.push(row); redisOk = false; }
   cache.ts = 0;
+  try { await releaseMarket(slug); } catch {}
   return row;
+}
+
+// ── RESTART-PROOF BET LOCK ───────────────────────────────────────
+// everBet lives in memory and dies on every deploy, which is how the same
+// market got bought twice. This lock lives in Redis: once a market is
+// claimed it stays claimed until it settles, across restarts.
+const KEY_LOCK = "beto:betlock";
+const lockMem = new Map();
+const LOCK_TTL_MS = 36 * 3600_000;
+
+export async function claimMarket(slug) {
+  const now = Date.now();
+  try {
+    if (URL && TOKEN) {
+      // HSETNX returns 1 only if the field did not already exist.
+      const got = await redis(["HSETNX", KEY_LOCK, slug, String(now)]);
+      if (got === 0 || got === "0") {
+        const raw = await redis(["HGET", KEY_LOCK, slug]);
+        const ts = Number(raw) || 0;
+        if (now - ts < LOCK_TTL_MS) return false;      // still locked
+        await redis(["HSET", KEY_LOCK, slug, String(now)]);   // stale, reclaim
+      }
+      return true;
+    }
+  } catch { /* fall through to memory */ }
+  const prev = lockMem.get(slug);
+  if (prev && now - prev < LOCK_TTL_MS) return false;
+  lockMem.set(slug, now);
+  return true;
+}
+
+export async function releaseMarket(slug) {
+  try { if (URL && TOKEN) await redis(["HDEL", KEY_LOCK, slug]); } catch {}
+  lockMem.delete(slug);
 }
 
 export async function getTrades({ force = false } = {}) {
@@ -197,6 +232,21 @@ export async function shouldSkip(league, entryPx, opts = {}) {
     return { skip: true, why: `${key} bucket is ${x.edge} pts below break-even over ${x.n} bets` };
   }
   return { skip: false };
+}
+
+/** Wipe stored trade history (and optionally the bet locks). */
+export async function clearHistory({ alsoLocks = false } = {}) {
+  const before = (await getTrades({ force: true })).length;
+  try { if (URL && TOKEN) await redis(["DEL", KEY_TRADES]); } catch {}
+  memTrades = [];
+  cache = { rows: [], ts: Date.now() };
+  verdictCache = { map: null, ts: 0 };
+  if (alsoLocks) {
+    try { if (URL && TOKEN) await redis(["DEL", KEY_LOCK]); } catch {}
+    lockMem.clear();
+  }
+  console.log(`🗑 Cleared ${before} stored trades${alsoLocks ? " and all bet locks" : ""}`);
+  return { cleared: before };
 }
 
 export async function analytics({ minN = 5 } = {}) {
