@@ -1,339 +1,81 @@
 /**
- * signals.js — 3-Strategy Scalping Engine
+ * signal.js — market quality scoring
  *
- * Strategy A: RSI_EMA — RSI(14) + EMA 9/21 crossover (momentum)
- * Strategy B: WALL    — Order book bid/ask wall detection (timing)
- * Strategy C: BREAKOUT — ATR volatility breakout + momentum burst
+ * WHAT THIS DOES, PLAINLY:
+ *   It does NOT predict who wins. Polymarket's API exposes price, order book,
+ *   volume and live score — nothing about form, injuries or matchups. The
+ *   price already aggregates everyone who holds that information, so no model
+ *   built on price alone can out-forecast it. Anything claiming otherwise is
+ *   re-deriving the price and calling it a prediction.
  *
- * Auto mode: bot picks best strategy based on market conditions
+ *   What the API CAN tell you is which prices deserve trust. A 65¢ quote
+ *   backed by $40k of 24h volume, 5,000 contracts of depth and a 1¢ spread is
+ *   a real consensus. The same 65¢ on $200 of volume with a 6¢ spread is one
+ *   person's guess. Betting only the first kind removes a large class of
+ *   losing entries — bad fills, stale quotes and phantom prices — without
+ *   pretending to forecast anything.
  *
- * FIXES:
- * 1. autoSelectStrategy thresholds relaxed so WALL/BREAKOUT fire in normal BTC conditions
- * 2. RSI_EMA confidence floor raised — misaligned signals still produce usable confidence
- * 3. WALL confidence multiplier increased so 45-50% conf actually clears kelly edge
+ * Score is 0-100 across four components, each independently defensible:
+ *   depth      — can the book actually absorb our order at this price?
+ *   spread     — how much does crossing cost, and is the quote competitive?
+ *   volume     — how much real money has priced this market?
+ *   agreement  — does the quote agree with where trading actually happened?
  */
 
-import axios from "axios";
+export const SIGNAL = {
+  MIN_SCORE: 55,          // below this we don't bet, however good the price looks
+  VOL_STRONG: 25_000,     // 24h volume that marks a heavily-traded market
+  VOL_OK: 3_000,
+  VOL_THIN: 400,
+};
 
-// ── Price Sources ──────────────────────────────────────────────
-const CHAINLINK_RPC = "https://polygon-rpc.com";
-const CHAINLINK_BTC = "0xc907E116054Ad103354f2D350FD2514433D57F6F";
+/** Score one candidate. Returns { score, grade, parts, reasons }. */
+export function scoreMarket(m, book = null, stakeUsd = 9) {
+  const parts = {};
+  const reasons = [];
 
-async function fetchChainlink() {
-  const { data } = await axios.post(CHAINLINK_RPC, {
-    jsonrpc: "2.0", id: 1, method: "eth_call",
-    params: [{ to: CHAINLINK_BTC, data: "0xfeaf968c" }, "latest"],
-  }, { timeout: 5000 });
-  if (!data.result || data.result === "0x") throw new Error("Empty");
-  return Number(BigInt("0x" + data.result.slice(66, 130))) / 1e8;
-}
-
-async function fetchKrakenTicker() {
-  const { data } = await axios.get("https://api.kraken.com/0/public/Ticker", {
-    params: { pair: "XBTUSD" }, timeout: 6000,
-  });
-  const t = data.result?.XXBTZUSD;
-  if (!t) throw new Error("No ticker");
-  const last = parseFloat(t.c[0]);
-  return {
-    price: last,
-    bid:   parseFloat(t.b[0]),
-    ask:   parseFloat(t.a[0]),
-    high:  parseFloat(t.h[1]),
-    low:   parseFloat(t.l[1]),
-    volume: parseFloat(t.v[1]),
-    priceChangePercent: ((last - parseFloat(t.o)) / parseFloat(t.o)) * 100,
-  };
-}
-
-async function fetchKrakenOHLC() {
-  const { data } = await axios.get("https://api.kraken.com/0/public/OHLC", {
-    params: { pair: "XBTUSD", interval: 15 }, timeout: 8000,
-  });
-  return (data.result?.XXBTZUSD || []).slice(-100).map(c => ({
-    time: c[0], open: parseFloat(c[1]), high: parseFloat(c[2]),
-    low: parseFloat(c[3]), close: parseFloat(c[4]), volume: parseFloat(c[6]),
-  }));
-}
-
-export async function fetchOrderBook(depth = 150) {
-  try {
-    const { data } = await axios.get("https://api.kraken.com/0/public/Depth", {
-      params: { pair: "XBTUSD", count: depth }, timeout: 6000,
-    });
-    const b = data.result?.XXBTZUSD;
-    if (!b) return null;
-    return {
-      bids: b.bids.map(x => ({ price: parseFloat(x[0]), size: parseFloat(x[1]) })),
-      asks: b.asks.map(x => ({ price: parseFloat(x[0]), size: parseFloat(x[1]) })),
-    };
-  } catch { return null; }
-}
-
-export async function fetchCurrentPrice() {
-  try { const p = await fetchChainlink(); if (p > 1000) return p; } catch {}
-  const t = await fetchKrakenTicker();
-  return t.price;
-}
-
-export async function fetch24hStats() {
-  return fetchKrakenTicker();
-}
-
-// ── Indicators ─────────────────────────────────────────────────
-function calcRSI(closes, period = 14) {
-  if (closes.length < period + 1) return 50;
-  let ag = 0, al = 0;
-  for (let i = 1; i <= period; i++) {
-    const d = closes[i] - closes[i-1];
-    if (d > 0) ag += d; else al -= d;
-  }
-  ag /= period; al /= period;
-  for (let i = period + 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i-1];
-    ag = (ag*(period-1) + Math.max(d,0)) / period;
-    al = (al*(period-1) + Math.max(-d,0)) / period;
-  }
-  return al === 0 ? 100 : 100 - 100 / (1 + ag/al);
-}
-
-function calcEMA(closes, period) {
-  if (closes.length < period) return closes[closes.length-1];
-  const k = 2 / (period + 1);
-  let ema = closes.slice(0, period).reduce((a,b) => a+b) / period;
-  for (let i = period; i < closes.length; i++) ema = closes[i]*k + ema*(1-k);
-  return ema;
-}
-
-function calcATR(candles, period = 14) {
-  const trs = candles.slice(1).map((c, i) =>
-    Math.max(c.high-c.low, Math.abs(c.high-candles[i].close), Math.abs(c.low-candles[i].close))
-  );
-  return trs.slice(-period).reduce((a,b) => a+b) / period;
-}
-
-// ── Strategy A: RSI + EMA ─────────────────────────────────────
-export function strategyRSI_EMA(closes, atr) {
-  const rsi  = calcRSI(closes);
-  const ema9  = calcEMA(closes, 9);
-  const ema21 = calcEMA(closes, 21);
-
-  const rsiScore = rsi < 30 ? 1 : rsi < 40 ? 0.6 : rsi < 45 ? 0.25 :
-                   rsi > 70 ? -1 : rsi > 60 ? -0.6 : rsi > 55 ? -0.25 : (50-rsi)/50;
-
-  const emaDiff  = (ema9 - ema21) / ema21;
-  const emaScore = Math.max(-1, Math.min(1, emaDiff * 120));
-
-  const aligned = (rsiScore > 0 && emaScore > 0) || (rsiScore < 0 && emaScore < 0);
-  const bias     = rsiScore * 0.45 + emaScore * 0.55;
-
-  // FIX: raised floor from 0.5x to 0.75x for misaligned — was killing confidence to ~4%
-  const confidence = aligned
-    ? Math.min(0.92, Math.abs(bias) * 1.4)
-    : Math.min(0.60, Math.abs(bias) * 0.75 + 0.05);
-
-  return {
-    name: "RSI_EMA",
-    bias: Math.max(-1, Math.min(1, bias)),
-    confidence,
-    rsi, ema9, ema21,
-    components: { rsiScore, emaScore },
-    meta: `RSI:${rsi.toFixed(0)} EMA9${ema9>ema21?'>':'<'}EMA21 aligned:${aligned}`,
-  };
-}
-
-// ── Strategy B: Order Book Wall ───────────────────────────────
-export function strategyWall(book, price) {
-  if (!book) return { name: "WALL", bias: 0, confidence: 0, meta: "No book data", components: {} };
-
-  const bucket = price * 0.0015;
-  const bB = {}, aB = {};
-  for (const b of book.bids) { const k = Math.floor(b.price/bucket)*bucket; bB[k] = (bB[k]||0) + b.size * b.price; }
-  for (const a of book.asks) { const k = Math.floor(a.price/bucket)*bucket; aB[k] = (aB[k]||0) + a.size * a.price; }
-
-  const topBid = Object.entries(bB).sort((a,b) => b[1]-a[1])[0];
-  const topAsk = Object.entries(aB).sort((a,b) => b[1]-a[1])[0];
-  const bullWall = topBid ? { price: parseFloat(topBid[0]), usd: topBid[1] } : null;
-  const bearWall = topAsk ? { price: parseFloat(topAsk[0]), usd: topAsk[1] } : null;
-
-  const totalBids = book.bids.reduce((s,b) => s + b.size*b.price, 0);
-  const totalAsks = book.asks.reduce((s,a) => s + a.size*a.price, 0);
-  const depthRatio = (totalBids - totalAsks) / (totalBids + totalAsks);
-
-  let bias = depthRatio * 0.4;
-  let wallSignal = 0;
-
-  if (bullWall) {
-    const prox = (price - bullWall.price) / price;
-    if (prox < 0.003)      { bias += 0.45; wallSignal =  1; }
-    else if (prox < 0.008) { bias += 0.25; wallSignal =  0.5; }
-  }
-  if (bearWall) {
-    const prox = (bearWall.price - price) / price;
-    if (prox < 0.003)      { bias -= 0.45; wallSignal = -1; }
-    else if (prox < 0.008) { bias -= 0.25; wallSignal = -0.5; }
+  // ── depth (0-30) — the book must cover our order with room to spare ──
+  const need = stakeUsd / Math.max(m.ask || 0.5, 0.01);
+  const qty = (book && book.askQty > 0) ? book.askQty : null;
+  if (qty == null) { parts.depth = 15; reasons.push("depth unknown"); }
+  else {
+    const cover = qty / Math.max(need, 1);
+    parts.depth = cover >= 20 ? 30 : cover >= 8 ? 24 : cover >= 3 ? 16 : cover >= 1 ? 8 : 0;
+    if (parts.depth <= 8) reasons.push(`thin book (${Math.round(qty)} vs ${Math.round(need)} needed)`);
   }
 
-  const wallImbalance = bullWall && bearWall
-    ? (bullWall.usd - bearWall.usd) / (bullWall.usd + bearWall.usd) : 0;
-  bias += wallImbalance * 0.15;
+  // ── spread (0-25) — the cost of crossing, and a proxy for competition ──
+  const spread = (m.ask != null && m.bid != null) ? m.ask - m.bid : null;
+  if (spread == null) { parts.spread = 10; reasons.push("no two-sided quote"); }
+  else {
+    parts.spread = spread <= 0.01 ? 25 : spread <= 0.02 ? 20 : spread <= 0.03 ? 13 : spread <= 0.04 ? 6 : 0;
+    if (spread > 0.03) reasons.push(`wide spread ${Math.round(spread * 100)}¢`);
+  }
 
-  const clampedBias = Math.max(-1, Math.min(1, bias));
+  // ── volume (0-30) — how much real money has already priced this ──
+  const vol = Number(m.volume24h || 0);
+  parts.volume = vol >= SIGNAL.VOL_STRONG ? 30
+               : vol >= SIGNAL.VOL_OK     ? 22
+               : vol >= SIGNAL.VOL_THIN   ? 12
+               : vol > 0                  ? 4 : 0;
+  if (parts.volume <= 4) reasons.push(`low volume ($${Math.round(vol)} 24h)`);
 
-  // FIX: raised multiplier 1.1→1.4 so 45-50% conf clears kelly edge threshold
-  const confidence = Math.min(0.90, Math.abs(clampedBias) * 1.4 + Math.abs(wallSignal) * 0.2);
+  // ── agreement (0-15) — does the quote match where trades happened? ──
+  const last = Number(m.lastTradePx || 0);
+  if (!last) { parts.agree = 8; }
+  else {
+    const mid = (m.ask + m.bid) / 2;
+    const gap = Math.abs(mid - last);
+    parts.agree = gap <= 0.01 ? 15 : gap <= 0.03 ? 10 : gap <= 0.06 ? 5 : 0;
+    if (gap > 0.06) reasons.push(`quote ${Math.round(gap * 100)}¢ off last trade`);
+  }
 
-  return {
-    name: "WALL",
-    bias: clampedBias,
-    confidence,
-    bullWall, bearWall, depthRatio, wallSignal,
-    components: { depthRatio, wallImbalance, wallSignal },
-    meta: `depth:${(depthRatio*100).toFixed(1)}% bull$${bullWall?(bullWall.usd/1e6).toFixed(1)+'M':'—'} bear$${bearWall?(bearWall.usd/1e6).toFixed(1)+'M':'—'}`,
-  };
+  const score = Math.round(parts.depth + parts.spread + parts.volume + parts.agree);
+  const grade = score >= 80 ? "A" : score >= 65 ? "B" : score >= 55 ? "C" : score >= 40 ? "D" : "F";
+  return { score, grade, parts, reasons };
 }
 
-// ── Strategy C: ATR Breakout ──────────────────────────────────
-export function strategyBreakout(candles, ticker) {
-  const closes = candles.map(c => c.close);
-  const price  = closes[closes.length - 1];
-  const atr    = calcATR(candles);
-  const ema21  = calcEMA(closes, 21);
-
-  const upperBand = ema21 + atr * 1.5;
-  const lowerBand = ema21 - atr * 1.5;
-
-  const last3    = closes.slice(-4);
-  const momentum = last3.slice(1).reduce((sum, c, i) => sum + (c - last3[i]) / last3[i], 0);
-
-  const avgVol  = candles.slice(-20, -1).reduce((s,c) => s+c.volume, 0) / 19;
-  const lastVol = candles[candles.length-1].volume;
-  const volSurge = avgVol > 0 ? lastVol / avgVol : 1;
-
-  let bias = 0;
-  let breakType = "none";
-
-  if (price > upperBand) {
-    const strength = Math.min(1, (price - upperBand) / atr);
-    bias = 0.6 + strength * 0.4;
-    breakType = "up";
-  } else if (price < lowerBand) {
-    const strength = Math.min(1, (lowerBand - price) / atr);
-    bias = -(0.6 + strength * 0.4);
-    breakType = "down";
-  } else {
-    bias = Math.max(-0.4, Math.min(0.4, momentum * 30));
-    breakType = "range";
-  }
-
-  const volBoost    = Math.min(0.25, (volSurge - 1) * 0.1);
-  const confidence  = Math.min(0.90, Math.abs(bias) * 0.85 + volBoost);
-
-  return {
-    name: "BREAKOUT",
-    bias: Math.max(-1, Math.min(1, bias)),
-    confidence,
-    atr, upperBand, lowerBand, ema21,
-    volSurge, momentum, breakType,
-    components: { momentum, volSurge, breakType },
-    meta: `break:${breakType} vol:${volSurge.toFixed(1)}x atr:$${atr.toFixed(0)}`,
-  };
-}
-
-// ── Auto Strategy Selector ─────────────────────────────────────
-// FIX: thresholds relaxed so WALL and BREAKOUT fire in normal BTC ranging conditions
-// Old: BREAKOUT >1.5%, WALL <0.8% — almost never triggered in calm markets
-// New: BREAKOUT >0.8%, WALL <2.0% — fires regularly in normal conditions
-export function autoSelectStrategy(stratA, stratB, stratC, ticker) {
-  const volatility = Math.abs(ticker.priceChangePercent);
-
-  // Breakout wins when there's any meaningful directional move (>0.8% 24h)
-  if (volatility > 0.8 && stratC.confidence > 0.40) return "BREAKOUT";
-
-  // WALL wins when order book has a clear signal (relaxed from 0.45 → 0.35)
-  if (stratB.confidence > 0.35) return "WALL";
-
-  // RSI_EMA as fallback
-  return "RSI_EMA";
-}
-
-// ── Main Signal Compute ────────────────────────────────────────
-export function detectWalls(book, price) {
-  if (!book) return { wallBias: 0, wallStrength: 0, bullWall: null, bearWall: null };
-  const result = strategyWall(book, price);
-  return { wallBias: result.bias, wallStrength: result.confidence, ...result };
-}
-
-export async function computeSignals(
-  activeStrategies = { RSI_EMA: true, WALL: true, BREAKOUT: true },
-  autoMode = true
-) {
-  const [candlesR, tickerR, clR, bookR] = await Promise.allSettled([
-    fetchKrakenOHLC(),
-    fetchKrakenTicker(),
-    fetchChainlink(),
-    fetchOrderBook(150),
-  ]);
-
-  if (candlesR.status === "rejected") throw new Error("Candles: " + candlesR.reason?.message);
-  if (tickerR.status === "rejected")  throw new Error("Ticker: "  + tickerR.reason?.message);
-
-  const candles = candlesR.value;
-  const ticker  = tickerR.value;
-  const closes  = candles.map(c => c.close);
-  const price   = closes[closes.length - 1];
-  const atr     = calcATR(candles);
-
-  const oraclePrice = clR.status === "fulfilled" && clR.value > 1000 ? clR.value : null;
-  const book        = bookR.status === "fulfilled" ? bookR.value : null;
-
-  const stratA = strategyRSI_EMA(closes, atr);
-  const stratB = strategyWall(book, price);
-  const stratC = strategyBreakout(candles, ticker);
-
-  let activeStrat = "RSI_EMA";
-  if (autoMode) {
-    activeStrat = autoSelectStrategy(stratA, stratB, stratC, { ...ticker, price });
-  } else {
-    const enabled = [
-      activeStrategies.RSI_EMA   ? stratA : null,
-      activeStrategies.WALL      ? stratB : null,
-      activeStrategies.BREAKOUT  ? stratC : null,
-    ].filter(Boolean);
-    activeStrat = enabled.length === 0
-      ? "RSI_EMA"
-      : enabled.reduce((best, s) => s.confidence > best.confidence ? s : best, enabled[0]).name;
-  }
-
-  const stratMap = { RSI_EMA: stratA, WALL: stratB, BREAKOUT: stratC };
-  const lead = stratMap[activeStrat];
-
-  let finalBias = lead.bias;
-  if (activeStrategies.RSI_EMA && activeStrat !== "RSI_EMA") {
-    finalBias = finalBias * 0.8 + stratA.bias * 0.2;
-  }
-  if (activeStrategies.WALL && activeStrat !== "WALL" && stratB.confidence > 0.3) {
-    finalBias = finalBias * 0.85 + stratB.bias * 0.15;
-  }
-  if (activeStrategies.BREAKOUT && activeStrat !== "BREAKOUT") {
-    finalBias = finalBias * 0.8 + stratC.bias * 0.2;
-  }
-
-  return {
-    bias:           Math.max(-1, Math.min(1, finalBias)),
-    confidence:     lead.confidence,
-    currentPrice:   price,
-    oraclePrice,
-    stats:          { ...ticker, quoteVolume: ticker.volume * price },
-    atr,
-    rsi:    stratA.rsi,
-    ema9:   stratA.ema9,
-    ema21:  stratA.ema21,
-    walls:  { wallBias: stratB.bias, wallStrength: stratB.confidence, bullWall: stratB.bullWall, bearWall: stratB.bearWall, depthRatio: stratB.depthRatio },
-    activeStrategy: activeStrat,
-    autoMode,
-    strategies: { A: stratA, B: stratB, C: stratC },
-    components: lead.components,
-    leadMeta:   lead.meta,
-  };
+/** Rank candidates best-quality first. */
+export function rankBySignal(list) {
+  return [...list].sort((a, b) => (b._signal?.score || 0) - (a._signal?.score || 0));
 }
