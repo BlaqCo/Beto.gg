@@ -882,7 +882,7 @@ async function _runScanCycleInner() {
   // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
   for (const b of getAllActiveBets()) everBet.add(b.slug);
 
-  let entryErrors = 0, learnSkips = 0, signalSkips = 0;
+  let entryErrors = 0, learnSkips = 0, signalSkips = 0, modelSkips = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
