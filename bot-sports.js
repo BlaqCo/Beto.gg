@@ -164,6 +164,36 @@ let SIGNAL_MIN     = 55;
 let MODEL_ENABLED  = true;
 let MODEL_EDGE_MIN = 0.03;   // shrunk edge required, on top of the fee
 
+// ── ENDGAME TIMING ── never enter early. Only bet a LIVE match once it is
+// past this fraction of typical duration — near the end, not mid-game.
+let ENDGAME_ONLY   = true;
+let ENDGAME_MIN    = 0.75;   // 0.75 = last quarter of the match
+
+function matchProgressFrac(m) {
+  const per = String(m.evPeriod || "").trim();
+  const sc  = String(m.evScore  || "").trim();
+  let mm;
+  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, mm[1] / 3);
+  if ((mm = per.match(/(?:top|bot|bottom)?\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, mm[1] / 9);
+  if ((mm = per.match(/q(?:uarter)?\s*(\d)/i)))              return Math.min(1, mm[1] / 4);
+  if ((mm = per.match(/p(?:eriod)?\s*(\d)/i)))               return Math.min(1, mm[1] / 3);
+  if (/2nd half|second half/i.test(per))                       return 0.85;
+  if (/1st half|first half/i.test(per))                        return 0.30;
+  if ((mm = per.match(/(?:map|game)\s*(\d)/i)))              return Math.min(1, mm[1] / 3);
+  if ((mm = sc.match(/^(\d{1,2})\s*[-:]\s*(\d{1,2})$/))) {
+    const lead = Math.max(+mm[1], +mm[2]);
+    return lead <= 16 ? Math.min(1, lead / 13) : Math.min(1, (+mm[1] + +mm[2]) / 18);
+  }
+  if (m.gameStartIso) {
+    const mins = (Date.now() - new Date(m.gameStartIso).getTime()) / 60000;
+    if (mins < 0) return 0;
+    const hay = `${m.league || ""} ${m.slug || ""}`.toUpperCase();
+    const typical = /MLB|BASEBALL/.test(hay) ? 180 : /TENNIS|ATP|WTA|ITF/.test(hay) ? 95 : 120;
+    return Math.min(1, mins / typical);
+  }
+  return null;
+}
+
 let LEARN_ENABLED = true;
 let LEARN_MIN_N   = 12;
 let LEARN_CUTOFF  = -4;     // points below break-even that counts as "proven losing"
@@ -465,6 +495,8 @@ async function applyLiveConfig() {
     if (c.SL_PRICE      != null) SL_PRICE      = c.SL_PRICE;
     if (c.HALFWAY_ONLY  != null) HALFWAY_ONLY  = c.HALFWAY_ONLY;
     if (c.PREGAME_ONLY  != null) PREGAME_ONLY  = c.PREGAME_ONLY;
+    if (c.ENDGAME_ONLY  != null) ENDGAME_ONLY  = c.ENDGAME_ONLY;
+    if (c.ENDGAME_MIN   != null) ENDGAME_MIN   = c.ENDGAME_MIN;
     if (c.LEARN_ENABLED != null) LEARN_ENABLED = c.LEARN_ENABLED;
     if (c.MODEL_ENABLED != null) MODEL_ENABLED = c.MODEL_ENABLED;
     if (c.MODEL_EDGE_MIN != null) MODEL_EDGE_MIN = c.MODEL_EDGE_MIN;
@@ -660,6 +692,12 @@ async function _runScanCycleInner() {
         sportRejects++; return false;
       })
       .filter(m => {
+        // ENDGAME: a live match only qualifies once it's nearly over.
+        if (ENDGAME_ONLY && m.isLive) {
+          const frac = matchProgressFrac(m);
+          if (frac == null || frac < ENDGAME_MIN) { earlyRejects++; return false; }
+          return true;
+        }
         // PRE-GAME ONLY: never touch a match that has already started.
         if (PREGAME_ONLY) {
           if (m.isLive) { windowRejects++; return false; }
