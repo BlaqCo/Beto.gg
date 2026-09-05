@@ -101,8 +101,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 9;       // flat $9
-let BET_HIGH_USD  = 9;       // flat $9 (no edge scaling)
+let BET_LOW_USD   = 7;       // flat $7
+let BET_HIGH_USD  = 7;       // flat $7 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -123,7 +123,7 @@ let MAX_CONC      = 3;       // 3 concurrent bets MAX
 // TENNIS + TABLE TENNIS ONLY. Matched loosely so every label variant is
 // caught: TENNIS, TABLE-TENNIS, ATP, WTA, ITF (itfme/itfwo), CHALLENGER,
 // SETKA/TT (table-tennis feeds). Empty [] would mean all leagues.
-let LEAGUE_FOCUS  = ["MLB","BASEBALL","TENNIS","ATP","WTA","ITF"];  // only the modelled sports
+let LEAGUE_FOCUS  = [];      // all sports allowed — model applies only where it covers
 let LEAGUE_BLOCK  = [];      // blacklist — always excluded
 // ── DISCOUNT GATE: live entries must be ≥ this much BELOW the pre-game
 // reference price (fee ~2% + 2¢ margin). Buying favorites at a discount to
@@ -901,16 +901,28 @@ async function _runScanCycleInner() {
     }
 
     // ── STATE MODEL: the scoreboard must justify the price ──
-    if (MODEL_ENABLED) {
+    // Model applies only to leagues it actually covers (MLB, tennis). Other
+    // sports were excluded entirely before — "allow all sports" means they
+    // now trade on price/edge alone, same as pre-model behaviour, while
+    // MLB/tennis get the extra scoreboard confirmation as a bonus filter.
+    const leagueUpper = String(m.league || "").toUpperCase();
+    const modelCovers = model.MODELLED_LEAGUES.some(l => leagueUpper.includes(l));
+    if (MODEL_ENABLED && modelCovers) {
       const sig = model.stateEdge(m, m.ask);
-      if (!sig)                      { modelSkips++; continue; }   // no model for this sport/state
-      if (sig.side === "ambiguous")  { modelSkips++; continue; }   // could go either way — refuse rather than guess
+      if (!sig)                      { modelSkips++; continue; }   // no model for this game state
+      if (sig.side === "ambiguous")  { modelSkips++; continue; }   // still refuses when truly unresolvable
       if (sig.side === "tied-overpriced") {
         // Confidently rejected: price isn't justified under EITHER home/away
-        // assignment. Log distinctly — this is real signal, not a guess.
+        // assignment. Real signal, not a guess.
         modelSkips++;
         console.log(`  📐 ${sig.reason}`);
         continue;
+      }
+      if (sig.side === "tied-bestguess") {
+        // Betting the more favourable home/away read, per request. Honest
+        // flag: which named team is home is a real guess here, not derived
+        // baseball math — shrinkage and the edge cap keep a wrong guess cheap.
+        console.log(`  📐 ${sig.reason} (best-guess side)`);
       }
       const need = MODEL_EDGE_MIN + fees.costPerContract(m.ask, false);
       if (sig.edge < need) { modelSkips++; continue; }
