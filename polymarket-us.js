@@ -457,6 +457,8 @@ export async function fetchSportsMoneylines() {
       evScore:  m.evScore  ?? null,
       evPeriod: m.evPeriod ?? null,
       volume24h: num(m.volume24hr) || 0,
+      volumeTotal: num(m.volume) || 0,
+      lastTradePx: num(m.lastTradePx) || num(m.lastTradePrice) || null,
       sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
     });
   }
@@ -684,9 +686,9 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // EVERY buy passes through here. Regardless of which code path calls,
 // orders outside these bounds are refused. Raise ORDER_MAX_USD if you
 // ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 5.00;   // $6 flat, small buffer
-const ORDER_MAX_USD = 6.50;   // nothing larger than ~$6
-const MAX_OPEN_POSITIONS = 6;  // hard slot cap enforced AT THE ORDER GATE
+const ORDER_MIN_USD = 6.00;   // $7 flat, small buffer
+const ORDER_MAX_USD = 7.50;   // nothing larger than ~$7
+const MAX_OPEN_POSITIONS = 3;  // hard slot cap enforced AT THE ORDER GATE
 // ONE BET PER MARKET, ALWAYS. With DCA removed there is no legitimate reason
 // to add to a position, so allowAddOn is ignored while this is true.
 const NO_STACKING = true;
