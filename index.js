@@ -49,7 +49,10 @@ const betoOpts = {
 };
 import("./config-api.js")
   .then(m => {
-    if (typeof m.mountConfigApi === "function") m.mountConfigApi(app, betoOpts);
+    if (typeof m.mountConfigApi === "function") m.mountConfigApi(app, {
+      ...betoOpts,
+      onHistoryCleared: () => { _statsCache = { data: null, ts: 0 }; _histCache = { data: null, ts: 0 }; },
+    });
     else console.error("⚠️ config-api.js loaded but has no mountConfigApi export — BetoBot disabled (bot still runs)");
   })
   .catch(err => console.error(`⚠️ BetoBot disabled (${err.message}) — bot still runs`));
@@ -455,6 +458,14 @@ app.get("/api/positions", async (req, res) => {
 let _histCache = { data: null, ts: 0 };
 app.get("/api/history", async (req, res) => {
   try {
+    // The CLEAR button can't reach into state.js's own memory or erase
+    // Polymarket's permanent activity record — but everything closed before
+    // this cutoff is hidden from the dashboard, from BOTH sources, which is
+    // what actually makes "clear" behave like clear.
+    const { getHistoryCutoff } = await import("./tracker.js");
+    const cutoff = await getHistoryCutoff();
+    const afterCutoff = ts => !cutoff || (ts && new Date(ts).getTime() > cutoff);
+
     // Source 1: state.js closed bets (always reliable)
     const stateClosed = (state.getAllBets ? state.getAllBets() : [])
       .filter(b => b.status && b.status !== "open")
@@ -469,7 +480,8 @@ app.get("/api/history", async (req, res) => {
         createTime: b.closedAt || b.placedAt || "",
         won: b.status === "won",
         side: "BUY",
-      }));
+      }))
+      .filter(b => afterCutoff(b.createTime));
 
     // Source 2: Polymarket activities (fills cross-session history)
     let actActs = [];
@@ -493,7 +505,7 @@ app.get("/api/history", async (req, res) => {
       return !stateQuestions.has(q); // don't duplicate what state already has
     });
 
-    const merged = [...stateClosed, ...actFiltered]
+    const merged = [...stateClosed, ...actFiltered.filter(a => afterCutoff(a.createTime))]
       .sort((a, b) => (b.createTime || "") > (a.createTime || "") ? 1 : -1);
 
     return res.json(merged);
@@ -513,8 +525,13 @@ app.get("/api/stats", async (req, res) => {
     return res.json(_statsCache.data);
   }
   try {
+    const { getHistoryCutoff } = await import("./tracker.js");
+    const cutoff = await getHistoryCutoff();
+    const afterCutoff = ts => !cutoff || (ts && new Date(ts).getTime() > cutoff);
+
     // ── Source 1: state.js (always reliable for current session) ──
-    const allBetsArr = state.getAllBets ? state.getAllBets() : [];
+    const allBetsArrRaw = state.getAllBets ? state.getAllBets() : [];
+    const allBetsArr = allBetsArrRaw.filter(b => afterCutoff(b.closedAt || b.placedAt));
     const closed = allBetsArr.filter(b => b.status && b.status !== "open");
     const stateWins = closed.filter(b => b.status === "won").length;
     const stateLosses = closed.filter(b => b.status === "lost").length;
@@ -531,6 +548,8 @@ app.get("/api/stats", async (req, res) => {
           acts = await getTradeHistory({ limit: 500 });
           if (acts && acts.length) _histCache = { data: acts, ts: Date.now() };
         }
+
+        if (acts && acts.length) acts = acts.filter(a => afterCutoff(a.createTime));
 
         if (acts && acts.length) {
           const trades = acts.filter(a => a._type === "trade");
@@ -595,6 +614,8 @@ app.post("/api/history/clear", async (req, res) => {
   try {
     const t = await import("./tracker.js");
     const out = await t.clearHistory({ alsoLocks: !!req.body?.alsoLocks });
+    _statsCache = { data: null, ts: 0 };   // otherwise old totals show for up to 60s
+    _histCache  = { data: null, ts: 0 };
     res.json({ ok: true, ...out });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
