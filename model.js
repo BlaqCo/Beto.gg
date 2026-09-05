@@ -157,22 +157,28 @@ export function stateEdge(market, price) {
     // that is a real, useful finding, not a refusal for lack of information.
     const edgeAsHome = edgeOf(homeProb);
     const edgeAsAway = edgeOf(1 - homeProb);
-    // Confident reject: if even the MORE FAVOURABLE of the two possible
-    // team assignments gives no positive edge, the price isn't justified
-    // under EITHER assignment — home/away ambiguity stops mattering.
+    // Confident reject stays as-is: if NEITHER assignment gives a positive
+    // edge, the price isn't justified regardless of home/away.
     const bestCase = Math.max(edgeAsHome, edgeAsAway);
+    const rawBest = edgeAsHome >= edgeAsAway ? homeProb : 1 - homeProb;
     if (bestCase <= 0) {
-      const rawBest = edgeAsHome >= edgeAsAway ? homeProb : 1 - homeProb;
       return {
         p: shrink(rawBest), rawP: rawBest, edge: bestCase, side: "tied-overpriced",
         reason: `${league} ${a}-${b} ${period} (tied, last-at-bat edge ~${Math.round(homeProb * 100)}%) → ` +
                 `price ${Math.round(price * 100)}¢ too rich either way`,
       };
     }
-    // The price COULD be justified, but only if we knew which team is home —
-    // and we don't have that field reliably. Refuse rather than guess.
-    return { p: null, edge: null, side: "ambiguous",
-             reason: `tied game, home team unknown — model ${Math.round(homeProb * 100)}%/${Math.round((1 - homeProb) * 100)}% vs price ${Math.round(price * 100)}¢ (would need home/away to confirm)` };
+    // TAKE-THE-BETTER-SIDE MODE: bet the more favourable of the two possible
+    // home/away assignments rather than refusing. HONEST CAVEAT: we do not
+    // actually know which named team is home, so this is a real guess on
+    // that one detail — not a guess on the baseball math, which is solid.
+    // Half the time this assignment will be backwards; it is deliberately
+    // shrunk hard and edge-capped so being wrong here is cheap.
+    return {
+      p: shrink(rawBest), rawP: rawBest, edge: edgeOf(rawBest), side: "tied-bestguess",
+      reason: `${league} ${a}-${b} ${period} (tied, last-at-bat edge ~${Math.round(homeProb * 100)}%, ` +
+              `home/away assumed) → model ${Math.round(rawBest * 100)}% vs price ${Math.round(price * 100)}¢`,
+    };
   }
 
   // LEAD case: unchanged logic, but the ambiguity band now only applies
