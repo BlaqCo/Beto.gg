@@ -110,8 +110,8 @@ const sizeForPx = px => {
 };
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.57;    // entry floor: 57%
-let FAV_MAX       = 0.65;    // entry cap: 65%
+let FAV_MIN       = 0.55;    // entry floor: 55%
+let FAV_MAX       = 0.68;    // entry cap: 68%
 // Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
@@ -733,7 +733,11 @@ async function _runScanCycleInner() {
       .filter(m => {
         // Depth gate by tier — soft books need far more size behind the ask
         const need = isMainTour(m) ? MAIN_MIN_QTY : SOFT_MIN_QTY;
-        if (m.askQty != null && m.askQty > 0 && m.askQty < need) { thinRejects++; return false; }
+        if (m.askQty != null && m.askQty > 0 && m.askQty < need) {
+          thinRejects++;
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but thin book: ${m.askQty} contracts (need ${need}) | ${m.question?.slice(0,36)}`);
+          return false;
+        }
         return true;
       })
       // ── BOOK SANITY: reject stub/fake books (bid 0.03 / ask 0.98 pairs) ──
@@ -743,15 +747,27 @@ async function _runScanCycleInner() {
         // check rejected every real market. Correct test: a real two-sided
         // book has bid < ask, a tight gap, and neither side pinned at the rail.
         const bid = m.bid || 0, ask = m.ask || 0;
-        if (!(bid > 0.02 && ask < 0.98 && ask > bid && (ask - bid) <= 0.08)) { bookRejects++; return false; }
+        if (!(bid > 0.02 && ask < 0.98 && ask > bid && (ask - bid) <= 0.08)) {
+          bookRejects++;
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but bad book: bid=${bid} ask=${ask} | ${m.question?.slice(0,36)}`);
+          return false;
+        }
         return true;
       })
       // ── QUOTE PERSISTENCE: price must hold ~8s before we act on it ──
       .filter(m => {
         const prev = quoteSeen.get(m.slug);
         const now2 = Date.now();
-        if (!prev || Math.abs(prev.px - m.px) > QUOTE_TOL) { quoteSeen.set(m.slug, { px: m.px, since: now2 }); flickerRejects++; return false; }
-        if (now2 - prev.since < QUOTE_HOLD_MS) { flickerRejects++; return false; }
+        if (!prev || Math.abs(prev.px - m.px) > QUOTE_TOL) {
+          quoteSeen.set(m.slug, { px: m.px, since: now2 }); flickerRejects++;
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but quote just moved: ${cents(m.px)} | ${m.question?.slice(0,36)}`);
+          return false;
+        }
+        if (now2 - prev.since < QUOTE_HOLD_MS) {
+          flickerRejects++;
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but quote too fresh (${Math.round((now2-prev.since)/1000)}s held) | ${m.question?.slice(0,36)}`);
+          return false;
+        }
         return true;
       })
       .filter(m => {
@@ -764,10 +780,18 @@ async function _runScanCycleInner() {
         if (ref == null) return true;
         // Required pullback = fee cost at this price + margin.
         const need = feePx(m.px) + EDGE_MARGIN;
-        if (m.px > ref - need) { discountRejects++; return false; }
+        if (m.px > ref - need) {
+          discountRejects++;
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but no discount: ${cents(m.px)}, high-water ${cents(ref)}, need ${cents(need)} more | ${m.question?.slice(0,36)}`);
+          return false;
+        }
         // NEAR-LOW: only buy at/near the bottom of the trailing range.
         const lo = lowSeen.get(m.slug);
-        if (lo != null && m.px > lo + NEAR_LOW_TOL) { nearLowRejects++; return false; }
+        if (lo != null && m.px > lo + NEAR_LOW_TOL) {
+          nearLowRejects++;
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but above trailing low: ${cents(m.px)} vs low ${cents(lo)} | ${m.question?.slice(0,36)}`);
+          return false;
+        }
         return true;
       })
       .sort((a, b) => {
