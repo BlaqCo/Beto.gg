@@ -22,6 +22,10 @@ import * as actions from "./actions.js";
 export function mountConfigApi(app, opts = {}) {
   // getHistory lets BetoBot answer questions about settled bets.
   const getHistory = typeof opts.getHistory === "function" ? opts.getHistory : async () => [];
+  // Lets BetoBot's text command reuse index.js's own cache-busting instead
+  // of duplicating it — otherwise a "clear history" typed here wouldn't
+  // clear index.js's local /api/stats and /api/history caches.
+  const onHistoryCleared = typeof opts.onHistoryCleared === "function" ? opts.onHistoryCleared : () => {};
   app.get("/api/config", async (_req, res) => {
     try {
       const config = await getConfig({ force: true });
@@ -55,6 +59,7 @@ export function mountConfigApi(app, opts = {}) {
         const t = await import("./tracker.js");
         const alsoLocks = /\block|claims?\b/i.test(text);
         const out = await t.clearHistory({ alsoLocks });
+        onHistoryCleared();
         return res.json({ ok: true, kind: "action",
           message: `Cleared ${out.cleared} stored trade${out.cleared === 1 ? "" : "s"}${alsoLocks ? " and all bet locks" : ""}. The edge tracker starts fresh.` });
       }
