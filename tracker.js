@@ -235,17 +235,37 @@ export async function shouldSkip(league, entryPx, opts = {}) {
 }
 
 /** Wipe stored trade history (and optionally the bet locks). */
+const KEY_CUTOFF = "beto:history-cutoff";
+let cutoffMem = 0;
+
+/** Bet history is hidden from the dashboard if it closed before this time.
+ * This is what actually lets CLEAR hide entries that live in state.js's own
+ * memory or in Polymarket's own permanent activity ledger — neither of
+ * which this file can reach into or erase. A cutoff timestamp achieves the
+ * same visible result (an empty log going forward) without needing to. */
+export async function getHistoryCutoff() {
+  try {
+    if (URL && TOKEN) { const v = await redis(["GET", KEY_CUTOFF]); return Number(v) || 0; }
+  } catch {}
+  return cutoffMem;
+}
+async function setHistoryCutoff(ts) {
+  try { if (URL && TOKEN) await redis(["SET", KEY_CUTOFF, String(ts)]); } catch {}
+  cutoffMem = ts;
+}
+
 export async function clearHistory({ alsoLocks = false } = {}) {
   const before = (await getTrades({ force: true })).length;
   try { if (URL && TOKEN) await redis(["DEL", KEY_TRADES]); } catch {}
   memTrades = [];
   cache = { rows: [], ts: Date.now() };
   verdictCache = { map: null, ts: 0 };
+  await setHistoryCutoff(Date.now());   // hide everything up to right now, from EVERY source
   if (alsoLocks) {
     try { if (URL && TOKEN) await redis(["DEL", KEY_LOCK]); } catch {}
     lockMem.clear();
   }
-  console.log(`🗑 Cleared ${before} stored trades${alsoLocks ? " and all bet locks" : ""}`);
+  console.log(`🗑 Cleared ${before} stored trades and hid all bet history before now${alsoLocks ? "; also cleared bet locks" : ""}`);
   return { cleared: before };
 }
 
