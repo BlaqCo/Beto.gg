@@ -29,6 +29,7 @@ const clamp = (x, lo = 0.02, hi = 0.98) => Math.max(lo, Math.min(hi, x));
 export const SHRINK   = 0.5;
 export const MAX_EDGE = 0.12;
 
+
 /** Normal CDF — used for the baseball lead model. */
 function Phi(z) {
   const t = 1 / (1 + 0.2316419 * Math.abs(z));
@@ -49,6 +50,28 @@ export function baseballWinProb(lead, inning) {
   const z = Math.abs(lead) / (1.2 * Math.sqrt(rem));
   const p = clamp(Phi(z), 0.5, 0.985);
   return lead > 0 ? p : 1 - p;
+}
+
+/**
+ * TIED, LATE INNING — the home team's last-at-bat advantage.
+ * A tied game is not a coin flip once the innings get late: the home side
+ * bats last, so in the bottom half they know exactly what they need and
+ * only have to match or beat it, while in the top half the visitor has no
+ * such information. This is well-documented in sabermetric win-expectancy
+ * tables (Tom Tango's WPA framework; consistent across decades of MLB
+ * play-by-play data) and is NOT something we are fitting to our own trades.
+ *
+ * Reference points this reproduces (home team win probability, tied game):
+ *   tied, top of 9th (home fields first)     ≈ 52-53%
+ *   tied, bottom of 9th (home bats, in play) ≈ 54-55%
+ *   tied, extra innings (10th+)              ≈ 52-53%, roughly flat
+ *
+ * Returns the HOME team's win probability. Caller maps it to leader/trailer.
+ */
+export function baseballTiedProb(inning, isBottomHalf) {
+  if (inning >= 10) return 0.525;                 // extras — small, stable home edge
+  if (inning === 9) return isBottomHalf ? 0.545 : 0.525;
+  return 0.51;                                     // tied earlier — edge exists but is small
 }
 
 /**
@@ -101,11 +124,18 @@ export function stateEdge(market, price) {
   const [a, b] = pair;
 
   let leaderProb = null;
+  let homeProb = null;         // set only for the tied-game case
   if (/MLB|BASEBALL|NPB|KBO/.test(league)) {
     const inn = parseInning(period);
     if (inn == null) return null;
-    leaderProb = baseballWinProb(Math.abs(a - b) || 0, inn);
-    if (a === b) leaderProb = 0.5;
+    if (a === b) {
+      const isBottom = /bot|bottom/i.test(period);
+      const isTop    = /top/i.test(period);
+      if (!isBottom && !isTop) return null;         // can't tell which half — refuse rather than guess
+      homeProb = baseballTiedProb(inn, isBottom);
+    } else {
+      leaderProb = baseballWinProb(Math.abs(a - b), inn);
+    }
   } else if (/TENNIS|ATP|WTA|ITF/.test(league)) {
     const set = parseSet(period);
     if (set == null) return null;
@@ -113,9 +143,40 @@ export function stateEdge(market, price) {
   } else {
     return null;                                    // no model for this sport
   }
-  if (leaderProb == null) return null;
+  if (leaderProb == null && homeProb == null) return null;
 
-  // Which side is the quoted price on? Pick the closer one, refuse if unclear.
+  const shrink = (rawP) => price + SHRINK * (rawP - price);
+  const edgeOf = (rawP) => Math.max(-MAX_EDGE, Math.min(MAX_EDGE, shrink(rawP) - price));
+
+  if (homeProb != null) {
+    // TIED GAME: we don't reliably know which named team is home, so we
+    // can't pick a single side the way the lead case does. Instead: check
+    // BOTH possible assignments. A tied-game edge is at most ~55% either
+    // way, so if the price is rich enough that NEITHER assignment justifies
+    // it, we can safely reject without ever needing to resolve home/away —
+    // that is a real, useful finding, not a refusal for lack of information.
+    const edgeAsHome = edgeOf(homeProb);
+    const edgeAsAway = edgeOf(1 - homeProb);
+    // Confident reject: if even the MORE FAVOURABLE of the two possible
+    // team assignments gives no positive edge, the price isn't justified
+    // under EITHER assignment — home/away ambiguity stops mattering.
+    const bestCase = Math.max(edgeAsHome, edgeAsAway);
+    if (bestCase <= 0) {
+      const rawBest = edgeAsHome >= edgeAsAway ? homeProb : 1 - homeProb;
+      return {
+        p: shrink(rawBest), rawP: rawBest, edge: bestCase, side: "tied-overpriced",
+        reason: `${league} ${a}-${b} ${period} (tied, last-at-bat edge ~${Math.round(homeProb * 100)}%) → ` +
+                `price ${Math.round(price * 100)}¢ too rich either way`,
+      };
+    }
+    // The price COULD be justified, but only if we knew which team is home —
+    // and we don't have that field reliably. Refuse rather than guess.
+    return { p: null, edge: null, side: "ambiguous",
+             reason: `tied game, home team unknown — model ${Math.round(homeProb * 100)}%/${Math.round((1 - homeProb) * 100)}% vs price ${Math.round(price * 100)}¢ (would need home/away to confirm)` };
+  }
+
+  // LEAD case: unchanged logic, but the ambiguity band now only applies
+  // where it was designed to — leaderProb meaningfully away from 50%.
   const dLead = Math.abs(price - leaderProb);
   const dTrail = Math.abs(price - (1 - leaderProb));
   if (Math.abs(dLead - dTrail) < 0.08) {
@@ -123,14 +184,10 @@ export function stateEdge(market, price) {
              reason: `state unclear (model ${Math.round(leaderProb * 100)}% vs price ${Math.round(price * 100)}¢)` };
   }
   const rawP = dLead < dTrail ? leaderProb : 1 - leaderProb;
-  // SHRINKAGE — claim only part of the apparent gap. The model is a rough
-  // approximation; the market is a well-informed estimate. Taking half the
-  // difference means model error costs us far less when we are wrong.
-  const p = price + SHRINK * (rawP - price);
   return {
-    p, rawP, edge: Math.max(-MAX_EDGE, Math.min(MAX_EDGE, p - price)),
+    p: shrink(rawP), rawP, edge: edgeOf(rawP),
     side: dLead < dTrail ? "leader" : "trailer",
-    reason: `${league} ${a}-${b} ${period} → model ${Math.round(rawP * 100)}% (shrunk ${Math.round(p * 100)}%) vs price ${Math.round(price * 100)}¢`,
+    reason: `${league} ${a}-${b} ${period} → model ${Math.round(rawP * 100)}% (shrunk ${Math.round(shrink(rawP) * 100)}%) vs price ${Math.round(price * 100)}¢`,
   };
 }
 
