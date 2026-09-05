@@ -101,8 +101,8 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 7;       // flat $7
-let BET_HIGH_USD  = 7;       // flat $7 (no edge scaling)
+let BET_LOW_USD   = 22;      // flat $22
+let BET_HIGH_USD  = 22;      // flat $22 (no edge scaling)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
@@ -116,7 +116,7 @@ let FAV_MAX       = 0.68;    // entry cap: 68%
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
   - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
-let MAX_CONC      = 3;       // 3 concurrent bets MAX
+let MAX_CONC      = 3;       // 3 concurrent bets MAX (unchanged, already 3)
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
