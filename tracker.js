@@ -123,7 +123,17 @@ const KEY_LOCK = "beto:betlock";
 const lockMem = new Map();
 const LOCK_TTL_MS = 36 * 3600_000;
 
+let _stackWarned = false;
+function warnIfMemoryOnly() {
+  if (_stackWarned || (URL && TOKEN)) return;
+  _stackWarned = true;
+  console.error("🛑🛑 ANTI-STACKING IS MEMORY-ONLY — UPSTASH_REDIS_REST_URL / _TOKEN are not set.");
+  console.error("🛑 Every restart wipes the market lock, so the same market CAN be re-bought after");
+  console.error("🛑 a redeploy. Add Upstash Redis in Railway → Variables to make this durable.");
+}
+
 export async function claimMarket(slug) {
+  warnIfMemoryOnly();
   const now = Date.now();
   try {
     if (URL && TOKEN) {
