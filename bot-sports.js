@@ -167,7 +167,7 @@ let MODEL_EDGE_MIN = 0.03;   // shrunk edge required, on top of the fee
 // ── ENDGAME TIMING ── never enter early. Only bet a LIVE match once it is
 // past this fraction of typical duration — near the end, not mid-game.
 let ENDGAME_ONLY   = true;
-let ENDGAME_MIN    = 0.75;   // 0.75 = last quarter of the match
+let ENDGAME_MIN    = 0.65;   // lowered from 0.75 — was likely the main bottleneck on entry frequency
 
 function matchProgressFrac(m) {
   const per = String(m.evPeriod || "").trim();
