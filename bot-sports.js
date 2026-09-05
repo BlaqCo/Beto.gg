@@ -904,7 +904,14 @@ async function _runScanCycleInner() {
     if (MODEL_ENABLED) {
       const sig = model.stateEdge(m, m.ask);
       if (!sig)                      { modelSkips++; continue; }   // no model for this sport/state
-      if (sig.side === "ambiguous")  { modelSkips++; continue; }
+      if (sig.side === "ambiguous")  { modelSkips++; continue; }   // could go either way — refuse rather than guess
+      if (sig.side === "tied-overpriced") {
+        // Confidently rejected: price isn't justified under EITHER home/away
+        // assignment. Log distinctly — this is real signal, not a guess.
+        modelSkips++;
+        console.log(`  📐 ${sig.reason}`);
+        continue;
+      }
       const need = MODEL_EDGE_MIN + fees.costPerContract(m.ask, false);
       if (sig.edge < need) { modelSkips++; continue; }
       m._modelReason = sig.reason;
