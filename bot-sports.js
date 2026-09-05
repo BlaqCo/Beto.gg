@@ -792,7 +792,7 @@ async function _runScanCycleInner() {
     if (bookRejects)    console.log(`  📕 Book sanity: ${bookRejects} rejected (stub/one-sided quotes)`);
     if (flickerRejects) console.log(`  ⏳ Quote hold: ${flickerRejects} waiting for price to persist`);
     if (nearLowRejects) console.log(`  📍 Not near low: ${nearLowRejects} above trailing low +${(NEAR_LOW_TOL*100).toFixed(0)}¢`);
-    if (earlyRejects)  console.log(`  🕐 Too early: ${earlyRejects} live <${MIN_LIVE_MIN}min into play`);
+    if (earlyRejects) console.log(`  🕐 Too early: ${earlyRejects} live match(es) not yet past ${Math.round(ENDGAME_MIN * 100)}% (endgame gate)`);
     if (windowRejects) console.log(`  ⏱ Entry window: ${windowRejects} skipped (outside ${UPCOMING_MIN_H}-${UPCOMING_MAX_H}h before start)`);
     if (thinRejects) console.log(`  💧 Depth gate: ${thinRejects} candidates lacked required book depth`);
     if (discountRejects) console.log(`  💹 Discount gate: ${discountRejects} live candidates lacked ≥${(DISCOUNT_MIN*100).toFixed(0)}¢ discount to opener`);
