@@ -169,11 +169,22 @@ let MODEL_EDGE_MIN = 0.03;   // shrunk edge required, on top of the fee
 let ENDGAME_ONLY   = true;
 let ENDGAME_MIN    = 0.65;   // lowered from 0.75 — was likely the main bottleneck on entry frequency
 
+// Grand Slam MEN'S SINGLES is played best-of-5; every other tennis format
+// (WTA singles, doubles at any event including Slams, ATP/WTA regular tour,
+// ITF, Challengers) is best-of-3. This is fixed tennis rule structure, not
+// something fitted to our data — same standard as the baseball tied-game fix.
+function tennisSetsInMatch(m) {
+  const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
+  const isSlam = /US OPEN|WIMBLEDON|ROLAND GARROS|FRENCH OPEN|AUSTRALIAN OPEN/.test(hay);
+  const isWomensOrDoubles = /WTA|WOMEN|DOUBLES|MIXED/.test(hay);
+  return (isSlam && !isWomensOrDoubles) ? 5 : 3;
+}
+
 function matchProgressFrac(m) {
   const per = String(m.evPeriod || "").trim();
   const sc  = String(m.evScore  || "").trim();
   let mm;
-  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, mm[1] / 3);
+  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, mm[1] / tennisSetsInMatch(m));
   if ((mm = per.match(/(?:top|bot|bottom)?\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, mm[1] / 9);
   if ((mm = per.match(/q(?:uarter)?\s*(\d)/i)))              return Math.min(1, mm[1] / 4);
   if ((mm = per.match(/p(?:eriod)?\s*(\d)/i)))               return Math.min(1, mm[1] / 3);
@@ -211,7 +222,7 @@ function matchProgress(m) {
   if (/2nd half|second half|ht|half.?time/i.test(per))         return 0.75;
   if (/1st half|first half/i.test(per))                        return 0.25;
   // tennis / table tennis — "2nd Set"
-  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, (+mm[1] - 0.5) / 3);
+  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, (+mm[1] - 0.5) / tennisSetsInMatch(m));
   // baseball — "Bot 5th" / "Top 7th"
   if ((mm = per.match(/(?:top|bot|bottom)?\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, (+mm[1] - 0.5) / 9);
   // basketball / hockey — "Q3", "3rd Quarter", "P2"
