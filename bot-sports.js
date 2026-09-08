@@ -250,7 +250,7 @@ const liveSince  = new Map();  // slug → timestamp we FIRST saw it live
 const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // Enter only when price is within this much of the trailing low — i.e. near
 // the bottom of the range we've watched, not just any pullback.
-let NEAR_LOW_TOL  = 0.01;
+let NEAR_LOW_TOL  = 0.035;   // widened from 1¢ — real in-play noise regularly exceeded 1¢
 // Prices at/below this get first claim on slots (cheap-entry priority).
 let PRIORITY_PX   = 0.68;   // ≤68¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
@@ -904,14 +904,14 @@ async function _runScanCycleInner() {
   // ── ONE BET PER MARKET, EVER (no stacking) ──
   // Permanent per-process record of every slug the bot has entered, seeded
   // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
-  for (const b of getAllActiveBets()) everBet.add(b.slug);
+  for (const b of getAllActiveBets()) everBet.add(canonicalSlug(b.slug));
 
   let entryErrors = 0, learnSkips = 0, signalSkips = 0, modelSkips = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
-    if (everBet.has(m.slug)) continue;                 // already bet this market — never stack
+    if (everBet.has(canonicalSlug(m.slug))) continue;  // already bet this market (any spelling) — never stack
 
     // ── SIGNAL: is this price trustworthy enough to trade? ──
     if (SIGNAL_ENABLED && signal?.scoreMarket) {
@@ -970,11 +970,11 @@ async function _runScanCycleInner() {
     // ── ARMORED: one candidate failing can NEVER kill the rest of the loop ──
     // RESERVE FIRST: claim this market before any slow API call, so no
     // concurrent code path can order it too. Released only if we don't fill.
-    everBet.add(m.slug);
+    everBet.add(canonicalSlug(m.slug));
     // Durable claim — survives restarts, which in-memory everBet does not.
     // This is what stopped the same market being bought again after a deploy.
     try {
-      const got = await tracker.claimMarket(m.slug);
+      const got = await tracker.claimMarket(canonicalSlug(m.slug));   // canonical key blocks duplicate spellings across scans
       if (!got) { console.log(`  🔒 Already claimed (durable lock) | ${m.question?.slice(0, 36)}`); continue; }
     } catch {}
     let filledThis = false;
@@ -1018,14 +1018,14 @@ async function _runScanCycleInner() {
       const fresh = await getBBO(m.slug);
       if (!fresh?.ask) {
         console.log(`  🚫 No fresh quote available — skipping | ${m.question?.slice(0, 38)}`);
-        everBet.delete(m.slug); try { tracker.releaseMarket(m.slug); } catch {}
+        everBet.delete(canonicalSlug(m.slug)); try { tracker.releaseMarket(canonicalSlug(m.slug)); } catch {}
         continue;
       }
       entryPrice = fresh.ask;
       m.ask = fresh.ask;
       if (fresh.bid && (fresh.ask - fresh.bid) > 0.06) {
         console.log(`  🚫 Fresh spread ${((fresh.ask - fresh.bid) * 100).toFixed(0)}¢ too wide | ${m.question?.slice(0, 38)}`);
-        everBet.delete(m.slug); try { tracker.releaseMarket(m.slug); } catch {}
+        everBet.delete(canonicalSlug(m.slug)); try { tracker.releaseMarket(canonicalSlug(m.slug)); } catch {}
         continue;
       }
     }
@@ -1047,7 +1047,7 @@ async function _runScanCycleInner() {
       if (sg2.score < SIGNAL_MIN) {
         signalSkips++;
         console.log(`  📉 Signal ${sg2.score}/${SIGNAL_MIN} after depth check — ${sg2.reasons.join(", ")} | ${m.question?.slice(0, 30)}`);
-        everBet.delete(m.slug); try { tracker.releaseMarket(m.slug); } catch {}
+        everBet.delete(canonicalSlug(m.slug)); try { tracker.releaseMarket(canonicalSlug(m.slug)); } catch {}
         continue;
       }
     }
@@ -1140,8 +1140,8 @@ async function _runScanCycleInner() {
       // Only release if we never reached the order stage; otherwise a late
       // fill could still exist and re-entry would double the position.
       if (!filledThis && !orderSent) {
-        everBet.delete(m.slug);
-        try { tracker.releaseMarket(m.slug); } catch {}
+        everBet.delete(canonicalSlug(m.slug));
+        try { tracker.releaseMarket(canonicalSlug(m.slug)); } catch {}
       }
       continue;
     }
