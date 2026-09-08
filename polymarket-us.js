@@ -130,6 +130,20 @@ function extractYesPrice(m) {
 }
 
 // ── League detection ─────────────────────────────────────────────
+// ── canonical slug (dedup key) ────────────────────────────────────
+// The SAME real-world game can come back from discovery under two spellings
+// — e.g. "aec-mlb-ath-sea-2026-09-03" from the v2 events sweep and
+// "mlb-ath-sea-2026-09-03" from the v1 date-filtered fallback. Treated as raw
+// strings these look like two different markets, so the bot could hold a
+// position on one spelling and then buy the OTHER spelling of the identical
+// game — real double exposure that the same-slug lock never catches, because
+// the slugs are, character-for-character, not the same. Canonicalizing to a
+// shared key (used for DEDUP ONLY — the real slug is still what gets
+// ordered) collapses both spellings before either becomes a candidate.
+export function canonicalSlug(slug) {
+  return String(slug || "").toLowerCase().replace(/^aec-/, "");
+}
+
 // ── slug is authoritative ────────────────────────────────────────
 // Slugs look like: aec-atp-hensea-meerot-2026-08-11, mlb-ath-sea-2026-09-03,
 // aec-nbasl-gs-okc-2026-07, aec-cs2-imp-alka-2026-08-09.
@@ -349,8 +363,10 @@ export async function fetchSportsMoneylines() {
     const isLiveEndpoint = true; // v2 events endpoints serve current/live events
     
     for (const m of arr) {
-      const key = m.slug || m.id;
-      if (!key || seenKeys.has(key)) continue;
+      const rawKey = m.slug || m.id;
+      if (!rawKey) continue;
+      const key = canonicalSlug(rawKey);          // dedup on the canonical form
+      if (seenKeys.has(key)) continue;
       seenKeys.add(key);
       marketSource.set(key, { isLiveEndpoint });
       // Authoritative league from the v2 endpoint this market came from —
@@ -706,6 +722,13 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
     const pos = await getOpenPositions();
     if (pos) {
       const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
+      // Canonical comparison — catches a duplicate-spelling market even if
+      // it reached the order stage in a different scan than the original.
+      const canonPos = Object.fromEntries(Object.entries(pos).map(([k, v]) => [canonicalSlug(k), v]));
+      if (canonPos[canonicalSlug(slug)] && (NO_STACKING || !allowAddOn)) {
+        console.log(`🛑 [TRIPWIRE] Duplicate market (canonical match) — already holding a spelling of this game | ${slug}`);
+        return { filled: false, error: "already holding this market (duplicate slug spelling)" };
+      }
       if (open >= MAX_OPEN_POSITIONS && !allowAddOn) {
         console.log(`🛑 [TRIPWIRE] ${open}/${MAX_OPEN_POSITIONS} slots already full — order REFUSED | ${slug}`);
         return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS} reached` };
