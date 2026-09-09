@@ -180,26 +180,101 @@ function tennisSetsInMatch(m) {
   return (isSlam && !isWomensOrDoubles) ? 5 : 3;
 }
 
+// Cricket format determines innings/overs structure. Detected from the
+// tournament naming, which Polymarket includes in league/slug/question
+// (e.g. "T20", "ODI", ICL/BBL are T20; World Cup ODI is 50-over; multi-day
+// "Test" cricket has no fixed over count, so it falls back to elapsed time).
+function cricketFormat(m) {
+  const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
+  if (/\bTEST\b/.test(hay)) return "test";
+  if (/T20|BBL|IPL|PSL|CPL|THE HUNDRED/.test(hay)) return "t20";
+  return "odi";  // 50-over is the common default for named ODI/World Cup cricket
+}
+
 function matchProgressFrac(m) {
   const per = String(m.evPeriod || "").trim();
   const sc  = String(m.evScore  || "").trim();
+  const hayAll = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
   let mm;
+
+  // ── Verified against real observed data (tennis, baseball) ──
   if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, mm[1] / tennisSetsInMatch(m));
-  if ((mm = per.match(/(?:top|bot|bottom)?\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, mm[1] / 9);
+  if ((mm = per.match(/(?:top|bot|bottom)\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, mm[1] / 9);  // prefix now REQUIRED — fixes false match on other sports' ordinals
+
+  // ── Standard period/quarter/half sports (NBA, NHL, NFL, soccer) ──
   if ((mm = per.match(/q(?:uarter)?\s*(\d)/i)))              return Math.min(1, mm[1] / 4);
   if ((mm = per.match(/p(?:eriod)?\s*(\d)/i)))               return Math.min(1, mm[1] / 3);
   if (/2nd half|second half/i.test(per))                       return 0.85;
   if (/1st half|first half/i.test(per))                        return 0.30;
+
+  // ── Esports: map/game number ──
   if ((mm = per.match(/(?:map|game)\s*(\d)/i)))              return Math.min(1, mm[1] / 3);
+
+  // ── BEST-EFFORT, pending confirmation against real logs — the exact
+  // evPeriod string Polymarket sends for these sports hasn't been directly
+  // observed yet, so these patterns are built from the sport's actual rule
+  // structure and may need a wording tweak once real samples come in. ──
+
+  // Table tennis: games, typically best of 5 (some events best of 7).
+  if ((mm = per.match(/(\d)(?:st|nd|rd|th)?\s*game/i))) {
+    const bestOf = /BEST OF 7|BO7/.test(hayAll) ? 7 : 5;
+    return Math.min(1, mm[1] / bestOf);   // fraction of the MAXIMUM possible games, not games-to-clinch
+  }
+
+  // MMA / boxing: rounds. MMA is usually 3 (5 for title fights); boxing up
+  // to 12.
+  if ((mm = per.match(/r(?:ound)?\s*(\d{1,2})/i))) {
+    const hayMma = /UFC|MMA/.test(hayAll);
+    const total = hayMma ? (/TITLE|CHAMPIONSHIP/.test(hayAll) ? 5 : 3) : 12;
+    return Math.min(1, mm[1] / total);
+  }
+
+  // Darts: legs within a set, or sets. "Leg 4" / "Set 2" style.
+  if ((mm = per.match(/leg\s*(\d{1,2})/i)))                  return Math.min(1, mm[1] / 11);
+  if ((mm = per.match(/set\s*(\d)/i)) && /DARTS/.test(hayAll)) return Math.min(1, mm[1] / 5);
+
+  // Golf: "Thru 14" style — holes completed out of 18 (or 72 across a
+  // 4-round tournament, if the period distinguishes rounds).
+  if ((mm = per.match(/thru\s*(\d{1,2})/i)))                 return Math.min(1, mm[1] / 18);
+  if ((mm = per.match(/round\s*(\d)/i)) && /GOLF|PGA/.test(hayAll)) return Math.min(1, mm[1] / 4);
+
+  // Cricket: overs completed, format-dependent target. Test cricket has no
+  // fixed over count, so it always falls through to the elapsed-time path.
+  if ((mm = per.match(/(\d{1,3})(?:\.\d)?\s*overs?/i)) && /CRICKET/.test(hayAll)) {
+    const fmt = cricketFormat(m);
+    if (fmt === "test") { /* fall through to elapsed time below */ }
+    else { const target = fmt === "t20" ? 20 : 50; return Math.min(1, mm[1] / target); }
+  }
+
+  // ── Round-score sports without a labelled period (mainly esports) ──
   if ((mm = sc.match(/^(\d{1,2})\s*[-:]\s*(\d{1,2})$/))) {
     const lead = Math.max(+mm[1], +mm[2]);
     return lead <= 16 ? Math.min(1, lead / 13) : Math.min(1, (+mm[1] + +mm[2]) / 18);
   }
+
+  // ── Elapsed-time fallback, covering every remaining sport with a typical
+  // real-world duration. Still best-effort for sports whose period text
+  // didn't match anything above (e.g. Test cricket, or an unrecognised
+  // format string). ──
   if (m.gameStartIso) {
     const mins = (Date.now() - new Date(m.gameStartIso).getTime()) / 60000;
     if (mins < 0) return 0;
-    const hay = `${m.league || ""} ${m.slug || ""}`.toUpperCase();
-    const typical = /MLB|BASEBALL/.test(hay) ? 180 : /TENNIS|ATP|WTA|ITF/.test(hay) ? 95 : 120;
+    const typical =
+      /MLB|BASEBALL|NPB|KBO/.test(hayAll)                         ? 180 :
+      /TENNIS|ATP|WTA|ITF/.test(hayAll)                           ? (tennisSetsInMatch(m) === 5 ? 200 : 100) :
+      /TABLE.?TENNIS|WTT|SETKA/.test(hayAll)                      ? 45  :
+      /NBA|WNBA|NCAAMB|NCAAWB|BASKETBALL/.test(hayAll)            ? 135 :
+      /NFL|NCAAFB|FOOTBALL/.test(hayAll)                          ? 190 :
+      /NHL|HOCKEY/.test(hayAll)                                   ? 150 :
+      /SOCCER|EPL|LA.?LIGA|SERIE.?A|BUNDESLIGA|LIGUE.?1|MLS|UCL|WORLD.?CUP/.test(hayAll) ? 105 :
+      /CRICKET/.test(hayAll)                                      ? (cricketFormat(m) === "t20" ? 200 : cricketFormat(m) === "odi" ? 480 : 2700) :
+      /GOLF|PGA/.test(hayAll)                                     ? 270 :
+      /UFC|MMA/.test(hayAll)                                      ? 25  :
+      /BOXING/.test(hayAll)                                       ? 45  :
+      /DARTS/.test(hayAll)                                        ? 50  :
+      /NASCAR/.test(hayAll)                                       ? 200 :
+      /CS2|VALORANT|LOL|DOTA|ESPORT/.test(hayAll)                 ? 45  :
+      120;   // unknown sport — a neutral middle-ground default
     return Math.min(1, mins / typical);
   }
   return null;
