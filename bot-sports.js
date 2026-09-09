@@ -46,6 +46,7 @@ const getBuyingPower        = pm.getBuyingPower;
 const getOpenPositions      = pm.getOpenPositions;
 const closePositionLive     = pm.closePositionLive || (async () => ({ ok: false, error: "not available" }));
 const preflightUS           = pm.preflightUS      || (async () => ({ ok: true, messages: [] }));
+const canonicalSlug         = pm.canonicalSlug    || (slug => String(slug || "").toLowerCase().replace(/^aec-/, ""));
 
 // Report anything essential that is missing, loudly, at boot.
 {
