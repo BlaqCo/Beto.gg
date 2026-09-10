@@ -228,7 +228,18 @@ function matchProgressFrac(m) {
   let mm;
 
   // ── Verified against real observed data (tennis, baseball) ──
-  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i)))      return Math.min(1, mm[1] / tennisSetsInMatch(m));
+  // BUG FOUND: table tennis on this exchange also uses "Set" wording
+  // ("5th Set"), not "Game" — so it was silently falling into the TENNIS
+  // branch below and using a Bo3/Bo5 tennis denominator instead of table
+  // tennis's own Bo5/Bo7 structure. League decides which applies BEFORE the
+  // word "set" is trusted to mean tennis.
+  if ((mm = per.match(/(\d+)(?:st|nd|rd|th)?\s*set/i))) {
+    if (/TABLE.?TENNIS|WTT|SETKA/.test(hayAll)) {
+      const bestOf = /BEST OF 7|BO7/.test(hayAll) ? 7 : 5;
+      return Math.min(1, mm[1] / bestOf);
+    }
+    return Math.min(1, mm[1] / tennisSetsInMatch(m));
+  }
   if ((mm = per.match(/(?:top|bot|bottom)\s*(\d+)(?:st|nd|rd|th)/i))) return Math.min(1, mm[1] / 9);  // prefix now REQUIRED — fixes false match on other sports' ordinals
 
   // ── Standard period/quarter/half sports (NBA, NHL, NFL, soccer) ──
@@ -245,10 +256,12 @@ function matchProgressFrac(m) {
   // observed yet, so these patterns are built from the sport's actual rule
   // structure and may need a wording tweak once real samples come in. ──
 
-  // Table tennis: games, typically best of 5 (some events best of 7).
+  // Table tennis "N Game" wording — kept as a fallback in case a different
+  // event/vendor uses this phrasing instead of "Set" (Setka Cup confirmed
+  // to use "Set"; this path may still fire for others).
   if ((mm = per.match(/(\d)(?:st|nd|rd|th)?\s*game/i))) {
     const bestOf = /BEST OF 7|BO7/.test(hayAll) ? 7 : 5;
-    return Math.min(1, mm[1] / bestOf);   // fraction of the MAXIMUM possible games, not games-to-clinch
+    return Math.min(1, mm[1] / bestOf);
   }
 
   // MMA / boxing: rounds. MMA is usually 3 (5 for title fights); boxing up
