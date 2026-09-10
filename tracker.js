@@ -208,19 +208,33 @@ const bucketOf = px => { const lo = Math.floor(px * 100 / 3) * 3; return `${lo}-
 let verdictCache = { map: null, ts: 0 };
 const VERDICT_TTL = 60_000;
 
-export async function segmentVerdicts({ minN = 12, cutoff = -4 } = {}) {
+// "Proven winner" requires a materially positive edge, not just a hair above
+// zero — this is what earns a league priority ranking and a relaxed model
+// bar. Kept distinct from "not proven losing" (edge > 0), which is a much
+// weaker bar only used to avoid unfairly blocking a league via a shared
+// price bucket.
+const BUILD_MIN_EDGE = 3;
+
+export async function segmentVerdicts({ minN = 12, cutoff = -4, buildEdge = BUILD_MIN_EDGE } = {}) {
   if (verdictCache.map && Date.now() - verdictCache.ts < VERDICT_TTL) return verdictCache.map;
-  const map = { leagues: {}, buckets: {}, goodLeagues: {} };
+  const map = { leagues: {}, buckets: {}, goodLeagues: {}, provenLeagues: {} };
   try {
     const a = await analytics({ minN });
     for (const x of a.byLeague) {
       if (x.n >= minN && x.edge <= cutoff) map.leagues[x.key] = x;
-      else if (x.n >= minN && x.edge > 0)  map.goodLeagues[x.key] = x;   // proven earner
+      else if (x.n >= minN && x.edge > 0)  map.goodLeagues[x.key] = x;   // not proven losing
+      if (x.n >= minN && x.edge >= buildEdge) map.provenLeagues[x.key] = x;   // proven WINNER
     }
     for (const x of a.byBucket) if (x.n >= minN && x.edge <= cutoff) map.buckets[x.key] = x;
   } catch {}
   verdictCache = { map, ts: Date.now() };
   return map;
+}
+
+/** Leagues with enough settled bets AND a real, positive edge over break-even. */
+export async function provenWinners(opts = {}) {
+  const v = await segmentVerdicts(opts);
+  return v.provenLeagues;
 }
 
 /** Should this candidate be skipped based on our own results? */
