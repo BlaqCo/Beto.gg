@@ -293,18 +293,26 @@ export async function fetchSportsMoneylines() {
                    "mma","boxing","cricket","golf","esports","darts","table-tennis",
                    "motorsports","rugby","volleyball","handball"];
 
+  // v1 date-filtered fallback queries were REMOVED here — their own comment
+  // documented they contributed only ~5 markets, near-certainly already
+  // covered by the 39 parallel v2 sweeps below (dedup would collapse them
+  // anyway). Two fewer round trips and two fewer heavy limit=500 payloads to
+  // parse and discard, every single scan, for negligible lost coverage.
   const urls = [
     // ── PRIMARY: v2 sports/league event sweeps (what the app itself uses) ──
     ...SPORTS.map(s  => `${GATEWAY}/v2/sports/${s}/events?limit=50`),
     ...LEAGUES.map(l => `${GATEWAY}/v2/leagues/${l}/events?limit=50`),
-    // ── Fallback: v1 date-filtered market queries (returned 5 real markets) ──
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&endDateMin=${encodeURIComponent(endMin)}&limit=500`,
-    `${GATEWAY}/v1/markets?active=true&archived=false&categories=sports&${ML}&startDateMin=${encodeURIComponent(startMin)}&startDateMax=${encodeURIComponent(startMax)}&limit=500`,
   ];
 
+  const _fetchStart = Date.now();
   const results = await Promise.allSettled(
     urls.map(url => axios.get(url, { timeout: 12_000 }))
   );
+  const _fetchMs = Date.now() - _fetchStart;
+  const _failedCount = results.filter(r => r.status !== "fulfilled").length;
+  if (_fetchMs > 4000 || _failedCount > 0) {
+    console.log(`  ⏱ Discovery: ${urls.length} requests in ${(_fetchMs/1000).toFixed(1)}s, ${_failedCount} failed/timed out`);
+  }
 
   const seenKeys = new Set();
   const marketSource = new Map(); // Track which endpoint returned each market
@@ -312,6 +320,14 @@ export async function fetchSportsMoneylines() {
   let sportsCatCount = 0;
   let moneylineCount = 0;
   let shapeDumped = false;
+  let tennisShapeDumped = false;   // separate one-shot dump — baseball always
+                                    // fires the generic one first, so tennis's
+                                    // real raw shape (does it carry set-level
+                                    // history?) has never actually been seen
+  let cricketShapeDumped = false;  // cricket questions are always generic
+                                    // ("Who will win...") with no team names,
+                                    // so the exposure guard leans entirely on
+                                    // the slug — this confirms its real format
 
   // Normalize any response shape (v2 events / v1 markets) into market objects
   const extractMarkets = (data) => {
@@ -357,6 +373,18 @@ export async function fetchSportsMoneylines() {
       if (!shapeDumped && urls[i].includes("/v2/")) {
         shapeDumped = true;
         console.log(`  🔬 V2 RAW SAMPLE: ${JSON.stringify(data).slice(0, 1200)}`);
+      }
+      // 🔬 Separate dump specifically for tennis — answers whether the API
+      // exposes set-level history (sets won per player) or only the current
+      // set's game score, which decides if the "just-started-a-new-set"
+      // model gap can be fixed properly or only worked around.
+      if (!tennisShapeDumped && /tennis|atp|wta|itf/i.test(label)) {
+        tennisShapeDumped = true;
+        console.log(`  🎾 TENNIS RAW SAMPLE: ${JSON.stringify(data).slice(0, 1500)}`);
+      }
+      if (!cricketShapeDumped && /cricket/i.test(label)) {
+        cricketShapeDumped = true;
+        console.log(`  🏏 CRICKET RAW SAMPLE: ${JSON.stringify(data).slice(0, 1500)}`);
       }
     }
     const urlUsed = urls[i] || "";
