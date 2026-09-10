@@ -671,6 +671,7 @@ export async function runScanCycle() {
 }
 
 async function _runScanCycleInner() {
+  const _scanStartedAt = Date.now();
   await applyLiveConfig();
   const stats = getStats();
   console.log(`\n── SPORTS SCAN ${new Date().toISOString()} ${DRY_RUN ? "[DRY]" : "[🔴 LIVE]"} ──`);
@@ -724,13 +725,21 @@ async function _runScanCycleInner() {
   
   // Rate-limit hygiene: BBO only for the 60 most promising markets
   // (in-band price estimate first, live first) instead of all 200.
+  // Priority uses the LIVE, currently-configured band — not a stale guess.
+  // A market priced outside FAV_MIN..FAV_MAX will never pass the real gate
+  // anyway, so it must never compete for a scarce BBO-fetch slot against one
+  // that actually could. A small pad (3¢) still catches a price that's about
+  // to drift into range by the time BBO comes back.
+  const PAD = 0.03;
   const prioritized = [...markets].sort((a, b) => {
-    const aBand = (a.est >= 0.55 && a.est <= 0.85) ? 0 : 1;
-    const bBand = (b.est >= 0.55 && b.est <= 0.85) ? 0 : 1;
+    const aBand = (a.est >= FAV_MIN - PAD && a.est <= FAV_MAX + PAD) ? 0 : 1;
+    const bBand = (b.est >= FAV_MIN - PAD && b.est <= FAV_MAX + PAD) ? 0 : 1;
     if (aBand !== bBand) return aBand - bBand;
     if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
     return 0;
   });
+  const inBandCount = prioritized.filter(m => m.est >= FAV_MIN - PAD && m.est <= FAV_MAX + PAD).length;
+  if (inBandCount > 60) console.log(`  ⚠️ ${inBandCount} markets are within the live band but only 60 get priced this scan`);
   const candidatePool = prioritized.slice(0, 60);
   console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
 
@@ -1372,7 +1381,9 @@ async function _runScanCycleInner() {
   if (signalSkips) console.log(`  📉 Signal gate skipped ${signalSkips} low-quality market(s)`);
   if (modelSkips) console.log(`  📐 State model rejected ${modelSkips} candidate(s) — scoreboard didn't justify the price`);
   if (learnSkips) console.log(`  🧠 Self-learning gate skipped ${learnSkips} candidate(s) from proven-losing segments`);
-  console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)}`);
+  const scanMs = Date.now() - _scanStartedAt;
+  if (scanMs > 8000) console.log(`  ⏱ Scan took ${(scanMs/1000).toFixed(1)}s — slow enough to matter against the ${SCAN_MIN_GAP_MS/1000}s minimum gap`);
+  console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)} scan=${(scanMs/1000).toFixed(1)}s`);
 
   const s = getStats();
   console.log(`── +${betsPlaced} entries | ${exits.length} exits | Active:${s.activeBets}/${MAX_CONC} | P&L:$${s.pnl} ──`);
