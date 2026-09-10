@@ -438,9 +438,24 @@ export async function fetchSportsMoneylines() {
     const smt = (m.sportsMarketTypeV2 || m.sportsMarketType || "").toUpperCase();
     if (smt.includes("TO_ADVANCE")) { rej.prop++; continue; }
     if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") { rej.prop++; continue; }
-    // Text-based prop rejection for markets missing the type field
+    // The type field is EMPTY for a real share of markets from the v2 event
+    // sweeps — the old check above silently did NOTHING in that case
+    // ("smt &&" short-circuits on empty string), leaving props with no
+    // type tag to slip through on nothing but luck. This is the real
+    // backstop now, and it's the ONLY thing standing between "moneyline
+    // only" and a prop bet when the exchange doesn't label the market —
+    // widened well past the original list, which was missing "cover" (the
+    // exact word in your own first spread example), "wins by", "margin",
+    // "handicap", and every prop term for cricket/golf/darts/table tennis
+    // added since this filter was first written.
     const qText = m.question || m.title || "";
-    if (/first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|will .* (score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|over\/under|\bspread\b|\btotal\b|player prop/i.test(qText)) { rej.prop++; continue; }
+    const PROP_PATTERN = /first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|(will|who) .*(score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|first (goal|basket|touchdown|run|point|try)\\b|over\/under|\bspread\b|\btotal\b|player prop|\bcover(s|ed)?\b|wins? by|\bmargin\b|handicap|\bexact(ly)?\b|correct score|both teams to score|clean sheet|anytime|first to|most (sixes|fours|wickets|runs|points|goals|kills|rebounds|assists)|highest scorer|top scorer|man of the match|century|hat.?trick|boundary|\bwicket|make the cut|hole.?in.?one|\bbirdie\b|\beagle\b|checkout|\b180\b|nine.?dart|method of victory|round betting|\bko\/tko\b|\bsubmission\b|decision by|race to \d|first (blood|tower|dragon)|map \d winner/i;
+    if (PROP_PATTERN.test(qText)) { rej.prop++; continue; }
+    // Visibility: how often are we relying ONLY on text because the
+    // exchange gave no type tag at all? If this count stays high, the v2
+    // sweep genuinely doesn't populate the type field reliably, and that's
+    // worth knowing rather than assuming.
+    if (!smt) rej.untyped = (rej.untyped || 0) + 1;
 
     const q = m.question || m.title || "";
     const est = extractYesPrice(m);
@@ -520,6 +535,7 @@ export async function fetchSportsMoneylines() {
   const liveCount = out.filter(x => x.isLive).length;
   console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} 🔴 live, ${out.length - liveCount} ⏳ upcoming)`);
   console.log(`  ⛔ rejected: inactive=${rej.active} resolved=${rej.resolved} prop=${rej.prop} stale=${rej.stale} faroff=${rej.faroff} nodates=${rej.nodates}`);
+  if (rej.untyped) console.log(`  🏷 ${rej.untyped} accepted markets had NO type tag — cleared only via the text keyword check, not a confirmed moneyline flag`);
   for (const s of out.slice(0, 8)) {
     console.log(`  ✅ SURVIVOR: ${s.slug} | ${s.question?.slice(0,35) || "-"} | gameStart=${s.gameStartTime || "-"} end=${s.endDate || "-"}`);
   }
