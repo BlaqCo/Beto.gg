@@ -48,6 +48,35 @@ const closePositionLive     = pm.closePositionLive || (async () => ({ ok: false,
 const preflightUS           = pm.preflightUS      || (async () => ({ ok: true, messages: [] }));
 const canonicalSlug         = pm.canonicalSlug    || (slug => String(slug || "").toLowerCase().replace(/^aec-/, ""));
 
+// ── TEAM-LEVEL EXPOSURE GUARD ──────────────────────────────────────
+// The market-level lock only ever asks "is this the SAME market?" — it says
+// nothing about whether you already hold a DIFFERENT market on the SAME
+// team (a naming-duplicate slug, or a genuinely separate match involving a
+// team you're already exposed to, e.g. cricket's generic "Who will win in
+// the upcoming cricket event" questions carry no team name at all, only the
+// slug does). Four buys landing on one team in an hour is exactly this gap.
+// Same parsing approach as the dashboard's matchupHtml: parse "A vs B" from
+// the question, else fall back to slug tokens.
+function teamTokensOf(question, slug) {
+  let t = String(question || "").replace(/^\[.*?\]\s*/, "").trim();
+  t = t.replace(/^(Counter-Strike|Valorant|League of Legends|CS2|Dota\s*2)\s*:\s*/i, "");
+  t = t.replace(/\s+[-–—]\s+(Map|Game|Set|Match)\s*\d+.*$/i, "");
+  t = t.replace(/\s+Winner\s*$/i, "");
+  let m = t.match(/^(.{2,42}?)\s+vs\.?\s+(.{2,42}?)$/i);
+  if (!m) {
+    const parts = String(slug || "").toLowerCase().split("-").filter(Boolean);
+    const i = parts[0] === "aec" ? 1 : 0;
+    const seg = parts.slice(i + 1).filter(p => !/^\d{2,4}$/.test(p) && p.length >= 3);
+    if (seg.length >= 2) return [seg[0], seg[seg.length - 1]];
+    return [];
+  }
+  return [m[1].trim().toLowerCase(), m[2].trim().toLowerCase()];
+}
+
+function teamsOverlap(a, b) {
+  return a.some(x => b.some(y => x === y || x.includes(y) || y.includes(x)));
+}
+
 // Report anything essential that is missing, loudly, at boot.
 {
   const missing = [];
@@ -378,6 +407,15 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
+// A SECOND, SHORT-WINDOW high-water tracker alongside the all-session one.
+// The all-session high can go stale — if a price has been drifting down for
+// an hour, that old peak stops being a meaningful reference. A recent local
+// peak (a smaller bounce inside that same downtrend) is a separate, valid
+// discount opportunity the long tracker never sees. A discount against
+// EITHER window counts — this widens what counts as "a real dip" without
+// lowering how big the dip has to be.
+const shortHighRef  = new Map();  // slug → { px, since }
+const SHORT_WINDOW_MS = 4 * 60_000;
 let ENTRIES_SCAN  = 3;       // aligned with 3-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
@@ -766,9 +804,23 @@ async function _runScanCycleInner() {
       if (!m.px) continue;
       const prev = openerRef.get(m.slug);
       if (prev == null || m.px > prev) openerRef.set(m.slug, m.px);
+      // Short window re-baselines to the current price once it goes stale,
+      // so it always reflects "the peak within roughly the last 4 minutes".
+      const sh = shortHighRef.get(m.slug);
+      const now3 = Date.now();
+      if (!sh || now3 - sh.since > SHORT_WINDOW_MS) shortHighRef.set(m.slug, { px: m.px, since: now3 });
+      else if (m.px > sh.px) shortHighRef.set(m.slug, { px: m.px, since: sh.since });
     }
     let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0, nearLowRejects = 0, sportRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
+    // Leagues the tracker has PROVEN winning (real edge, real sample size)
+    // get top priority in ranking and a relaxed model bar below — this is
+    // the "build on what works" half of the self-learning gate, not just
+    // "ban what fails".
+    let provenLeagues = {};
+    try { provenLeagues = await tracker.provenWinners(); } catch {}
+    const isProven = m => !!provenLeagues[(m.league || "OTHER").toUpperCase()];
+
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
       .filter(m => {
@@ -864,12 +916,15 @@ async function _runScanCycleInner() {
         // their high-water most of the time, so px == ref → permanent reject).
         if (!m.isLive) return true;
         const ref = openerRef.get(m.slug);
+        const refShort = shortHighRef.get(m.slug)?.px;
         if (ref == null) return true;
         // Required pullback = fee cost at this price + margin.
         const need = feePx(m.px) + EDGE_MARGIN;
-        if (m.px > ref - need) {
+        const passLong  = m.px <= ref - need;
+        const passShort = refShort != null && m.px <= refShort - need;
+        if (!passLong && !passShort) {
           discountRejects++;
-          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but no discount: ${cents(m.px)}, high-water ${cents(ref)}, need ${cents(need)} more | ${m.question?.slice(0,36)}`);
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but no discount: ${cents(m.px)}, high-water ${cents(ref)} (recent ${refShort!=null?cents(refShort):"—"}), need ${cents(need)} more | ${m.question?.slice(0,36)}`);
           return false;
         }
         // NEAR-LOW: only buy at/near the bottom of the trailing range.
@@ -889,6 +944,11 @@ async function _runScanCycleInner() {
           const dip = r == null ? 0 : Math.max(0, r - m.px);
           return dip - feePx(m.px);
         };
+        // PROVEN-WINNER PRIORITY: a league the tracker has actually shown to
+        // beat break-even, with real sample size, ranks above everything —
+        // evidence outranks a heuristic.
+        const aw = isProven(a), bw = isProven(b);
+        if (aw !== bw) return aw ? -1 : 1;
         // CHEAP-ENTRY PRIORITY: anything at/below PRIORITY_PX ranks first.
         const ap = a.px <= PRIORITY_PX, bp = b.px <= PRIORITY_PX;
         if (ap !== bp) return ap ? -1 : 1;
@@ -992,6 +1052,7 @@ async function _runScanCycleInner() {
   // Permanent per-process record of every slug the bot has entered, seeded
   // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
   for (const b of getAllActiveBets()) everBet.add(canonicalSlug(b.slug));
+  const openTeamSets = getAllActiveBets().map(b => teamTokensOf(b.marketQuestion, b.marketConditionId)).filter(t => t.length);
 
   let entryErrors = 0, learnSkips = 0, signalSkips = 0, modelSkips = 0;
   for (const m of candidates) {
@@ -999,6 +1060,16 @@ async function _runScanCycleInner() {
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
     if (balance < BET_MIN) { console.log("  ⏸ Balance below $" + BET_MIN); break; }
     if (everBet.has(canonicalSlug(m.slug))) continue;  // already bet this market (any spelling) — never stack
+
+    // Refuse a second bet on a team we already hold, even under a totally
+    // different market/slug — closes the gap the market-level lock cannot.
+    {
+      const candTeams = teamTokensOf(m.question, m.slug);
+      if (candTeams.length && openTeamSets.some(open => teamsOverlap(candTeams, open))) {
+        console.log(`  👥 Already exposed to this team elsewhere — skipping | ${m.question?.slice(0, 40)}`);
+        continue;
+      }
+    }
 
     // ── SIGNAL: is this price trustworthy enough to trade? ──
     if (SIGNAL_ENABLED && signal?.scoreMarket) {
@@ -1035,7 +1106,11 @@ async function _runScanCycleInner() {
         // baseball math — shrinkage and the edge cap keep a wrong guess cheap.
         console.log(`  📐 ${sig.reason} (best-guess side)`);
       }
-      const need = MODEL_EDGE_MIN + fees.costPerContract(m.ask, false);
+      // Proven-winning leagues have already demonstrated a real edge over a
+      // real sample, so the model can afford to require a bit less on top —
+      // it's a second opinion at that point, not the only evidence.
+      const modelMin = isProven(m) ? MODEL_EDGE_MIN * 0.6 : MODEL_EDGE_MIN;
+      const need = modelMin + fees.costPerContract(m.ask, false);
       if (sig.edge < need) { modelSkips++; continue; }
       m._modelReason = sig.reason;
       m._modelEdge = sig.edge;
