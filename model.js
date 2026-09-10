@@ -140,6 +140,16 @@ export function stateEdge(market, price) {
     const set = parseSet(period);
     if (set == null) return null;
     leaderProb = tennisWinProb(0, a - b);          // games only — no set inference
+  } else if (/NBA|WNBA|NCAAMB|NCAAWB/.test(league)) {
+    const rem = basketballMinutesRemaining(period, league);
+    if (rem == null) return null;
+    if (a === b) return null;                       // tied — no margin signal, refuse rather than guess
+    leaderProb = basketballWinProb(Math.abs(a - b), rem);
+  } else if (/NFL|NCAAFB/.test(league)) {
+    const rem = footballMinutesRemaining(period);
+    if (rem == null) return null;
+    if (a === b) return null;
+    leaderProb = footballWinProb(Math.abs(a - b), rem);
   } else {
     return null;                                    // no model for this sport
   }
@@ -197,4 +207,71 @@ export function stateEdge(market, price) {
   };
 }
 
-export const MODELLED_LEAGUES = ["MLB", "TENNIS"];
+
+/**
+ * BASKETBALL — win probability from point margin + minutes remaining.
+ * P(win) = Φ( margin / (2.2 · √minutes_remaining) ).
+ * Calibrated against public win-probability reference points (not fitted to
+ * our own trades): up 5 w/ 5 min left ≈ 80-85%, up 10 w/ 5 min ≈ 95%+,
+ * up 3 w/ 1 min ≈ 85-90%, up 1 at half ≈ 55-58%.
+ *
+ * Unlike tennis, the score Polymarket sends for basketball is the actual
+ * CUMULATIVE game score, not something that resets — so there is no
+ * "0-0 blind spot" here. Margin is meaningful at any point in the game.
+ *
+ * Time remaining is approximated from the PERIOD only (we don't have the
+ * in-period clock), treating the current period as half-played on average —
+ * the same style of approximation used for baseball's remaining innings.
+ */
+export function basketballWinProb(margin, remainingMin) {
+  if (margin === 0) return 0.5;
+  const z = Math.abs(margin) / (2.2 * Math.sqrt(Math.max(0.5, remainingMin)));
+  const p = clamp(Phi(z), 0.5, 0.985);
+  return margin > 0 ? p : 1 - p;
+}
+
+function basketballMinutesRemaining(period, hay) {
+  const isNCAA = /NCAAMB|NCAAWB|COLLEGE/.test(hay);
+  const totalPeriods = isNCAA ? 2 : 4;
+  const minPerPeriod  = isNCAA ? 20 : 12;
+  let cur = null;
+  let m;
+  if ((m = period.match(/q(?:uarter)?\s*(\d)/i))) cur = +m[1];
+  else if (/2nd half|second half/i.test(period)) cur = 2;
+  else if (/1st half|first half/i.test(period)) cur = 1;
+  if (cur == null) return null;
+  const periodsLeft = Math.max(0, totalPeriods - cur + 0.5);   // +0.5 = current period half-played
+  return periodsLeft * minPerPeriod;
+}
+
+/**
+ * FOOTBALL (NFL/NCAAFB) — win probability from point margin + minutes left.
+ * P(win) = Φ( margin / (3.0 · √minutes_remaining) ).
+ * Calibrated against public NFL win-probability charts: up 3 mid-2nd-quarter
+ * ≈ 60-65%, up 7 (one score) late 4th ≈ 78-85%.
+ *
+ * HONEST LIMITATION: without possession/down/distance, this model cannot
+ * see the "two-score game, clock is the other team's real opponent" effect
+ * that makes NFL leads safer late than points-and-time alone suggest. It
+ * therefore UNDERESTIMATES win probability for a big late lead — the safe
+ * direction to be wrong in, since it only makes the model harder to
+ * satisfy, never the reverse.
+ */
+export function footballWinProb(margin, remainingMin) {
+  if (margin === 0) return 0.5;
+  const z = Math.abs(margin) / (3.0 * Math.sqrt(Math.max(0.5, remainingMin)));
+  const p = clamp(Phi(z), 0.5, 0.97);
+  return margin > 0 ? p : 1 - p;
+}
+
+function footballMinutesRemaining(period) {
+  let cur = null, m;
+  if ((m = period.match(/q(?:uarter)?\s*(\d)/i))) cur = +m[1];
+  else if (/2nd half|second half/i.test(period)) cur = 2.5;   // ~ mid Q3 equivalent
+  else if (/1st half|first half/i.test(period)) cur = 0.5;
+  if (cur == null) return null;
+  const periodsLeft = Math.max(0, 4 - cur + 0.5);
+  return periodsLeft * 15;
+}
+
+export const MODELLED_LEAGUES = ["MLB", "TENNIS", "NBA", "WNBA", "NCAAMB", "NCAAWB", "NFL", "NCAAFB"];
