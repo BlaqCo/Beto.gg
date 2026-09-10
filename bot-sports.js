@@ -407,6 +407,14 @@ let TP_PRICE      = 0.95;     // take profit when probability hits 95%
 // spread+fee leak every trigger, plus it forfeits the recoveries. Fee maths
 // on this exchange favours holding to settlement.
 let SL_ENABLED    = false;
+
+// BBO-fetch cap: how many markets get their real price checked per scan.
+// Raised from 60 -> 100 after logs showed 70-73 in-band markets overflowing
+// the old cap every scan (real candidates never getting priced, not
+// rejected by any gate). getBBO has no built-in pacing — this fires that
+// many requests in parallel every ~15-18s scan; 60 already ran clean with
+// zero rate-limit errors across many logs, so 100 has real headroom.
+let BBO_FETCH_LIMIT = 100;
 let SL_PRICE      = 0.29;
 let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
@@ -630,6 +638,7 @@ async function applyLiveConfig() {
     if (c.TP_ENABLED    != null) TP_ENABLED    = c.TP_ENABLED;
     if (c.TP_PRICE      != null) TP_PRICE      = c.TP_PRICE;
     if (c.SL_ENABLED    != null) SL_ENABLED    = c.SL_ENABLED;
+    if (c.BBO_FETCH_LIMIT != null) BBO_FETCH_LIMIT = c.BBO_FETCH_LIMIT;
     if (c.SL_PRICE      != null) SL_PRICE      = c.SL_PRICE;
     if (c.HALFWAY_ONLY  != null) HALFWAY_ONLY  = c.HALFWAY_ONLY;
     if (c.PREGAME_ONLY  != null) PREGAME_ONLY  = c.PREGAME_ONLY;
@@ -739,8 +748,8 @@ async function _runScanCycleInner() {
     return 0;
   });
   const inBandCount = prioritized.filter(m => m.est >= FAV_MIN - PAD && m.est <= FAV_MAX + PAD).length;
-  if (inBandCount > 60) console.log(`  ⚠️ ${inBandCount} markets are within the live band but only 60 get priced this scan`);
-  const candidatePool = prioritized.slice(0, 60);
+  if (inBandCount > BBO_FETCH_LIMIT) console.log(`  ⚠️ ${inBandCount} markets are within the live band but only ${BBO_FETCH_LIMIT} get priced this scan`);
+  const candidatePool = prioritized.slice(0, BBO_FETCH_LIMIT);
   console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
 
   // Fetch live BBO for ALL candidates
@@ -769,6 +778,10 @@ async function _runScanCycleInner() {
   }));
   
   const bbosWithData = bboResults.filter(b => b != null);
+  const bboFailures = candidatePool.length - bbosWithData.length;
+  if (candidatePool.length >= 40 && bboFailures / candidatePool.length > 0.4) {
+    console.log(`  ⚠️ ${bboFailures}/${candidatePool.length} BBO requests failed this scan — if this keeps climbing after raising the fetch limit, that's a rate-limit regression, not noise`);
+  }
   console.log(`✅ ${bbosWithData.length}/${candidatePool.length} markets have BBO data`);
 
   let candidates;
