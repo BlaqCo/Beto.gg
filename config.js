@@ -18,7 +18,7 @@ const KEY = "beto:config:sports";
 // Each entry: value, label, group, and the input hint the dashboard uses.
 export const SCHEMA = {
   BET_SIZE:      { v: 22,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
-  MAX_CONC:      { v: 3,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
+  MAX_CONC:      { v: 5,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
   ENTRIES_SCAN:  { v: 3,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
 
   FAV_MIN:       { v: 0.55,  label: "Price floor",         group: "Edge",    unit: "¢",  step: 0.01, min: 0.30, max: 0.95, pct: true },
