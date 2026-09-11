@@ -1090,6 +1090,7 @@ async function _runScanCycleInner() {
   const openTeamSets = getAllActiveBets().map(b => teamTokensOf(b.marketQuestion, b.marketConditionId)).filter(t => t.length);
 
   let entryErrors = 0, learnSkips = 0, signalSkips = 0, modelSkips = 0;
+  let claimMs = 0, claimCalls = 0, skipCheckMs = 0;
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
@@ -1154,7 +1155,9 @@ async function _runScanCycleInner() {
     // ── SELF-LEARNING: skip segments our own record says are losing ──
     if (LEARN_ENABLED) {
       try {
+        const _skipT0 = Date.now();
         const v = await tracker.shouldSkip(m.league, m.ask, { minN: LEARN_MIN_N, cutoff: LEARN_CUTOFF });
+        skipCheckMs += Date.now() - _skipT0;
         if (v.skip) { learnSkips++; console.log(`  🧠 Skipping — ${v.why} | ${m.question?.slice(0, 34)}`); continue; }
       } catch {}
     }
@@ -1171,7 +1174,9 @@ async function _runScanCycleInner() {
     // Durable claim — survives restarts, which in-memory everBet does not.
     // This is what stopped the same market being bought again after a deploy.
     try {
+      const _claimT0 = Date.now();
       const got = await tracker.claimMarket(canonicalSlug(m.slug));   // canonical key blocks duplicate spellings across scans
+      claimMs += Date.now() - _claimT0; claimCalls++;
       if (!got) { console.log(`  🔒 Already claimed (durable lock) | ${m.question?.slice(0, 36)}`); continue; }
     } catch {}
     let filledThis = false;
@@ -1410,7 +1415,10 @@ async function _runScanCycleInner() {
   if (modelSkips) console.log(`  📐 State model rejected ${modelSkips} candidate(s) — scoreboard didn't justify the price`);
   if (learnSkips) console.log(`  🧠 Self-learning gate skipped ${learnSkips} candidate(s) from proven-losing segments`);
   const scanMs = Date.now() - _scanStartedAt;
-  if (scanMs > 8000) console.log(`  ⏱ Scan took ${(scanMs/1000).toFixed(1)}s — slow enough to matter against the ${SCAN_MIN_GAP_MS/1000}s minimum gap`);
+  if (scanMs > 8000) {
+    console.log(`  ⏱ Scan took ${(scanMs/1000).toFixed(1)}s — slow enough to matter against the ${SCAN_MIN_GAP_MS/1000}s minimum gap`);
+    console.log(`  ⏱ Breakdown: ${claimCalls} durable claim(s) cost ${(claimMs/1000).toFixed(1)}s total | self-learning checks cost ${(skipCheckMs/1000).toFixed(1)}s total`);
+  }
   console.log(`📋 ENTRY SUMMARY: candidates=${candidates.length} attempted=${attempts} placed=${betsPlaced} errors=${entryErrors} activeSlots=${getAllActiveBets().length}/${MAX_CONC} balance=$${balance.toFixed(2)} scan=${(scanMs/1000).toFixed(1)}s`);
 
   const s = getStats();
