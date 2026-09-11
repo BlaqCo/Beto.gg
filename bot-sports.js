@@ -379,7 +379,7 @@ const liveSince  = new Map();  // slug → timestamp we FIRST saw it live
 const lowSeen    = new Map();  // slug → LOWEST price observed while trailing
 // Enter only when price is within this much of the trailing low — i.e. near
 // the bottom of the range we've watched, not just any pullback.
-let NEAR_LOW_TOL  = 0.035;   // widened from 1¢ — real in-play noise regularly exceeded 1¢
+let NEAR_LOW_TOL  = 0.05;    // widened from 3.5¢ — logs showed a cluster of 20 markets sitting exactly 4¢ above their low, missing the old tolerance by a hair; 24¢+ gaps (genuine recoveries) stay correctly rejected
 // Prices at/below this get first claim on slots (cheap-entry priority).
 let PRIORITY_PX   = 0.68;   // ≤68¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
