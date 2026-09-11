@@ -854,7 +854,6 @@ async function _runScanCycleInner() {
     // "ban what fails".
     let provenLeagues = {};
     try { provenLeagues = await tracker.provenWinners(); } catch {}
-    provenLeaguesForFunnel = provenLeagues;   // out to the wider scope for publishFunnel
     const isProven = m => !!provenLeagues[(m.league || "OTHER").toUpperCase()];
 
     const pool = bbosWithData
@@ -1091,7 +1090,6 @@ async function _runScanCycleInner() {
   const openTeamSets = getAllActiveBets().map(b => teamTokensOf(b.marketQuestion, b.marketConditionId)).filter(t => t.length);
 
   let entryErrors = 0, learnSkips = 0, signalSkips = 0, modelSkips = 0;
-  let provenLeaguesForFunnel = {};   // mirrored out of the narrower block below
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
@@ -1374,7 +1372,9 @@ async function _runScanCycleInner() {
       // Which leagues currently get scoreboard confirmation vs price-only.
       modelledLeagues: model.MODELLED_LEAGUES,
       // Leagues the tracker has proven out with a real, positive edge.
-      provenLeagues: Object.keys(provenLeaguesForFunnel || {}),
+      provenLeagues: await (async () => {
+        try { return Object.keys(await tracker.provenWinners()); } catch { return []; }
+      })(),
       // the board as the bot sees it — powers "what games look promising?"
       watchlist: (bbosWithData || [])
         .filter(m => m.px && m.isLive)
