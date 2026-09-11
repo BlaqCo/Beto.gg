@@ -62,6 +62,14 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
   background:linear-gradient(90deg,#1B4E7A,var(--cyan))}
 .stage:nth-child(3) .fill{background:linear-gradient(90deg,#7A5A1B,var(--amber))}
 .stage:nth-child(4) .fill{background:linear-gradient(90deg,#1B7A4E,var(--up))}
+.healthstrip{display:flex;flex-wrap:wrap;gap:6px;padding-top:11px;margin-top:9px;border-top:1px solid var(--line)}
+.hchip{font-size:9px;letter-spacing:.04em;padding:4px 8px;border-radius:99px;border:1px solid var(--line);
+  background:#0A1120;color:var(--dim)}
+.hchip.good{color:var(--up);border-color:rgba(61,255,158,.3)}
+.hchip.warn{color:var(--amber);border-color:rgba(255,182,61,.4)}
+.hchip.bad{color:var(--down);border-color:rgba(255,78,106,.4)}
+.provenbadge{display:inline-block;font-size:8px;font-weight:700;letter-spacing:.08em;color:#04121C;
+  background:var(--up);padding:2px 5px;border-radius:5px;margin-left:6px;vertical-align:middle}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .cell{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:10px 9px}
 .clabel{font-size:9px;letter-spacing:.14em;color:var(--dim)}
@@ -230,6 +238,7 @@ button:active{transform:translateY(1px)}
     <div class="fmeta" id="fmeta">waiting for scan…</div>
   </div>
   <div id="stages"></div>
+  <div id="healthStrip" class="healthstrip"></div>
 </div>
 
 <div class="grid">
@@ -314,7 +323,7 @@ button:active{transform:translateY(1px)}
   <div id="log"></div>
 </div>
 
-<div class="uiver" id="uiver">UI v3 · betobot</div>
+<div class="uiver" id="uiver">UI v4 · betobot · scan health + model coverage</div>
 
 <div id="sheet" role="dialog" aria-modal="true">
   <div class="sheetbox">
@@ -408,6 +417,23 @@ async function loadFunnel(){
     $('mode').textContent = f.paused ? 'PAUSED' : (f.mode||'—');
     $('dot').style.background = f.paused ? 'var(--amber)' : 'var(--up)';
     if(f.slots) $('slots').textContent = f.slots.used + (f.slots.max<9999 ? '/'+f.slots.max : '');
+
+    // Health strip — scan speed, BBO coverage, model coverage, proven leagues.
+    // All previously visible only by exporting raw Railway logs.
+    const chips = [];
+    if(f.health){
+      const h = f.health;
+      const scanCls = h.scanSec>6?'bad':h.scanSec>3?'warn':'good';
+      chips.push('<span class="hchip '+scanCls+'">scan '+h.scanSec+'s</span>');
+      const covPct = h.bboFetched ? Math.round(h.bboWithData/h.bboFetched*100) : 0;
+      chips.push('<span class="hchip">priced '+h.bboWithData+'/'+h.bboFetched+' ('+covPct+'%)</span>');
+      if(h.overflowCount>0) chips.push('<span class="hchip warn">+'+h.overflowCount+' overflow — raise fetch limit</span>');
+    }
+    if(f.modelledLeagues && f.modelledLeagues.length)
+      chips.push('<span class="hchip good">model: '+f.modelledLeagues.join(', ')+'</span>');
+    if(f.provenLeagues && f.provenLeagues.length)
+      chips.push('<span class="hchip good">🏆 proven: '+f.provenLeagues.join(', ')+'</span>');
+    $('healthStrip').innerHTML = chips.join('');
   }catch(e){}
 }
 
@@ -634,11 +660,15 @@ async function loadEdge(){
     $('eBe').textContent = a.breakEvenAvg==null?'—':'need '+a.breakEvenAvg+'%';
     const v=$('eVerdict'); v.textContent = a.verdict||'';
     v.className = 'verdictline '+(e==null?'':e>2?'good':e>-2?'mid':'bad');
+    let provenSet = new Set();
+    try{ const fu = await (await fetch('/api/funnel?t='+Date.now())).json(); provenSet = new Set(fu.provenLeagues||[]); }catch(e){}
     const seg = x => {
       const w = Math.min(100, Math.abs(x.edge)*2);
       const col = x.edge>=0 ? 'var(--up)' : 'var(--down)';
+      const isProven = x.dimension==='league' && provenSet.has(x.key.toUpperCase());
       return '<div class="seg"><span class="segdim">'+x.dimension.toUpperCase()+'</span>'+
-        '<span class="segkey">'+esc(x.key)+' <span class="opp">'+x.winRate+'% · '+x.n+'</span></span>'+
+        '<span class="segkey">'+esc(x.key)+(isProven?'<span class="provenbadge">PROVEN</span>':'')+
+        ' <span class="opp">'+x.winRate+'% · '+x.n+'</span></span>'+
         '<span class="segbar"><i style="width:'+w+'%;background:'+col+'"></i></span>'+
         '<span class="segedge '+cls(x.edge)+'">'+(x.edge>=0?'+':'')+x.edge+'</span></div>';
     };
