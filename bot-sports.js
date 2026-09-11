@@ -146,7 +146,7 @@ let FAV_MAX       = 0.68;    // entry cap: 68%
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
   - (isMaker ? fees.makerRebate(sizeUsd / Math.max(px, 0.01), px) : 0);
-let MAX_CONC      = 3;       // 3 concurrent bets MAX (unchanged, already 3)
+let MAX_CONC      = 5;       // 5 concurrent bets MAX
 // ── LEAGUE FOCUS: bet ONLY these leagues. Empty [] = all leagues.
 // Fill from calibration data, e.g. ["MLB","ATP","CRICKET"] once the
 // 📐 table shows which leagues actually beat their break-even.
@@ -437,7 +437,7 @@ const openerRef     = new Map();  // slug → last pre-game price (the "opener")
 // lowering how big the dip has to be.
 const shortHighRef  = new Map();  // slug → { px, since }
 const SHORT_WINDOW_MS = 4 * 60_000;
-let ENTRIES_SCAN  = 3;       // aligned with 3-slot cap
+let ENTRIES_SCAN  = 5;       // aligned with 5-slot cap
 const NEXT_DAY_MS   = 48 * 60 * 60 * 1000; // 48h lookahead
 
 // ── Helpers ──────────────────────────────────────────────────────
