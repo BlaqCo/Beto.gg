@@ -848,14 +848,6 @@ async function _runScanCycleInner() {
     }
     let discountRejects = 0, thinRejects = 0, windowRejects = 0, bookRejects = 0, flickerRejects = 0, earlyRejects = 0, nearLowRejects = 0, sportRejects = 0;
     const isMainTour = m => TIER_MAIN.some(t => `${m.league||""} ${m.slug||""}`.toUpperCase().includes(t));
-    // Leagues the tracker has PROVEN winning (real edge, real sample size)
-    // get top priority in ranking and a relaxed model bar below — this is
-    // the "build on what works" half of the self-learning gate, not just
-    // "ban what fails".
-    let provenLeagues = {};
-    try { provenLeagues = await tracker.provenWinners(); } catch {}
-    const isProven = m => !!provenLeagues[(m.league || "OTHER").toUpperCase()];
-
     const pool = bbosWithData
       .filter(m => m.px >= FAV_MIN && m.px <= FAV_MAX)
       .filter(m => {
@@ -1087,10 +1079,18 @@ async function _runScanCycleInner() {
   // Permanent per-process record of every slug the bot has entered, seeded
   // from active bets each scan. Third layer on top of hasActiveBet + ownedSlugs.
   for (const b of getAllActiveBets()) everBet.add(canonicalSlug(b.slug));
-  const openTeamSets = getAllActiveBets().map(b => teamTokensOf(b.marketQuestion, b.marketConditionId)).filter(t => t.length);
+  let openTeamSets = getAllActiveBets().map(b => teamTokensOf(b.marketQuestion, b.marketConditionId)).filter(t => t.length);
 
   let entryErrors = 0, learnSkips = 0, signalSkips = 0, modelSkips = 0;
   let claimMs = 0, claimCalls = 0, skipCheckMs = 0;
+  // Fetched ONCE, function-wide scope, used everywhere this is needed —
+  // ranking, the model-edge relaxation, AND the funnel publish. Previously
+  // this was declared deep inside the pool-building block and silently
+  // unreachable from the entry loop and the funnel publish (two separate,
+  // now-fixed crashes). One source of truth this time, not three call sites.
+  let provenLeaguesGlobal = {};
+  try { provenLeaguesGlobal = await tracker.provenWinners(); } catch {}
+  const isProven = m => !!provenLeaguesGlobal[(m.league || "OTHER").toUpperCase()];
   for (const m of candidates) {
     if (betsPlaced >= ENTRIES_SCAN || attempts >= MAX_ATTEMPTS) break;
     if (slotsUsed + betsPlaced >= MAX_CONC) break;
@@ -1335,6 +1335,13 @@ async function _runScanCycleInner() {
     betsPlaced++;
     const payout = (betSize / entryPrice).toFixed(2);
     console.log(`  ✅ ENTRY${DRY_RUN ? "" : " 🔴LIVE"} ${league} $${betSize} @ ${cents(entryPrice)} | win → $${payout} | ${game.slice(0, 40)}`);
+    // Update the LIVE team-exposure set immediately — otherwise a second
+    // qualifying match for the same team, evaluated moments later in this
+    // SAME scan pass, never sees the bet we just placed and can slip
+    // through. This is exactly how the original Guyana Amazon Warriors
+    // double-buy happened: the guard only checked bets that existed
+    // BEFORE the scan started, never ones placed mid-scan.
+    { const t = teamTokensOf(m.question, m.slug); if (t.length) openTeamSets.push(t); }
     if (m._modelReason) console.log(`     📐 ${m._modelReason} (+${(m._modelEdge * 100).toFixed(1)} pts)`);
     } catch (err) {
       entryErrors++;
@@ -1377,9 +1384,7 @@ async function _runScanCycleInner() {
       // Which leagues currently get scoreboard confirmation vs price-only.
       modelledLeagues: model.MODELLED_LEAGUES,
       // Leagues the tracker has proven out with a real, positive edge.
-      provenLeagues: await (async () => {
-        try { return Object.keys(await tracker.provenWinners()); } catch { return []; }
-      })(),
+      provenLeagues: Object.keys(provenLeaguesGlobal || {}),
       // the board as the bot sees it — powers "what games look promising?"
       watchlist: (bbosWithData || [])
         .filter(m => m.px && m.isLive)
