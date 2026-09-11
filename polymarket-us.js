@@ -748,7 +748,7 @@ export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty
 // ever intentionally raise the flat bet above $5.
 const ORDER_MIN_USD = 20.00;  // $22 flat, small buffer
 const ORDER_MAX_USD = 23.00;  // nothing larger than ~$22
-const MAX_OPEN_POSITIONS = 3;  // hard slot cap enforced AT THE ORDER GATE
+const MAX_OPEN_POSITIONS = 5;  // hard slot cap enforced AT THE ORDER GATE
 // ONE BET PER MARKET, ALWAYS. With DCA removed there is no legitimate reason
 // to add to a position, so allowAddOn is ignored while this is true.
 const NO_STACKING = true;
