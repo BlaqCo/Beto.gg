@@ -30,7 +30,6 @@ export const SCHEMA = {
   MIN_LIVE_MIN:  { v: 0,     label: "Wait after tip-off",  group: "Timing",  unit: "min",step: 1,    min: 0,   max: 120 },
   MAKER_MODE:    { v: true,  label: "Post maker orders",   group: "Timing",  bool: true },
 
-  DCA_ENABLED:   { v: false,  label: "Second buy on dip",   group: "Manage",  bool: true },
   TP_ENABLED:    { v: false,  label: "Take profit",         group: "Manage",  bool: true },
   TP_PRICE:      { v: 0.95,  label: "Sell at price",       group: "Manage",  unit: "¢",  step: 0.01, min: 0.50, max: 0.99, pct: true },
 
