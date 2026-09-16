@@ -452,6 +452,22 @@ const TIER_MAIN     = ["ATP","WTA","CHALLENGER","MLB","BASEBALL"];
 const SOFT_MIN_QTY  = 500;   // contracts of depth required for soft tier
 const MAIN_MIN_QTY  = 100;   // depth required for main tour
 const openerRef     = new Map();  // slug → last pre-game price (the "opener")
+// Discovery's `est` price can now be up to 60s stale (widened for the
+// rate-limit fix), so it's a weak basis for deciding WHICH 15 of 65+
+// in-band markets are worth a real BBO check. A REAL, confirmed price we
+// paid for a scan or two ago is a much better signal than a 60s-old
+// estimate — remember it and prefer it. Markets we've never successfully
+// priced fall back to the discovery estimate, same as before.
+const lastRealBBO   = new Map();  // slug → { price, ts }
+const LAST_REAL_MAX_AGE_MS = 3 * 60_000;
+// A market that keeps losing the priority race every single scan can go
+// unchecked forever even if it's genuinely a good candidate — the same
+// handful of markets would always win. Track consecutive scans a market
+// was passed over (never even selected for a BBO check) and give starved
+// markets a rotating boost so every live market gets checked periodically,
+// not just whichever ones look best on stale data right now.
+const scansSincePicked = new Map();  // slug → consecutive scans not selected
+const STARVE_BOOST_AFTER = 4;
 // A SECOND, SHORT-WINDOW high-water tracker alongside the all-session one.
 // The all-session high can go stale — if a price has been drifting down for
 // an hour, that old peak stops being a meaningful reference. A recent local
@@ -781,17 +797,41 @@ async function _runScanCycleInner() {
   // that actually could. A small pad (3¢) still catches a price that's about
   // to drift into range by the time BBO comes back.
   const PAD = 0.03;
+  const now4 = Date.now();
+  // Best-known price: a real, recent BBO beats a stale discovery estimate.
+  const bestPx = m => {
+    const real = lastRealBBO.get(m.slug);
+    if (real && now4 - real.ts <= LAST_REAL_MAX_AGE_MS) return real.price;
+    return m.est;
+  };
+  const inBand = m => { const p = bestPx(m); return p >= FAV_MIN - PAD && p <= FAV_MAX + PAD; };
+  const starved = m => (scansSincePicked.get(m.slug) || 0) >= STARVE_BOOST_AFTER;
+
   const prioritized = [...markets].sort((a, b) => {
-    const aBand = (a.est >= FAV_MIN - PAD && a.est <= FAV_MAX + PAD) ? 0 : 1;
-    const bBand = (b.est >= FAV_MIN - PAD && b.est <= FAV_MAX + PAD) ? 0 : 1;
+    const aBand = inBand(a) ? 0 : 1, bBand = inBand(b) ? 0 : 1;
     if (aBand !== bBand) return aBand - bBand;
+    // Within the same band-tier, a long-starved market jumps ahead of one
+    // that's been checked recently — otherwise the same top-ranked markets
+    // win every single scan and everything else goes permanently unchecked.
+    const aStarve = starved(a) ? 0 : 1, bStarve = starved(b) ? 0 : 1;
+    if (aStarve !== bStarve) return aStarve - bStarve;
     if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
     return 0;
   });
-  const inBandCount = prioritized.filter(m => m.est >= FAV_MIN - PAD && m.est <= FAV_MAX + PAD).length;
+  const inBandCount = prioritized.filter(inBand).length;
   if (inBandCount > BBO_FETCH_LIMIT) console.log(`  ⚠️ ${inBandCount} markets are within the live band but only ${BBO_FETCH_LIMIT} get priced this scan`);
   const candidatePool = prioritized.slice(0, BBO_FETCH_LIMIT);
   console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
+
+  // Update starvation counters for EVERY live market, not just the ones
+  // picked — reset to 0 for what we're about to check, increment for
+  // everything else so the rotation actually rotates.
+  const pickedSlugs = new Set(candidatePool.map(m => m.slug));
+  for (const m of markets) {
+    if (!m.isLive) continue;
+    if (pickedSlugs.has(m.slug)) scansSincePicked.set(m.slug, 0);
+    else scansSincePicked.set(m.slug, (scansSincePicked.get(m.slug) || 0) + 1);
+  }
 
   // Fetch live BBO for ALL candidates
   // FIX for a real rate-limit regression: firing all 100 requests in the
@@ -810,6 +850,10 @@ async function _runScanCycleInner() {
         console.log(`  ❌ No BBO: ${m.question?.slice(0, 35)}`);
         return null;
       }
+      // Remember this as ground truth for prioritizing FUTURE scans — even
+      // a wide-spread market's confirmed price is more trustworthy than a
+      // 60s-old discovery guess, regardless of whether we end up trading it.
+      lastRealBBO.set(m.slug, { price: bbo.ask, ts: Date.now() });
       const spread = bbo.ask - bbo.bid;
 
       // v11: TIGHT spread caps — we pay the ask, so the spread is a direct
