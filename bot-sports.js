@@ -1107,7 +1107,21 @@ async function _runScanCycleInner() {
       console.log(`🏆 ${pool.length} favorites (${lc} 🔴 live) in ${cents(FAV_MIN)}-${cents(FAV_MAX)}`);
       console.log(`  Top: ${pool.slice(0,5).map(m => `${m.isLive?"🔴":"⏳"} ${cents(m.px)} ${m.question?.slice(0,30)}`).join(" | ")}`);
     } else {
-      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)}. BBO sample: ${bbosWithData.slice(0,5).map(m=>`${cents(m.px)} ${m.question?.slice(0,20)}`).join(" | ")}`);
+      // Sample must match what "favorites" actually requires (live), or it
+      // misleadingly shows in-band PRE-GAME prices that could never qualify
+      // regardless of price — the exact confusion that kept recurring.
+      // Two real sources of "this looks like it should have qualified" that
+      // both landed here: (1) the sample wasn't filtered to live markets,
+      // so an in-band PRE-GAME price (which can never be a favorite anyway)
+      // could appear as if wrongly excluded; (2) whole-cent rounding hides
+      // that a price like 0.684 displays as "68¢" but is genuinely outside
+      // a 0.68 cutoff — a tenth-of-a-cent of precision removes that
+      // ambiguity entirely instead of leaving it to be re-discovered.
+      const centsPrecise = x => `${(x * 100).toFixed(1)}¢`;
+      const liveSample = bbosWithData.filter(m => m.isLive);
+      const sampleSrc = liveSample.length ? liveSample : bbosWithData;
+      const tag = liveSample.length ? "" : " (none live — showing pre-game only)";
+      console.log(`[INFO] No favorites in ${cents(FAV_MIN)}-${cents(FAV_MAX)}${tag}. BBO sample: ${sampleSrc.slice(0,5).map(m=>`${centsPrecise(m.px)}${m.isLive?"":" [pre-game]"} ${m.question?.slice(0,20)}`).join(" | ")}`);
     }
     candidates = pool;
   }
