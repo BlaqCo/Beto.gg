@@ -432,13 +432,13 @@ let SL_ENABLED    = false;
 // rejected by any gate). getBBO has no built-in pacing — this fires that
 // many requests in parallel every ~15-18s scan; 60 already ran clean with
 // zero rate-limit errors across many logs, so 100 has real headroom.
-let BBO_FETCH_LIMIT = 30;   // cut further — 60, even WITH batching and paced
-// discovery, still produced 300+ HTTP 429s and only 17-27% real coverage.
-// A rejected request still costs the same rate-limit pressure as a
-// successful one, so tolerating more failures never helps — only sending
-// fewer requests does. This is a deliberately conservative reset: get
-// genuinely clean first, then raise it back gradually WITH evidence,
-// rather than guess at another number close to what just failed twice.
+let BBO_FETCH_LIMIT = 15;   // cut again — even 30, paced, was STILL losing
+// 22-24 of every 30 requests to 429s, consistently, every scan. That exact
+// ratio (roughly 6-7 succeeding out of 30) is real evidence the true
+// ceiling is closer to 15 than 30. Combined with the wider scan gap below
+// (fewer scans/minute = less cumulative volume), this targets what looks
+// like a ROLLING per-minute limit, not just a burst — pacing alone inside
+// one scan already proved it can't fix that on its own.
 let SL_PRICE      = 0.29;
 let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
@@ -689,7 +689,11 @@ async function applyLiveConfig() {
 
 let _scanning = false;
 let _lastScanEnd = 0;
-const SCAN_MIN_GAP_MS = 15_000; // changelog Jul 1: tiered rate limits (~60 req/min public) — space scans out
+const SCAN_MIN_GAP_MS = 25_000; // widened from 15s — at 15s (~4 scans/min),
+// even a paced 30-request scan lost 73-80% of its requests to 429s every
+// single time. Fewer scans per minute directly cuts the cumulative request
+// volume a rolling rate window would see, which intra-scan pacing alone
+// cannot do.
 export async function runScanCycle() {
   if (Date.now() - _lastScanEnd < SCAN_MIN_GAP_MS) return;
   // ── REENTRANCY GUARD: scans take longer than the 3s interval, so they
