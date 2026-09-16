@@ -38,7 +38,7 @@ export const SCHEMA = {
   HALFWAY_ONLY:  { v: false,  label: "Wait until halfway",    group: "Timing",  bool: true },
   MIN_PROGRESS:  { v: 0.50,  label: "Match progress needed", group: "Timing",  unit: "%",  step: 0.05, min: 0, max: 0.95, pct: true },
 
-  BBO_FETCH_LIMIT: { v: 60,  label: "Markets priced per scan", group: "Edge", unit: "", step: 10, min: 20, max: 200 },
+  BBO_FETCH_LIMIT: { v: 30,  label: "Markets priced per scan", group: "Edge", unit: "", step: 10, min: 20, max: 200 },
   MODEL_ENABLED: { v: true,  label: "Require game-state edge", group: "Edge", bool: true },
   MODEL_EDGE_MIN:{ v: 0.03,  label: "Model edge needed",     group: "Edge",   unit: "¢", step: 0.005, min: 0, max: 0.20, pct: true },
   LEARN_ENABLED: { v: true,  label: "Learn from results",   group: "Edge",    bool: true },
