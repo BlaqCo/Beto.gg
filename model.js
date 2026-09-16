@@ -150,6 +150,11 @@ export function stateEdge(market, price) {
     if (rem == null) return null;
     if (a === b) return null;
     leaderProb = footballWinProb(Math.abs(a - b), rem);
+  } else if (/\bNHL\b/.test(league)) {
+    const rem = hockeyMinutesRemaining(period);
+    if (rem == null) return null;
+    if (a === b) return null;               // tied — no margin signal, refuse rather than guess
+    leaderProb = hockeyWinProb(Math.abs(a - b), rem);
   } else {
     return null;                                    // no model for this sport
   }
@@ -274,4 +279,39 @@ function footballMinutesRemaining(period) {
   return periodsLeft * 15;
 }
 
-export const MODELLED_LEAGUES = ["MLB", "TENNIS", "NBA", "WNBA", "NCAAMB", "NCAAWB", "NFL", "NCAAFB"];
+
+/**
+ * HOCKEY (NHL) — win probability from goal margin + minutes remaining.
+ * P(win) = Φ( margin / (0.5 · √minutes_remaining) ).
+ * The coefficient is much smaller than basketball's (2.2) or football's
+ * (3.0) deliberately — hockey is low-scoring (NHL averages ~6 total goals
+ * per game), so a single goal represents a far larger share of the game's
+ * expected scoring and should move win probability much more per goal.
+ * Calibrated against public NHL win-probability reference points: up 1
+ * with 5 min left in the 3rd ≈ 77-81%, up 2 with 10 min left ≈ 90%, up 1
+ * at the start of the 3rd (~20 min left) ≈ 65-67%.
+ *
+ * Same limitation as basketball/football: this uses cumulative score, which
+ * (unlike tennis) never resets, so a tied game has genuinely no signal —
+ * handled by refusing rather than guessing, same as those two sports.
+ */
+export function hockeyWinProb(margin, remainingMin) {
+  if (margin === 0) return 0.5;
+  const z = Math.abs(margin) / (0.5 * Math.sqrt(Math.max(0.5, remainingMin)));
+  const p = clamp(Phi(z), 0.5, 0.98);
+  return margin > 0 ? p : 1 - p;
+}
+
+function hockeyMinutesRemaining(period) {
+  let cur = null, m;
+  if ((m = period.match(/p(?:eriod)?\s*(\d)/i))) cur = +m[1];
+  else if (/2nd period/i.test(period)) cur = 2;
+  else if (/1st period/i.test(period)) cur = 1;
+  else if (/3rd period/i.test(period)) cur = 3;
+  else if (/overtime|\bot\b/i.test(period)) cur = 3.5;   // treat OT as very late, ~5 min left
+  if (cur == null) return null;
+  const periodsLeft = Math.max(0, 3 - cur + 0.5);
+  return periodsLeft * 20;
+}
+
+export const MODELLED_LEAGUES = ["MLB", "TENNIS", "NBA", "WNBA", "NCAAMB", "NCAAWB", "NFL", "NCAAFB", "NHL"];
