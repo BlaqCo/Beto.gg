@@ -577,8 +577,11 @@ async function processExits() {
       continue;
     }
 
-    // Not settled — mark-to-market for dashboard only, never exit early
-    const bbo = await getBBO(slug);
+    // Not settled — mark-to-market for dashboard only, never exit early.
+    // A 429 (or any failure) here must not abort the rest of this loop or
+    // the scan — just skip this position's update for one cycle.
+    let bbo = null;
+    try { bbo = await getBBO(slug); } catch (e) { /* stale liveMarks kept, retry next scan */ }
     const bid = bbo?.bid ?? bbo?.last;
     if (bid) {
       const move = (bid - bet.entryPrice) / bet.entryPrice;
@@ -1270,7 +1273,9 @@ async function _runScanCycleInner() {
       // scan-start BBO can be minutes old. A FOK limit from a stale price
       // fills BELOW range when a favorite collapses mid-game (the 50-54%
       // entries). Re-fetch a FRESH quote now; it must still be in range.
-      const fresh = await getBBO(m.slug);
+      let fresh = null;
+      try { fresh = await getBBO(m.slug); }
+      catch (e) { console.log(`  🚫 Fresh quote fetch failed (${e.message}) — skipping | ${m.question?.slice(0, 38)}`); }
       if (!fresh?.ask) {
         console.log(`  🚫 No fresh quote available — skipping | ${m.question?.slice(0, 38)}`);
         everBet.delete(canonicalSlug(m.slug)); try { tracker.releaseMarket(canonicalSlug(m.slug)); } catch {}
