@@ -131,13 +131,31 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 // ── Config ──────────────────────────────────────────────────────
 // Edge-scaled stake: BET_MIN_USD at FAV_MIN, BET_MAX_USD at FAV_MAX, linear.
-let BET_LOW_USD   = 22;      // flat $22
-let BET_HIGH_USD  = 22;      // flat $22 (no edge scaling)
+let BET_LOW_USD   = 8;       // flat $8
+let BET_HIGH_USD  = 8;       // flat $8 base (see model-edge sizing below)
 const sizeForPx = px => {
   const span = Math.max(0.0001, FAV_MAX - FAV_MIN);
   const t = Math.min(1, Math.max(0, (px - FAV_MIN) / span));
   return +(BET_LOW_USD + t * (BET_HIGH_USD - BET_LOW_USD)).toFixed(2);
 };
+
+// ── MODEL-EDGE-WEIGHTED SIZING ──────────────────────────────────────
+// The scoreboard model already computes a real, validated edge number for
+// every MLB/tennis/NBA/WNBA/NCAAB/NFL/NCAAFB bet — it was previously used
+// only as a yes/no gate (edge >= threshold or skip). This is the first time
+// that number is used for anything beyond a gate: a bet the model is MORE
+// confident about gets a modestly larger stake, capped tightly so a wrong
+// read never costs materially more than a flat bet would.
+let MODEL_SIZE_ENABLED = false;  // OFF — user asked for $8 flat, literally, on every bet
+let MODEL_SIZE_MAX_BOOST = 0.25;   // strongest model edge → up to +25% stake, never more
+function sizeWithModelEdge(baseSize, modelEdge) {
+  if (!MODEL_SIZE_ENABLED || modelEdge == null) return baseSize;
+  // model.MAX_EDGE (0.12) is model.js's own hard cap on any single edge
+  // reading — used here as the reference ceiling so "maximum possible
+  // model confidence" maps to "maximum size boost", nothing more.
+  const t = Math.max(0, Math.min(1, modelEdge / (model.MAX_EDGE || 0.12)));
+  return +(baseSize * (1 + t * MODEL_SIZE_MAX_BOOST)).toFixed(2);
+}
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
 let FAV_MIN       = 0.55;    // entry floor: 55%
@@ -646,6 +664,8 @@ async function applyLiveConfig() {
     if (c.ENDGAME_MIN   != null) ENDGAME_MIN   = c.ENDGAME_MIN;
     if (c.LEARN_ENABLED != null) LEARN_ENABLED = c.LEARN_ENABLED;
     if (c.MODEL_ENABLED != null) MODEL_ENABLED = c.MODEL_ENABLED;
+    if (c.MODEL_SIZE_ENABLED != null) MODEL_SIZE_ENABLED = c.MODEL_SIZE_ENABLED;
+    if (c.MODEL_SIZE_MAX_BOOST != null) MODEL_SIZE_MAX_BOOST = c.MODEL_SIZE_MAX_BOOST;
     if (c.MODEL_EDGE_MIN != null) MODEL_EDGE_MIN = c.MODEL_EDGE_MIN;
     if (c.SIGNAL_ENABLED != null) SIGNAL_ENABLED = c.SIGNAL_ENABLED;
     if (c.SIGNAL_MIN     != null) SIGNAL_MIN     = c.SIGNAL_MIN;
@@ -951,14 +971,20 @@ async function _runScanCycleInner() {
         const passShort = refShort != null && m.px <= refShort - need;
         if (!passLong && !passShort) {
           discountRejects++;
-          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but no discount: ${cents(m.px)}, high-water ${cents(ref)} (recent ${refShort!=null?cents(refShort):"—"}), need ${cents(need)} more | ${m.question?.slice(0,36)}`);
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) {
+            console.log(`  🔬 In-band but no discount: ${cents(m.px)}, high-water ${cents(ref)} (recent ${refShort!=null?cents(refShort):"—"}), need ${cents(need)} more | ${m.question?.slice(0,36)}`);
+            tracker.recordNearMiss({ gate: "no_discount", gapCents: need * 100, league: m.league, question: m.question }).catch(() => {});
+          }
           return false;
         }
         // NEAR-LOW: only buy at/near the bottom of the trailing range.
         const lo = lowSeen.get(m.slug);
         if (lo != null && m.px > lo + NEAR_LOW_TOL) {
           nearLowRejects++;
-          if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but above trailing low: ${cents(m.px)} vs low ${cents(lo)} | ${m.question?.slice(0,36)}`);
+          if (m.px >= FAV_MIN && m.px <= FAV_MAX) {
+            console.log(`  🔬 In-band but above trailing low: ${cents(m.px)} vs low ${cents(lo)} | ${m.question?.slice(0,36)}`);
+            tracker.recordNearMiss({ gate: "above_trailing_low", gapCents: (m.px - lo) * 100, league: m.league, question: m.question }).catch(() => {});
+          }
           return false;
         }
         return true;
@@ -1184,7 +1210,7 @@ async function _runScanCycleInner() {
     try {
 
     let entryPrice = m.ask;
-    let betSize    = sizeForPx(m.ask);
+    let betSize    = sizeWithModelEdge(sizeForPx(m.ask), m._modelEdge);
     let orderId    = `dry_${Date.now()}`;
 
     // ── Book-state check (ADVISORY, fail-open) ──
