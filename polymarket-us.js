@@ -304,10 +304,23 @@ export async function fetchSportsMoneylines() {
     ...LEAGUES.map(l => `${GATEWAY}/v2/leagues/${l}/events?limit=50`),
   ];
 
+  // BATCHED, not a single burst of ~39 simultaneous requests. That burst,
+  // combined with the BBO stage's own burst moments later in the same
+  // scan, was tripping Polymarket's rate limit hard (384 HTTP 429s in one
+  // ~90-second window, whole scans losing 100% of their price checks).
+  // Small batches with a short pause between them respect whatever the
+  // real burst ceiling is, at the cost of a little extra scan time.
   const _fetchStart = Date.now();
-  const results = await Promise.allSettled(
-    urls.map(url => axios.get(url, { timeout: 12_000 }))
-  );
+  const DISCOVERY_BATCH = 12, DISCOVERY_PAUSE_MS = 250;
+  const results = [];
+  for (let i = 0; i < urls.length; i += DISCOVERY_BATCH) {
+    const batch = urls.slice(i, i + DISCOVERY_BATCH);
+    const batchResults = await Promise.allSettled(
+      batch.map(url => axios.get(url, { timeout: 12_000 }))
+    );
+    results.push(...batchResults);
+    if (i + DISCOVERY_BATCH < urls.length) await new Promise(r => setTimeout(r, DISCOVERY_PAUSE_MS));
+  }
   const _fetchMs = Date.now() - _fetchStart;
   const _failedCount = results.filter(r => r.status !== "fulfilled").length;
   if (_fetchMs > 4000 || _failedCount > 0) {
