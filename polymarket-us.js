@@ -596,6 +596,15 @@ export async function getBBO(slug) {
     }
     return result;
   } catch (err) {
+    // A 429 specifically must REACH the caller so its own rate-limit
+    // detection (bot-sports.js checks the thrown error's message for
+    // "429") can actually fire. Swallowing it here and returning null —
+    // the old behaviour — meant that detector could structurally never
+    // see a 429, ever, no matter how many were really happening. That's
+    // why the "0 rate-limited" counter kept reporting clean while the raw
+    // logs showed hundreds of these errors the whole time.
+    const isRateLimit = /429/.test(err.message || "") || err.response?.status === 429;
+    if (isRateLimit) throw err;
     console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
     return null;
   }
