@@ -259,7 +259,11 @@ function isGameMarket(m) {
 
 // ── Main fetch ───────────────────────────────────────────────────
 let _cache = null, _cacheTime = 0;
-const TTL = 20_000;
+const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
+// cache would still expire almost every single scan — defeating the whole
+// point of caching. 60s means discovery's 39-request sweep now fires
+// roughly once every 2-3 scans instead of nearly every one, cutting real
+// cumulative request volume, not just moving it around.
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
