@@ -432,12 +432,13 @@ let SL_ENABLED    = false;
 // rejected by any gate). getBBO has no built-in pacing — this fires that
 // many requests in parallel every ~15-18s scan; 60 already ran clean with
 // zero rate-limit errors across many logs, so 100 has real headroom.
-let BBO_FETCH_LIMIT = 60;   // pulled back from 100 — that produced 384 HTTP 429s
-// and whole scans losing 100% of their price checks, even with batching.
-// 60 (combined with the existing 20-per-batch/250ms pacing, and discovery
-// now paced too) is the level that ran clean with zero rate-limit errors
-// for a long stretch before. If overflow warnings return at this level,
-// the real fix is smarter prioritization within 60, not pushing past it.
+let BBO_FETCH_LIMIT = 30;   // cut further — 60, even WITH batching and paced
+// discovery, still produced 300+ HTTP 429s and only 17-27% real coverage.
+// A rejected request still costs the same rate-limit pressure as a
+// successful one, so tolerating more failures never helps — only sending
+// fewer requests does. This is a deliberately conservative reset: get
+// genuinely clean first, then raise it back gradually WITH evidence,
+// rather than guess at another number close to what just failed twice.
 let SL_PRICE      = 0.29;
 let TP_GAIN_PCT   = 0.80;     // gain mode: +80% on cost (see note)
 // ── CIRCUIT BREAKER: hard stop on total account value ──
@@ -793,8 +794,8 @@ async function _runScanCycleInner() {
   // coverage); firing them with zero pacing was. Batching keeps the same
   // total coverage but spreads it over ~1-1.5s instead of one instant,
   // which is well within the scan's normal 0.2-3s budget.
-  const BBO_BATCH_SIZE = 20;
-  const BBO_BATCH_GAP_MS = 250;
+  const BBO_BATCH_SIZE = 8;
+  const BBO_BATCH_GAP_MS = 450;
   const bboFetchOne = async m => {
     try {
       const bbo = await getBBO(m.slug);
@@ -825,12 +826,13 @@ async function _runScanCycleInner() {
     if (i + BBO_BATCH_SIZE < candidatePool.length) await new Promise(r => setTimeout(r, BBO_BATCH_GAP_MS));
   }
   const rateLimitedCount = bboResults.filter(r => r && r.__rateLimited).length;
-  
+
   const bbosWithData = bboResults.filter(b => b != null && !b.__rateLimited);
   const bboFailures = candidatePool.length - bbosWithData.length;
-  if (candidatePool.length >= 40 && bboFailures / candidatePool.length > 0.4) {
-    console.log(`  ⚠️ ${bboFailures}/${candidatePool.length} BBO requests failed this scan${rateLimitedCount ? ` (${rateLimitedCount} were 429 rate-limits)` : ""} — if this keeps climbing after batching, the limit itself needs to come down`);
-  }
+  // Always visible now, not just above a 40% failure threshold — the whole
+  // point is to see this number trend after the volume cut, not rediscover
+  // it by grepping raw logs again next time.
+  console.log(`  📶 BBO: ${bbosWithData.length}/${candidatePool.length} priced${rateLimitedCount ? `, ${rateLimitedCount} rate-limited (429)` : ", 0 rate-limited"}`);
   console.log(`✅ ${bbosWithData.length}/${candidatePool.length} markets have BBO data`);
 
   let candidates;
