@@ -311,7 +311,7 @@ export async function fetchSportsMoneylines() {
   // Small batches with a short pause between them respect whatever the
   // real burst ceiling is, at the cost of a little extra scan time.
   const _fetchStart = Date.now();
-  const DISCOVERY_BATCH = 12, DISCOVERY_PAUSE_MS = 250;
+  const DISCOVERY_BATCH = 8, DISCOVERY_PAUSE_MS = 400;
   const results = [];
   for (let i = 0; i < urls.length; i += DISCOVERY_BATCH) {
     const batch = urls.slice(i, i + DISCOVERY_BATCH);
