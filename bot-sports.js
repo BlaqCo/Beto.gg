@@ -1057,6 +1057,11 @@ async function _runScanCycleInner() {
         const now2 = Date.now();
         if (!prev || Math.abs(prev.px - m.px) > QUOTE_TOL) {
           quoteSeen.set(m.slug, { px: m.px, since: now2 }); flickerRejects++;
+          // SIMPLE_MODE previously only skipped the WAIT (below) — this is
+          // the actual dominant blocker: it requires a price to be seen
+          // TWICE, unchanged, across separate scans before it counts at
+          // all. Half-fixed last round; completing it here.
+          if (SIMPLE_MODE) return true;
           if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but quote just moved: ${cents(m.px)} | ${m.question?.slice(0,36)}`);
           return false;
         }
