@@ -1384,13 +1384,26 @@ async function _runScanCycleInner() {
       entryPrice = book.bestAsk;
       m.ask = book.bestAsk;
     } else {
-      // ── STALE-QUOTE SEAL (v15): book couldn't confirm a price, and the
-      // scan-start BBO can be minutes old. A FOK limit from a stale price
-      // fills BELOW range when a favorite collapses mid-game (the 50-54%
-      // entries). Re-fetch a FRESH quote now; it must still be in range.
+      // ── STALE-QUOTE SEAL (v15): the real risk this protects against is a
+      // favorite that's already collapsed mid-game since the price was
+      // fetched, not the price being a FEW SECONDS old — pool-building and
+      // this point in the entry loop are the SAME scan, typically only a
+      // handful of seconds apart. Spending a SECOND REST call here, against
+      // the same rate limit already rejecting ~50% of the FIRST call, meant
+      // every candidate that reached this point died here regardless of how
+      // good it was — the safety check was costing 100% of trades to guard
+      // against a risk that mostly doesn't apply this soon after the scan
+      // started. Trust the pool-building price if it's genuinely recent;
+      // only spend a fresh REST call when it's actually old enough to matter.
+      const poolAgeMs = Date.now() - _scanStartedAt;
+      const POOL_PRICE_TRUST_MS = 20_000;
       let fresh = null;
-      try { fresh = await getBBO(m.slug); }
-      catch (e) { console.log(`  🚫 Fresh quote fetch failed (${e.message}) — skipping | ${m.question?.slice(0, 38)}`); }
+      if (m.ask && poolAgeMs < POOL_PRICE_TRUST_MS) {
+        fresh = { ask: m.ask, bid: m.bid };
+      } else {
+        try { fresh = await getBBO(m.slug); }
+        catch (e) { console.log(`  🚫 Fresh quote fetch failed (${e.message}) — skipping | ${m.question?.slice(0, 38)}`); }
+      }
       if (!fresh?.ask) {
         console.log(`  🚫 No fresh quote available — skipping | ${m.question?.slice(0, 38)}`);
         everBet.delete(canonicalSlug(m.slug)); try { tracker.releaseMarket(canonicalSlug(m.slug)); } catch {}
