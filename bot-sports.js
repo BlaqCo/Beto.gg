@@ -1256,7 +1256,10 @@ async function _runScanCycleInner() {
     }
 
     // ── SIGNAL: is this price trustworthy enough to trade? ──
-    if (SIGNAL_ENABLED && signal?.scoreMarket) {
+    // SIMPLE_MODE bypasses this too — it's a quality filter on top of the
+    // core rules (price, timing, discount), same category as the ones
+    // already removed. Never audited before now.
+    if (!SIMPLE_MODE && SIGNAL_ENABLED && signal?.scoreMarket) {
       const sg = signal.scoreMarket(m, null, BET_SIZE);
       m._signal = sg;
       if (sg.score < SIGNAL_MIN) {
@@ -1277,7 +1280,13 @@ async function _runScanCycleInner() {
     // running through the tennis set/game win-probability model, which has
     // an entirely different structure and is wrong for that sport).
     const modelCovers = model.MODELLED_LEAGUES.includes(leagueUpper);
-    if (MODEL_ENABLED && modelCovers) {
+    // SIMPLE_MODE skips the model entirely, not just a reduced bar. You
+    // described "our rules" as timing + price + discount — the model was
+    // never part of that description, and for tennis specifically it can
+    // read as near-50% at the start of any fresh set regardless of how
+    // lopsided the match actually is, which was still silently blocking
+    // real candidates even after every other gate was cleared.
+    if (!SIMPLE_MODE && MODEL_ENABLED && modelCovers) {
       const sig = model.stateEdge(m, m.ask);
       if (!sig)                      { modelSkips++; continue; }   // no model for this game state
       if (sig.side === "ambiguous")  { modelSkips++; continue; }   // still refuses when truly unresolvable
@@ -1297,7 +1306,8 @@ async function _runScanCycleInner() {
       // Proven-winning leagues have already demonstrated a real edge over a
       // real sample, so the model can afford to require a bit less on top —
       // it's a second opinion at that point, not the only evidence.
-      const modelMin = isProven(m) ? MODEL_EDGE_MIN * 0.6 : MODEL_EDGE_MIN;
+      const modelMin = SIMPLE_MODE ? MODEL_EDGE_MIN * 0.25
+                     : isProven(m) ? MODEL_EDGE_MIN * 0.6 : MODEL_EDGE_MIN;
       const need = modelMin + fees.costPerContract(m.ask, false);
       if (sig.edge < need) { modelSkips++; continue; }
       m._modelReason = sig.reason;
@@ -1305,7 +1315,11 @@ async function _runScanCycleInner() {
     }
 
     // ── SELF-LEARNING: skip segments our own record says are losing ──
-    if (LEARN_ENABLED) {
+    // SIMPLE_MODE bypasses this too. Real risk if left on right now: this
+    // judges leagues on tracker history that includes bets placed BEFORE
+    // several real bugs were fixed this session — stale negative history
+    // could be banning a league that isn't actually bad anymore.
+    if (!SIMPLE_MODE && LEARN_ENABLED) {
       try {
         const _skipT0 = Date.now();
         const v = await tracker.shouldSkip(m.league, m.ask, { minN: LEARN_MIN_N, cutoff: LEARN_CUTOFF });
@@ -1356,7 +1370,12 @@ async function _runScanCycleInner() {
     // Thin books = worst fills and least reliable prices. Skip when we can
     // SEE there isn't enough size (unknown depth stays fail-open, FOK protects).
     const contractsNeeded = Math.floor(BET_SIZE / Math.max(0.01, m.ask));
-    if (book.askQty > 0 && book.askQty < contractsNeeded) {
+    // SIMPLE_MODE bypasses this too — it's a PROACTIVE check that avoids
+    // attempting an order likely to fail; the FOK order type underneath it
+    // already refuses to fill badly on its own (fill completely at the
+    // stated price, or don't fill at all). Skipping the pre-check means
+    // more attempts that might not fill, not a real fill-quality risk.
+    if (!SIMPLE_MODE && book.askQty > 0 && book.askQty < contractsNeeded) {
       console.log(`  💧 Thin book (${book.askQty}/${contractsNeeded} contracts) | ${m.question?.slice(0, 38)}`);
       continue;
     }
