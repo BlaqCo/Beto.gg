@@ -820,7 +820,21 @@ async function _runScanCycleInner() {
   });
   const inBandCount = prioritized.filter(inBand).length;
   if (inBandCount > BBO_FETCH_LIMIT) console.log(`  ⚠️ ${inBandCount} markets are within the live band but only ${BBO_FETCH_LIMIT} get priced this scan`);
-  const candidatePool = prioritized.slice(0, BBO_FETCH_LIMIT);
+  // Discovery WS coverage: same priority order, a wider slice (up to 30 —
+  // matching the default 3-connection pool). Set BEFORE building the REST
+  // pool below, so REST can skip whatever WS already has fresh data for —
+  // otherwise the two would just overlap and total coverage never actually
+  // grows past BBO_FETCH_LIMIT, it would just get cheaper.
+  const wsSlice = prioritized.slice(0, 30);
+  try { wsFeed.setDiscoveryWatchlist(wsSlice.map(m => m.slug)); } catch {}
+  const wsCoveredFresh = new Set(
+    wsSlice.filter(m => { try { return !!wsFeed.livePrice(m.slug); } catch { return false; } }).map(m => m.slug)
+  );
+  // REST fills in whatever WS does NOT already have fresh — a DIFFERENT
+  // slice, not the same one. Total unique coverage = WS-fresh + REST, not
+  // capped at BBO_FETCH_LIMIT alone once WS is contributing anything.
+  const candidatePool = prioritized.filter(m => !wsCoveredFresh.has(m.slug)).slice(0, BBO_FETCH_LIMIT);
+  if (wsCoveredFresh.size) console.log(`📡 WS already has ${wsCoveredFresh.size} fresh price(s) — REST covers a different ${candidatePool.length}`);
   console.log(`📋 Fetching BBO for ${candidatePool.length} markets`);
 
   // Update starvation counters for EVERY live market, not just the ones
@@ -878,7 +892,15 @@ async function _runScanCycleInner() {
   }
   const rateLimitedCount = bboResults.filter(r => r && r.__rateLimited).length;
 
-  const bbosWithData = bboResults.filter(b => b != null && !b.__rateLimited);
+  // Markets WS already covered fresh get folded in directly — bboFetchOne
+  // never ran for them at all this scan, REST never touched them.
+  const wsDirect = [...wsCoveredFresh].map(slug => {
+    const m = wsSlice.find(x => x.slug === slug);
+    const live = wsFeed.livePrice(slug);
+    if (!m || !live?.bid || !live?.ask) return null;
+    return { ...m, ask: live.ask, bid: live.bid, px: live.ask, lastTradePx: m.lastTradePx ?? null };
+  }).filter(Boolean);
+  const bbosWithData = [...wsDirect, ...bboResults.filter(b => b != null && !b.__rateLimited)];
   const bboFailures = candidatePool.length - bbosWithData.length;
   // Always visible now, not just above a 40% failure threshold — the whole
   // point is to see this number trend after the volume cut, not rediscover
