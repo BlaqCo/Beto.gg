@@ -402,6 +402,12 @@ let NEAR_LOW_TOL  = 0.08;    // widened further — direct request to get bets f
 let PRIORITY_PX   = 0.68;   // ≤68¢ gets first claim
 const driftStats = { n: 0, sumDelta: 0, cheaper: 0, dearer: 0, sumAbs: 0 };
 let DISCOUNT_MIN  = 0.01;   // absolute floor (superseded by fee-aware test)
+// SIMPLE MODE: strips the bot back to the genuinely simple rule set — live,
+// in the price band, past the endgame threshold. Disables the discount
+// requirement and the quote-stability wait, both added across many later
+// rounds, both individually reasonable, but together the actual thing
+// blocking real favorites from becoming real bets right now.
+let SIMPLE_MODE = true;
 let MAKER_MODE    = true;   // post at midpoint (cheaper, no taker fee) before paying the ask
 const MAKER_WAIT_MS = 20000;  // live: cancel quickly, the price is moving
 // Pre-game there is no rush. A resting order that waits minutes is far more
@@ -676,6 +682,7 @@ async function applyLiveConfig() {
     if (c.PRIORITY_PX   != null) PRIORITY_PX   = c.PRIORITY_PX;
     if (c.EDGE_MARGIN   != null) EDGE_MARGIN   = c.EDGE_MARGIN;
     if (c.NEAR_LOW_TOL  != null) NEAR_LOW_TOL  = c.NEAR_LOW_TOL;
+    if (c.SIMPLE_MODE   != null) SIMPLE_MODE   = c.SIMPLE_MODE;
     if (c.MIN_LIVE_MIN  != null) MIN_LIVE_MIN  = c.MIN_LIVE_MIN;
     if (c.MAKER_MODE    != null) MAKER_MODE    = c.MAKER_MODE;
     if (c.TP_ENABLED    != null) TP_ENABLED    = c.TP_ENABLED;
@@ -1053,7 +1060,7 @@ async function _runScanCycleInner() {
           if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but quote just moved: ${cents(m.px)} | ${m.question?.slice(0,36)}`);
           return false;
         }
-        if (now2 - prev.since < QUOTE_HOLD_MS) {
+        if (!SIMPLE_MODE && now2 - prev.since < QUOTE_HOLD_MS) {
           flickerRejects++;
           if (m.px >= FAV_MIN && m.px <= FAV_MAX) console.log(`  🔬 In-band but quote too fresh (${Math.round((now2-prev.since)/1000)}s held) | ${m.question?.slice(0,36)}`);
           return false;
@@ -1071,8 +1078,8 @@ async function _runScanCycleInner() {
         if (ref == null) return true;
         // Required pullback = fee cost at this price + margin.
         const need = feePx(m.px) + EDGE_MARGIN;
-        const passLong  = m.px <= ref - need;
-        const passShort = refShort != null && m.px <= refShort - need;
+        const passLong  = SIMPLE_MODE || m.px <= ref - need;
+        const passShort = SIMPLE_MODE || (refShort != null && m.px <= refShort - need);
         if (!passLong && !passShort) {
           discountRejects++;
           if (m.px >= FAV_MIN && m.px <= FAV_MAX) {
@@ -1083,7 +1090,7 @@ async function _runScanCycleInner() {
         }
         // NEAR-LOW: only buy at/near the bottom of the trailing range.
         const lo = lowSeen.get(m.slug);
-        if (lo != null && m.px > lo + NEAR_LOW_TOL) {
+        if (!SIMPLE_MODE && lo != null && m.px > lo + NEAR_LOW_TOL) {
           nearLowRejects++;
           if (m.px >= FAV_MIN && m.px <= FAV_MAX) {
             console.log(`  🔬 In-band but above trailing low: ${cents(m.px)} vs low ${cents(lo)} | ${m.question?.slice(0,36)}`);
@@ -1260,7 +1267,11 @@ async function _runScanCycleInner() {
     // now trade on price/edge alone, same as pre-model behaviour, while
     // MLB/tennis get the extra scoreboard confirmation as a bonus filter.
     const leagueUpper = String(m.league || "").toUpperCase();
-    const modelCovers = model.MODELLED_LEAGUES.some(l => leagueUpper.includes(l));
+    // EXACT match, not substring — .includes() previously matched "TABLETENNIS"
+    // against "TENNIS" (a real, substantive bug: table tennis was silently
+    // running through the tennis set/game win-probability model, which has
+    // an entirely different structure and is wrong for that sport).
+    const modelCovers = model.MODELLED_LEAGUES.includes(leagueUpper);
     if (MODEL_ENABLED && modelCovers) {
       const sig = model.stateEdge(m, m.ask);
       if (!sig)                      { modelSkips++; continue; }   // no model for this game state
