@@ -1,32 +1,55 @@
 /**
- * ws-feed.js — real-time price feed for open positions (optional, isolated)
+ * ws-feed.js — real-time price feed: positions (proven) + discovery (new)
  *
- * Why this exists: polymarket.us REST is capped at ~60 requests/minute, which
- * is why the bot polls every 15-20s. The docs describe a WebSocket endpoint
- * (/v1/ws/markets) that streams up to 10 instruments with no rate limit.
+ * ORIGINAL PURPOSE (WS_FEED=true, unchanged): stream prices for OPEN
+ * POSITIONS so exits fire near-instantly instead of on a 15-20s REST poll.
  *
- * That gap matters most for EXITS. With a 29¢ stop loss and a 95¢ take
- * profit, a 20-second polling delay means fast markets blow straight through
- * the level before the bot sees it. Streaming the handful of markets we
- * actually hold makes those exits fire near-instantly.
+ * NEW, EXPERIMENTAL PURPOSE (WS_DISCOVERY=true): REST is now hard-capped at
+ * 15 BBO checks/scan against 429s — with 75+ markets sitting in-band every
+ * scan, that's under 20% real coverage. The docs describe each WS
+ * connection streaming up to 10 instruments with no rate limit. What is
+ * genuinely NOT confirmed is whether Polymarket allows MULTIPLE CONCURRENT
+ * connections from one account — that is exactly what this build tests.
+ * It opens a small, conservative POOL of connections (WS_POOL_SIZE, default
+ * 3 = 30 slugs) rather than guessing at a large number, and logs every
+ * connection's real fate so the actual ceiling shows up in the next log
+ * the same way the REST ceiling did — measured, not assumed.
  *
- * Safety: entirely optional (WS_FEED=true), never places orders, and the bot
- * falls back to REST whenever a streamed price is missing or stale. If the
- * socket dies, everything keeps working exactly as before.
+ * Isolation, in both modes: never places orders, and the bot uses a
+ * streamed price only when fresh — REST remains the tested fallback for
+ * everything not covered, and if EVERY WS connection fails, the bot runs
+ * exactly as it did before this file existed.
  */
 
 const GATEWAY_WS = (process.env.POLYMARKET_WS_URL || "wss://gateway.polymarket.us/v1/ws/markets");
-const ENABLED    = process.env.WS_FEED === "true";
+const ENABLED           = process.env.WS_FEED === "true";
+const DISCOVERY_ENABLED = process.env.WS_DISCOVERY === "true";
 const MAX_SUBS   = 10;          // documented per-connection limit
 const FRESH_MS   = 8_000;       // a streamed price older than this isn't trusted
+// Conservative on purpose — same lesson as the REST rate limit: start low,
+// raise it later WITH evidence, not a guess. 3 connections is exactly the
+// kind of number that should be interrogated by real logs, not assumed safe.
+const POOL_SIZE  = Math.max(1, parseInt(process.env.WS_POOL_SIZE || "3", 10));
 
-const prices = new Map();       // slug → { bid, ask, ts }
-let ws = null, subscribed = new Set(), connected = false;
-let shapeLogged = false, retry = 0, reconnectTimer = null;
+const prices = new Map();       // slug → { bid, ask, ts } — shared across the whole pool
+let shapeLogged = false;
+
+// Connection 0 is reserved for held POSITIONS (setWatchlist) — the proven,
+// original use of this file, and the one that matters most if anything has
+// to be sacrificed. Connections 1..N are for DISCOVERY (setDiscoveryWatchlist).
+// Each is a fully independent socket with its own reconnect/backoff state.
+function newConn(label) {
+  return { label, ws: null, subscribed: new Set(), connected: false, retry: 0, reconnectTimer: null };
+}
+const pool = [newConn("positions")];
 
 export function wsEnabled() { return ENABLED; }
+export function wsDiscoveryEnabled() { return DISCOVERY_ENABLED; }
 export function wsStatus() {
-  return { enabled: ENABLED, connected, subscribed: [...subscribed], cached: prices.size };
+  return {
+    enabled: ENABLED, discoveryEnabled: DISCOVERY_ENABLED, cached: prices.size,
+    connections: pool.map(c => ({ label: c.label, connected: c.connected, subscribed: [...c.subscribed] })),
+  };
 }
 
 /** Streamed price for a slug, or null if absent/stale. */
@@ -60,55 +83,89 @@ function parseMessage(raw) {
   }
 }
 
-function send(obj) { try { ws?.send(JSON.stringify(obj)); } catch {} }
+function send(conn, obj) { try { conn.ws?.send(JSON.stringify(obj)); } catch {} }
 
-/** Keep the stream pointed at the markets we currently hold. */
-export function setWatchlist(slugs = []) {
-  if (!ENABLED) return;
-  const want = new Set(slugs.filter(Boolean).slice(0, MAX_SUBS));
-  const add = [...want].filter(s => !subscribed.has(s));
-  const drop = [...subscribed].filter(s => !want.has(s));
-  subscribed = want;
-  if (!connected) return;
-  if (drop.length) { send({ action: "unsubscribe", markets: drop, marketSlugs: drop }); drop.forEach(s => prices.delete(s)); }
-  if (add.length)  { send({ action: "subscribe",   markets: add,  marketSlugs: add }); }
+function applyWatchlist(conn, wantSlugs) {
+  const want = new Set(wantSlugs.filter(Boolean).slice(0, MAX_SUBS));
+  const add = [...want].filter(s => !conn.subscribed.has(s));
+  const drop = [...conn.subscribed].filter(s => !want.has(s));
+  conn.subscribed = want;
+  if (!conn.connected) return;
+  if (drop.length) { send(conn, { action: "unsubscribe", markets: drop, marketSlugs: drop }); drop.forEach(s => prices.delete(s)); }
+  if (add.length)  { send(conn, { action: "subscribe",   markets: add,  marketSlugs: add }); }
   if (add.length || drop.length)
-    console.log(`📡 WS watching ${subscribed.size}: +${add.length} −${drop.length}`);
+    console.log(`📡 WS [${conn.label}] watching ${conn.subscribed.size}: +${add.length} −${drop.length}`);
 }
 
-function connect() {
-  if (!ENABLED || ws) return;
+/** Keep connection 0 pointed at the markets we currently hold. Unchanged
+ * behaviour from before this file supported a pool. */
+export function setWatchlist(slugs = []) {
+  if (!ENABLED) return;
+  applyWatchlist(pool[0], slugs);
+}
+
+/** NEW: spread a prioritized candidate list across the discovery portion of
+ * the pool (connections 1..N), up to POOL_SIZE-1 connections × 10 slugs
+ * each. Markets beyond that capacity simply aren't covered by WS this
+ * cycle — REST remains the fallback for whatever doesn't fit. */
+export function setDiscoveryWatchlist(slugs = []) {
+  if (!DISCOVERY_ENABLED) return;
+  const discoveryConns = pool.slice(1);
+  const clean = slugs.filter(Boolean);
+  discoveryConns.forEach((conn, i) => {
+    applyWatchlist(conn, clean.slice(i * MAX_SUBS, (i + 1) * MAX_SUBS));
+  });
+}
+
+function connect(conn) {
+  if (conn.ws) return;
   if (typeof WebSocket === "undefined") {
     console.log("📡 WS feed unavailable — this Node build has no WebSocket; staying on REST");
     return;
   }
   try {
-    ws = new WebSocket(GATEWAY_WS);
-    ws.onopen = () => {
-      connected = true; retry = 0;
-      console.log(`📡 WS connected → ${GATEWAY_WS}`);
-      if (subscribed.size) send({ action: "subscribe", markets: [...subscribed], marketSlugs: [...subscribed] });
+    conn.ws = new WebSocket(GATEWAY_WS);
+    conn.ws.onopen = () => {
+      conn.connected = true; conn.retry = 0;
+      console.log(`📡 WS [${conn.label}] connected → ${GATEWAY_WS}`);
+      if (conn.subscribed.size) send(conn, { action: "subscribe", markets: [...conn.subscribed], marketSlugs: [...conn.subscribed] });
     };
-    ws.onmessage = e => parseMessage(e.data);
-    ws.onerror = () => {};
-    ws.onclose = () => {
-      connected = false; ws = null;
-      const wait = Math.min(60_000, 2_000 * Math.pow(2, retry++));
-      if (retry <= 8) {
-        console.log(`📡 WS closed — reconnecting in ${Math.round(wait / 1000)}s`);
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(connect, wait);
+    conn.ws.onmessage = e => parseMessage(e.data);
+    conn.ws.onerror = () => {};
+    conn.ws.onclose = () => {
+      conn.connected = false; conn.ws = null;
+      const wait = Math.min(60_000, 2_000 * Math.pow(2, conn.retry++));
+      if (conn.retry <= 8) {
+        console.log(`📡 WS [${conn.label}] closed — reconnecting in ${Math.round(wait / 1000)}s`);
+        clearTimeout(conn.reconnectTimer);
+        conn.reconnectTimer = setTimeout(() => connect(conn), wait);
       } else {
-        console.log("📡 WS gave up after repeated failures — REST polling continues normally");
+        console.log(`📡 WS [${conn.label}] gave up after repeated failures — that slice falls back to REST`);
       }
     };
   } catch (err) {
-    ws = null;
-    console.log(`📡 WS connect failed (${err.message}) — REST polling continues`);
+    conn.ws = null;
+    console.log(`📡 WS [${conn.label}] connect failed (${err.message}) — that slice falls back to REST`);
   }
 }
 
 export function startWsFeed() {
-  if (!ENABLED) { console.log("📡 WS feed OFF (set WS_FEED=true for real-time exit prices)"); return; }
-  connect();
+  if (!ENABLED && !DISCOVERY_ENABLED) {
+    console.log("📡 WS feed OFF (set WS_FEED=true for exits, WS_DISCOVERY=true for scan coverage)");
+    return null;
+  }
+  if (ENABLED) connect(pool[0]);
+  if (DISCOVERY_ENABLED) {
+    // This is the actual experiment: try POOL_SIZE-1 additional connections
+    // and let the logs show how many Polymarket genuinely allows. If the
+    // real ceiling turns out to be 1 connection total, this degrades to
+    // "no discovery coverage, REST unchanged" — not a crash, not a regression.
+    console.log(`📡 WS discovery: attempting ${POOL_SIZE - 1} additional connection(s) — the real per-account ceiling is unconfirmed, this is what tests it`);
+    for (let i = 1; i < POOL_SIZE; i++) {
+      const conn = newConn(`discovery-${i}`);
+      pool.push(conn);
+      connect(conn);
+    }
+  }
+  return pool;
 }
