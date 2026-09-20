@@ -68,6 +68,14 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .hchip.good{color:var(--up);border-color:rgba(61,255,158,.3)}
 .hchip.warn{color:var(--amber);border-color:rgba(255,182,61,.4)}
 .hchip.bad{color:var(--down);border-color:rgba(255,78,106,.4)}
+.openrow{cursor:pointer;user-select:none}
+.drawertoggle{font-size:9px;color:var(--dim);margin-left:3px;display:inline-block;transition:transform .15s}
+.drawertoggle.open{transform:rotate(180deg)}
+.opendrawer{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);max-height:280px;overflow-y:auto}
+.opendrawer .row{display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:6px 0;
+  border-bottom:1px solid rgba(255,255,255,.04)}
+.opendrawer .row:last-child{border-bottom:none}
+.opendrawer .empty{font-size:11px;color:var(--dim);padding:6px 0}
 .provenbadge{display:inline-block;font-size:8px;font-weight:700;letter-spacing:.08em;color:#04121C;
   background:var(--up);padding:2px 5px;border-radius:5px;margin-left:6px;vertical-align:middle}
 .fetchctl{display:flex;align-items:center;gap:9px;padding-top:11px;margin-top:9px;border-top:1px solid var(--line)}
@@ -235,9 +243,10 @@ button:active{transform:translateY(1px)}
     <div class="vnum" id="net">—</div>
     <div class="vside">
       <div>realized <b id="realized">—</b></div>
-      <div>open <b id="open">—</b></div>
+      <div class="openrow" onclick="toggleOpenDrawer()">open <b id="open">—</b> <span class="drawertoggle" id="drawerToggle">▾</span></div>
     </div>
   </div>
+  <div class="opendrawer" id="openDrawer" style="display:none"></div>
 </div>
 
 <div class="funnel">
@@ -481,18 +490,33 @@ async function loadStats(){
   }catch(e){}
 }
 
+function renderPositionRows(p){
+  if(!p.length) return '<div class="empty">none open</div>';
+  return p.slice(0,20).map(function(x){
+    const pl = x.openPnl;
+    return '<div class="row"><span class="q">'+matchupHtml(x.question, x.slug, x.pick||x.outcome||x.question)+'</span>'+
+      '<span class="px">'+(x.avgPrice?Math.round(x.avgPrice*100)+'¢':'—')+'→'+
+      (x.currentBid?Math.round(x.currentBid*100)+'¢':'—')+'</span>'+
+      '<span class="pl '+cls(pl)+'">'+(pl==null?'—':money(pl))+'</span></div>';
+  }).join('');
+}
+let lastPositions = [];
 async function loadPositions(){
   try{
     const p = await (await fetch('/api/positions')).json();
-    if(!p.length){ $('positions').innerHTML='<div class="empty">none open</div>'; return; }
-    $('positions').innerHTML = p.slice(0,20).map(function(x){
-      const pl = x.openPnl;
-      return '<div class="row"><span class="q">'+matchupHtml(x.question, x.slug, x.pick||x.outcome||x.question)+'</span>'+
-        '<span class="px">'+(x.avgPrice?Math.round(x.avgPrice*100)+'¢':'—')+'→'+
-        (x.currentBid?Math.round(x.currentBid*100)+'¢':'—')+'</span>'+
-        '<span class="pl '+cls(pl)+'">'+(pl==null?'—':money(pl))+'</span></div>';
-    }).join('');
+    lastPositions = p;
+    $('positions').innerHTML = renderPositionRows(p);
+    // Keep the top-card drawer in sync too, if it's open — same data,
+    // rendered in both places, never fetched twice.
+    if($('openDrawer').style.display !== 'none') $('openDrawer').innerHTML = renderPositionRows(p);
   }catch(e){}
+}
+function toggleOpenDrawer(){
+  const d = $('openDrawer'), t = $('drawerToggle');
+  const opening = d.style.display === 'none';
+  d.style.display = opening ? 'block' : 'none';
+  t.classList.toggle('open', opening);
+  if(opening) d.innerHTML = renderPositionRows(lastPositions);
 }
 
 async function loadLog(){
