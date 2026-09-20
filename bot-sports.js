@@ -158,8 +158,8 @@ function sizeWithModelEdge(baseSize, modelEdge) {
 }
 let BET_SIZE      = BET_LOW_USD;   // fallback / minimum reference
 let BET_MIN       = BET_LOW_USD;
-let FAV_MIN       = 0.50;    // widened for actual volume — was too narrow given 15/scan coverage
-let FAV_MAX       = 0.74;    // widened for actual volume
+let FAV_MIN       = 0.56;    // entry floor: 56%
+let FAV_MAX       = 0.73;    // entry cap: 73%
 // Fee model lives in fees.js — Θ × C × p × (1−p), taker 0.06 / maker −0.0125.
 const feeFor = (px, sizeUsd, isMaker = false) =>
   fees.takerFee(sizeUsd / Math.max(px, 0.01), px) * (isMaker ? 0 : 1)
@@ -438,7 +438,13 @@ let SL_ENABLED    = false;
 // rejected by any gate). getBBO has no built-in pacing — this fires that
 // many requests in parallel every ~15-18s scan; 60 already ran clean with
 // zero rate-limit errors across many logs, so 100 has real headroom.
-let BBO_FETCH_LIMIT = 15;   // cut again — even 30, paced, was STILL losing
+let BBO_FETCH_LIMIT = 3;    // TEMPORARY DIAGNOSTIC — last log showed 0/15
+// succeeding EVERY scan (100%, up from the usual ~50%), plus scan times
+// back to 7-10s. This isolates the cause: if even 3 requests still gets
+// 100% rejected, the ceiling didn't just drop, something changed
+// structurally. If most of 3 succeed, it's still volume-sensitive, just
+// needing to go lower than 15. Raise this back once the next log answers
+// that question — this value is deliberately not meant to stay long-term.
 // 22-24 of every 30 requests to 429s, consistently, every scan. That exact
 // ratio (roughly 6-7 succeeding out of 30) is real evidence the true
 // ceiling is closer to 15 than 30. Combined with the wider scan gap below
