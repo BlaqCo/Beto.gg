@@ -160,74 +160,38 @@ export async function researchBTC60History(limit = 300) {
 }
 
 async function discoverCurrentBTC60Market() {
+  // REWIRED to the correct venue: fetchCryptoMarkets() (polymarket-us.js)
+  // queries gateway.polymarket.us — the SAME platform orders actually get
+  // placed on — instead of gamma-api.polymarket.com, a completely
+  // different platform whose market IDs were never orderable here at
+  // all. That venue mismatch, not the regex or the sort order, was very
+  // likely the real cause of the whole "stale December 2025" saga.
   let markets;
   try {
-    // Rebuilt on Polymarket's OWN documented guidance (docs.polymarket.com,
-    // not a guess): "the most efficient approach is to use the /events
-    // endpoint... order=id&ascending=false... gives you all active markets
-    // ordered from newest to oldest." Sorting by event ID descending finds
-    // the newest-CREATED events — a just-opened window gets a new ID
-    // immediately, so this sidesteps the whole endDate mess (ascending hit
-    // an ancient stale-but-"active" backlog; descending-by-endDate
-    // overshot into unrelated far-future markets) rather than trying a
-    // third variant of the same wrong axis.
-    const { data } = await axios.get(`${GAMMA}/events`, {
-      params: { closed: false, active: true, limit: 500 },
-      // Both an ascending AND descending endDate sort were tried and both
-      // failed, for opposite, now-understood reasons: ascending surfaced
-      // an ancient backlog of permanently-stuck "active:true" garbage;
-      // descending surfaced long-dated, unrelated markets (elections,
-      // multi-year forecasts) instead — crypto windows are never more
-      // than hours out, so they can't win at either sorted extreme
-      // against an entirely unfiltered, platform-wide result set.
-      // Removing the sort assumption entirely this time.
-      timeout: 10_000,
-    });
-    const events = Array.isArray(data) ? data : (data?.events || []);
-    // Events "contain their associated markets" per the docs — flatten
-    // every event's nested markets array into one list, same shape the
-    // rest of this function already expects.
-    markets = events.flatMap(e => Array.isArray(e.markets) ? e.markets : []);
+    markets = await pm.fetchCryptoMarkets();
   } catch (err) {
-    console.log(`❌ [BTC60] Gamma discovery fetch failed: ${err.message}`);
+    console.log(`❌ [BTC60] fetchCryptoMarkets failed: ${err.message}`);
     return null;
-  }
-
-  if (!shapeLoggedDiscovery) {
-    shapeLoggedDiscovery = true;
-    console.log(`🔬 BTC60 DISCOVERY RAW SAMPLE (first result, truncated): ${JSON.stringify(markets[0]).slice(0, 500)}`);
   }
 
   const now = Date.now();
-  // CONFIRMED via production logs: Polymarket's own closed/active fields
-  // cannot be trusted — a market with endDate 2025-12-19 (nine months
-  // past) was still being reported as closed:false, active:true, every
-  // single query, regardless of when asked. Checking the date ourselves,
-  // FIRST, before duration matching, is now the primary defense against
-  // that — not an afterthought that duration-mismatch was masking.
+  // Still checking staleness ourselves — Polymarket's own closed/active
+  // flags were proven unreliable on the OLD endpoint; keeping this
+  // defensively even on the new one until it's proven trustworthy too.
   const notStale = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now; };
   const anyBtcMention = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
   const btcMatches = anyBtcMention.filter(notStale);
-  console.log(`  🔍 [DISCOVERY] ${anyBtcMention.length} of ${markets.length} mention bitcoin+up/down at all | ${btcMatches.length} of those are genuinely fresh (not stale despite closed:false/active:true)`);
-  // Print the REAL question text on every scan, not gated behind a
-  // one-time flag — that flag has now missed its window three times in a
-  // row across redeploys. This is the actual evidence needed to build a
-  // correct duration regex instead of guessing a third unverified format.
+  console.log(`  🔍 [DISCOVERY] ${anyBtcMention.length} of ${markets.length} mention bitcoin+up/down at all | ${btcMatches.length} of those are genuinely fresh`);
   if (btcMatches.length) console.log(`  🔍 [DISCOVERY] sample questions: ${btcMatches.slice(0,4).map(m=>JSON.stringify(m.question)).join(" | ")}`);
-  // The question text alone showed the SAME stale "December 19" 5-minute
-  // batch across multiple independent sessions, regardless of when
-  // queried — that's not a regex problem, it's a data problem. This next
-  // line checks whether Polymarket's OWN metadata on these same items
-  // agrees they're closed/expired (meaning the closed:false/active:true
-  // query params are being ignored) or claims they're still open (a
-  // deeper data issue). One or the other — this settles which.
-  if (btcMatches.length) console.log(`  🔍 [DISCOVERY] raw flags: ${btcMatches.slice(0,3).map(m=>JSON.stringify({closed:m.closed, active:m.active, endDate:m.endDate})).join(" | ")}`);
+
   const current = btcMatches.find(m => isHourlyBtcQuestion(m.question || ""));
   if (!current) {
-    console.log(`⚠️ [BTC60] No open hourly BTC up/down market found among ${markets.length} active results — check the raw sample above`);
+    console.log(`⚠️ [BTC60] No open hourly BTC up/down market found among ${markets.length} results from the correct venue — check the raw sample above`);
     return null;
   }
-  return current;
+  // Normalize to the shape the rest of this file expects (outcomePrices
+  // array), computed from fetchCryptoMarkets' already-extracted yesPrice.
+  return { ...current, outcomePrices: [String(current.yesPrice ?? 0.5), String(1 - (current.yesPrice ?? 0.5))] };
 }
 
 /** Fires when the window has ended and TP/SL never triggered — the
