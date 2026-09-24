@@ -1,1281 +1,384 @@
-/**
- * polymarket-us.js — polymarket.us integration (no SDK; raw signed REST)
- *
- * OFFICIAL API REFERENCE: https://docs.polymarket.us/api-reference/market/overview
- *
- * KEY FACTS FROM DOCS:
- * - GET /v1/markets?categories=sports&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE
- * - Price in BBO: bestBid/bestAsk are Amount objects: { value: "0.55", currency: "USD" }
- * - Price in market list: bestBid/bestAsk are plain numbers
- * - outcomePrices: JSON string "[\"0.62\",\"0.38\"]", index 0 = Yes
- * - outcomes: JSON string "[\"Yes\",\"No\"]"
- * - sportsMarketTypeV2 field: "MONEYLINE", "SPREAD", "TOTAL", "PROP"
- * - gameStartTime field for game start
- * - marketSides[].price = string price for that side, marketSides[].long = true for YES side
- */
-
 import axios from "axios";
-import crypto from "crypto";
-
-// ── VERSION BANNER: confirms which build is live ──
-console.log("🔖 polymarket-us.js v12-EDGE loaded — score-aware, ended-game block, discount gate support");
-
-const GATEWAY = "https://gateway.polymarket.us";
-const API     = "https://api.polymarket.us";
-
-// ── Credential handling ─────────────────────────────────────────
-const looksUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
-const looksB64  = s => /^[A-Za-z0-9+/]+={0,2}$/.test(s) && s.length >= 40;
-const clean = s => (s || "").trim().replace(/^["']|["']$/g, "").replace(/\s+/g, "");
-
-let _creds = null;
-function getCreds() {
-  if (_creds) return _creds;
-  let keyId  = clean(process.env.POLYMARKET_API_KEY);
-  let secret = clean(process.env.POLYMARKET_PRIVATE_KEY);
-  if (!keyId || !secret || keyId.startsWith("your_")) {
-    throw new Error("Set POLYMARKET_API_KEY and POLYMARKET_PRIVATE_KEY");
-  }
-  if (looksB64(keyId) && looksUuid(secret)) {
-    console.log("⚠️ Credentials swapped — auto-correcting");
-    [keyId, secret] = [secret, keyId];
-  }
-  console.log(`🔑 Key ID: ${keyId.length} chars ${looksUuid(keyId) ? "(uuid ✓)" : "(⚠️ not uuid)"} | Secret: ${secret.length} chars ${looksB64(secret) ? "(base64 ✓)" : "(⚠️ not base64)"}`);
-  const raw = Buffer.from(secret, "base64");
-  if (raw.length !== 32 && raw.length !== 64) throw new Error(`Secret decodes to ${raw.length} bytes; expected 32 or 64`);
-  const seed = raw.subarray(0, 32);
-  const der = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]);
-  const privateKey = crypto.createPrivateKey({ key: der, format: "der", type: "pkcs8" });
-  _creds = { keyId, privateKey };
-  return _creds;
-}
-
-function authHeaders(method, path) {
-  const { keyId, privateKey } = getCreds();
-  const timestamp = Date.now().toString();
-  // Sign only the path WITHOUT query string — Polymarket US signs base path only
-  const basePath = path.split("?")[0];
-  const message = `${timestamp}${method}${basePath}`;
-  const signature = crypto.sign(null, Buffer.from(message), privateKey).toString("base64");
-  return {
-    "X-PM-Access-Key": keyId,
-    "X-PM-Timestamp": timestamp,
-    "X-PM-Signature": signature,
-    "Content-Type": "application/json",
-  };
-}
-
-async function signedRequest(method, path, body) {
-  const headers = authHeaders(method, path);
-  const res = await axios({
-    method, url: API + path, headers,
-    data: body ?? undefined, timeout: 15_000,
-    validateStatus: () => true,
-  });
-  if (res.status >= 200 && res.status < 300) return res.data;
-  if (res.status === 429) {
-    // Rate limited — wait and retry once
-    const retryAfter = parseInt(res.headers?.["retry-after"] || "5") * 1000;
-    await new Promise(r => setTimeout(r, Math.max(retryAfter, 5000)));
-    const res2 = await axios({
-      method, url: API + path, headers: authHeaders(method, path),
-      data: body ?? undefined, timeout: 15_000,
-      validateStatus: () => true,
-    });
-    if (res2.status >= 200 && res2.status < 300) return res2.data;
-    throw new Error(`429 rate limited (retry also failed)`);
-  }
-  const msg = res.data?.message || res.data?.error || JSON.stringify(res.data)?.slice(0, 140) || `HTTP ${res.status}`;
-  throw new Error(`${res.status}: ${msg}`);
-}
-
-// ── Helpers ──────────────────────────────────────────────────────
-const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
-const parseArr = v => { try { return typeof v === "string" ? JSON.parse(v) : (Array.isArray(v) ? v : []); } catch { return []; } };
-
-// Amount object from BBO/book: { value: "0.55", currency: "USD" } OR plain number
-const amountVal = x => {
-  if (x == null) return null;
-  if (typeof x === "object") return num(x.value ?? x.amount);
-  return num(x);
-};
-
-// ── Price extraction (handles ALL field formats from docs) ────────
-export function extractYesPrice(m) {
-  // 1) marketSides — most accurate: find the "long" side (YES)
-  const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
-  if (sides.length > 0) {
-    const longSide = sides.find(s => s.long === true);
-    const p = num(longSide?.price);
-    if (p) return p;
-  }
-
-  // 2) bestAsk from market list (plain number per docs)
-  const ask = num(m.bestAsk);
-  if (ask) return ask;
-
-  // 3) outcomePrices JSON string: "[\"0.62\",\"0.38\"]"
-  //    outcomes JSON string: "[\"Yes\",\"No\"]" — index 0 is YES
-  const prices   = parseArr(m.outcomePrices).map(Number).filter(n => n > 0 && n < 1);
-  const outcomes = parseArr(m.outcomes);
-  if (prices.length >= 2) {
-    const yi = outcomes.findIndex(o => /yes/i.test(String(o)));
-    const idx = yi >= 0 ? yi : prices.indexOf(Math.max(...prices));
-    return prices[idx] ?? Math.max(...prices);
-  }
-  if (prices.length === 1) return prices[0];
-
-  // 4) lastTradePrice or bestBid as final fallback
-  return num(m.lastTradePrice) ?? num(m.bestBid) ?? null;
-}
-
-// ── League detection ─────────────────────────────────────────────
-// ── canonical slug (dedup key) ────────────────────────────────────
-// The SAME real-world game can come back from discovery under two spellings
-// — e.g. "aec-mlb-ath-sea-2026-09-03" from the v2 events sweep and
-// "mlb-ath-sea-2026-09-03" from the v1 date-filtered fallback. Treated as raw
-// strings these look like two different markets, so the bot could hold a
-// position on one spelling and then buy the OTHER spelling of the identical
-// game — real double exposure that the same-slug lock never catches, because
-// the slugs are, character-for-character, not the same. Canonicalizing to a
-// shared key (used for DEDUP ONLY — the real slug is still what gets
-// ordered) collapses both spellings before either becomes a candidate.
-export function canonicalSlug(slug) {
-  return String(slug || "").toLowerCase().replace(/^aec-/, "");
-}
-
-// ── slug is authoritative ────────────────────────────────────────
-// Slugs look like: aec-atp-hensea-meerot-2026-08-11, mlb-ath-sea-2026-09-03,
-// aec-nbasl-gs-okc-2026-07, aec-cs2-imp-alka-2026-08-09.
-// The token right after the optional "aec-" prefix IS the league. Reading it
-// from there beats guessing from question text, which produced NBA tags on
-// football markets and WNBA tags on tennis markets.
-const SLUG_LEAGUE = {
-  mlb:"MLB", npb:"MLB", kbo:"MLB", baseball:"MLB",
-  nba:"NBA", nbasl:"NBA", ncaamb:"NBA", basketball:"NBA",
-  wnba:"WNBA", ncaawb:"WNBA",
-  nfl:"NFL", ncaafb:"NFL", football:"NFL", cfl:"NFL",
-  nhl:"NHL", hockey:"NHL",
-  atp:"TENNIS", wta:"TENNIS", itf:"TENNIS", itfme:"TENNIS", itfwo:"TENNIS",
-  chal:"TENNIS", tennis:"TENNIS",
-  wtt:"TABLETENNIS", setka:"TABLETENNIS", tt:"TABLETENNIS",
-  cs2:"ESPORTS", csgo:"ESPORTS", valorant:"ESPORTS", val:"ESPORTS",
-  lol:"ESPORTS", dota2:"ESPORTS", dota:"ESPORTS", rl:"ESPORTS", esports:"ESPORTS",
-  epl:"SOCCER", laliga:"SOCCER", seriea:"SOCCER", bundesliga:"SOCCER",
-  ligue1:"SOCCER", mls:"SOCCER", ucl:"SOCCER", soccer:"SOCCER", fifa:"SOCCER",
-  ufc:"MMA", mma:"MMA", boxing:"MMA", box:"MMA",
-  cricket:"CRICKET", odi:"CRICKET", t20:"CRICKET",
-  golf:"GOLF", pga:"GOLF", darts:"DARTS",
-};
-function leagueFromSlug(slug) {
-  const parts = String(slug || "").toLowerCase().split("-").filter(Boolean);
-  if (!parts.length) return null;
-  const i = parts[0] === "aec" ? 1 : 0;
-  for (let k = i; k < Math.min(parts.length, i + 2); k++) {
-    const hit = SLUG_LEAGUE[parts[k]];
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function detectLeague(m) {
-  // 1) Slug — authoritative, checked before anything else.
-  const fromSlug = leagueFromSlug(m.slug || m.id || m.marketId);
-  if (fromSlug) return fromSlug;
-
-  // 2) The question often names the sport outright ("upcoming football event").
-  const qq = (m.question || m.title || "").toLowerCase();
-  const SPORT_WORD = [[/\bbaseball\b/,"MLB"],[/\bbasketball\b/,"NBA"],[/\bfootball\b/,"NFL"],
-                      [/\bhockey\b/,"NHL"],[/\btable[- ]?tennis\b/,"TABLETENNIS"],[/\btennis\b/,"TENNIS"],
-                      [/\besports?\b/,"ESPORTS"],[/\bsoccer\b/,"SOCCER"],[/\bcricket\b/,"CRICKET"],
-                      [/\bgolf\b/,"GOLF"],[/\bdarts\b/,"DARTS"],[/\bmma\b|\bufc\b|\bboxing\b/,"MMA"]];
-  for (const [re, lg] of SPORT_WORD) if (re.test(qq)) return lg;
-
-  const q   = (m.question || m.title || "").toLowerCase();
-  const cat = (m.category || "").toLowerCase();
-  const sub = (m.subcategory || "").toLowerCase();
-
-  // Use subcategory first (most specific — e.g. "MLB", "WNBA", "ATP")
-  if (sub) {
-    const s = sub.toUpperCase();
-    if (s.includes("MLB") || s.includes("BASEBALL")) return "MLB";
-    if (s.includes("NBA"))  return "NBA";
-    if (s.includes("WNBA")) return "WNBA";
-    if (s.includes("NFL"))  return "NFL";
-    if (s.includes("NHL"))  return "NHL";
-    if (s.includes("ATP") || s.includes("WTA") || s.includes("ITF") || s.includes("TENNIS")) return "TENNIS";
-    if (s.includes("CS2") || s.includes("VALORANT") || s.includes("LOL") || s.includes("ESPORT")) return "ESPORTS";
-    if (s.includes("MLS") || s.includes("WORLD CUP") || s.includes("SOCCER") || s.includes("UCL")) return "SOCCER";
-    if (sub.length <= 12) return sub.toUpperCase(); // use as-is for short subcategories
-  }
-
-  // Question text matching
-  if (/\bmlb\b|baseball|\b(phillies|dodgers|giants|astros|yankees|mets|cubs|red sox|athletics|tigers|nationals|braves|cardinals|padres|brewers|mariners|pirates|reds|rockies|orioles|rays|guardians|twins|royals|rangers|angels|diamondbacks)\b/i.test(q)) return "MLB";
-  if (/\bwnba\b|\b(mystics|sky|aces|liberty|fever|dream|sparks|storm|sun|lynx|wings|mercury|valkyries|firebirds)\b/i.test(q)) return "WNBA";
-  if (/\bnba\b|\b(celtics|lakers|warriors|bulls|heat|nuggets|bucks|suns|76ers|nets|knicks|raptors|mavericks|clippers|spurs|rockets|jazz|magic|pistons|hornets|hawks|pacers|grizzlies|kings|pelicans|blazers|thunder|timberwolves|cavaliers)\b/i.test(q)) return "NBA";
-  if (/\bnfl\b|\b(patriots|chiefs|cowboys|packers|steelers|bears|eagles|49ers|seahawks|ravens|bills|bengals|browns|colts|texans|jaguars|titans|broncos|raiders|chargers|dolphins|jets|falcons|saints|buccaneers|panthers|lions|vikings|rams)\b/i.test(q)) return "NFL";
-  if (/\btennis\b|wimbledon|\batp\b|\bwta\b|\bitf\b|french open|us open|australian open|(djokovic|alcaraz|sinner|swiatek|sabalenka|nadal|federer)/i.test(q)) return "TENNIS";
-  if (/esport|cs2|cs:go|\bdota\b|\blol\b|league of legends|valorant|overwatch|rocket league|starcraft/i.test(q)) return "ESPORTS";
-  if (/world cup|soccer|mls|premier league|la liga|bundesliga|serie a|champions league|ucl/i.test(q)) return "SOCCER";
-  if (/\bnhl\b|hockey|\b(bruins|rangers|maple leafs|canadiens|penguins|blackhawks|red wings|flyers|capitals|kings)\b/i.test(q)) return "NHL";
-
-  return "SPORT";
-}
-
-// ── Game market filter ───────────────────────────────────────────
-// DEAD SIMPLE: 
-// - Only accept markets with sportsMarketTypeV2 = "SPORTS_MARKET_TYPE_MONEYLINE"
-// - Reject sub-period props, season futures, player props
-// - Polymarket.us returns active:true, closed:true on live tradeable markets
-//   → DO NOT FILTER BY CLOSED FIELD
-// - DO NOT use GAME_VS regex for rejection
-
-function isGameMarket(m) {
-  const q = (m.question || m.title || "").trim();
-  
-  // MUST be active and NOT resolved
-  if (!q || m.active !== true || m.resolved === true) return false;
-
-  // REJECT: sub-period props (first half, 1st inning, first quarter, etc)
-  if (/first half|1st half|first 5|first five|first inning|1st inning|first quarter|1st quarter|1h\b|h1\b|halftime|period\d|quarter\d/i.test(q)) {
-    return false;
-  }
-
-  // REJECT: season/futures (champion, pennant, world series, MVP, etc)
-  if (/champion|pennant|world series|super bowl|stanley cup|nba finals|mvp|cy young|award|division|win the|make the playoffs|season win|season record|playoff|postseason/i.test(q)) {
-    return false;
-  }
-
-  // REJECT: player props (hitting, scoring, passing, etc)
-  if (/will (score|throw|catch|run|make|hit|pass|strikeout|homerun|touchdown|goal|assist|rebound|block|steal|point|basket|field goal|extra point)/i.test(q)) {
-    return false;
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  // ACCEPT ALL ACTIVE MARKETS — find the 2 live ones
-  // ════════════════════════════════════════════════════════════════
-  return true;
-}
-
-// ── Main fetch ───────────────────────────────────────────────────
-let _cache = null, _cacheTime = 0;
-const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
-// cache would still expire almost every single scan — defeating the whole
-// point of caching. 60s means discovery's 39-request sweep now fires
-// roughly once every 2-3 scans instead of nearly every one, cutting real
-// cumulative request volume, not just moving it around.
+import * as pm from "./polymarket-us.js";
+import * as tracker from "./tracker.js";
+import { getConfig } from "./config.js";
 
 /**
- * fetchCryptoMarkets() — discovers Bitcoin Up/Down markets on the SAME
- * venue orders actually get placed on (gateway.polymarket.us), using the
- * SAME proven v2/events pattern fetchSportsMoneylines() already uses
- * successfully. Previously, bot-btc60.js/bot-btc15.js queried
- * gamma-api.polymarket.com directly — a DIFFERENT platform entirely,
- * whose market IDs are not orderable via buyYesFOK/closePositionLive at
- * all. That mismatch, not a bad regex or a bad sort order, was very
- * likely the real root cause of the whole "stale December 2025 data"
- * saga — the old v1 tag-based Gamma approach was ALREADY proven broken
- * for sports (see the comment below) and abandoned for exactly this v2
- * pattern; crypto discovery just hadn't been moved onto it yet.
+ * bot-btc15.js — Bitcoin "Up or Down, 15 minute" prediction module.
+ * Sibling to bot-btc60.js, not a replacement — both run independently,
+ * each toggled and tracked separately. Built after bot-btc60.js's
+ * discovery bug was found and fixed in production (Gamma's "tag" query
+ * param is NOT reliable; question text is), so this one uses that same,
+ * now-proven text-matching approach from the start rather than repeating
+ * the same unverified-tag mistake a second time.
  *
- * Category name is a best-effort guess ("crypto") — not a verified live
- * call. Raw-sample logging below is the safety net if it's wrong, same
- * discipline as every other discovery endpoint in this file.
+ * COMPLETELY SEPARATE from bot-sports.js — own flags, own scheduling, own
+ * error boundary in index.js. Nothing here can affect sports bot behavior.
+ *
+ * HONESTY NOTE: the Gamma API field names below are a best-effort reading of
+ * public documentation and what bot-btc60.js confirmed live, not a fresh
+ * verified call for THIS specific market family — there is no network
+ * path from here to test it directly. Raw-sample logging on first use is
+ * the safety net if something about the 15m family differs from 60m's.
+ *
+ * ENTRY RULE: same shape as BTC60's — bet the favored side within a price
+ * band, only in the final stretch before the window closes — but scaled
+ * to a 15-minute window: the last 4 minutes, not the last 15. Real,
+ * user-specified strategy, not a placeholder; still unvalidated against
+ * historical data until enough real trades exist to check it against.
  */
-export async function fetchCryptoMarkets() {
-  // Last attempt tried "crypto" as a SPORT-level category — zero errors,
-  // zero events, meaning that category name almost certainly doesn't
-  // exist under /v2/sports/. This codebase already has a proven, exactly
-  // analogous precedent: "esports" is a SPORT, while specific games
-  // (cs2/valorant/lol/dota-2) are LEAGUES underneath it. Trying "bitcoin"
-  // as a LEAGUE this time, in parallel with the original guess, rather
-  // than betting everything on one more single guess.
-  const urls = [
-    `${GATEWAY}/v2/sports/crypto/events?limit=100`,
-    `${GATEWAY}/v2/leagues/bitcoin/events?limit=100`,
-  ];
-  let results;
-  try {
-    results = await Promise.allSettled(urls.map(url => axios.get(url, { timeout: 12_000 })));
-  } catch (err) {
-    console.log(`  ❌ [fetchCryptoMarkets] request failed: ${err.message}`);
-    return [];
-  }
 
-  const out = [];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r.status !== "fulfilled") {
-      console.log(`  ❌ [fetchCryptoMarkets] ${urls[i]} rejected: ${r.reason?.message || r.reason}`);
-      continue;
-    }
-    const data = r.value?.data;
-    // UNCONDITIONAL now, not gated behind a one-time flag — that flag has
-    // now missed its window on multiple different diagnostics across this
-    // whole debugging thread. Always printing costs a little log noise,
-    // guarantees real evidence never gets missed again.
-    console.log(`  🔬 CRYPTO V2 RAW SAMPLE (${urls[i]}): ${JSON.stringify(data).slice(0, 800)}`);
-    const events = data?.events || (Array.isArray(data) ? data : []);
-    for (const ev of events) {
-      const evMarkets = ev?.markets || (ev?.market ? [ev.market] : []);
-      for (const m of evMarkets) {
-        if (!m.endDate) m.endDate = ev.endDate || ev.endTime || null;
-        if (!m.question) m.question = m.title || ev.title || ev.name || null;
-        const yesPrice = extractYesPrice(m);
-        out.push({ ...m, question: m.question, endDate: m.endDate, yesPrice });
-      }
-      // Some responses put market fields directly on the event, same as sports.
-      if (!evMarkets.length && (ev?.slug || ev?.id) && (ev?.outcomePrices || ev?.bestAsk || ev?.marketSides)) {
-        out.push({ ...ev, question: ev.question || ev.title, yesPrice: extractYesPrice(ev) });
-      }
-    }
-  }
-  console.log(`  🌐 crypto → ${out.length} market(s) total across both attempted endpoints`);
-  return out;
-}
+const GAMMA = "https://gamma-api.polymarket.com";
+// Hot-reloadable via the SAME dashboard config store the sports bot uses —
+// toggle from the UI, no redeploy. The env var is only the very first
+// default before a live config value has ever been read.
+let BTC15_ENABLED = process.env.BTC15_ENABLED === "true";
+const LIVE_TRADING_ENABLED = process.env.BTC15_LIVE_TRADING === "true";
+const DRY_RUN = process.env.DRY_RUN !== "false";
 
-export async function fetchSportsMoneylines() {
-  if (_cache && Date.now() - _cacheTime < TTL) return _cache;
+const SCAN_INTERVAL_MS = 20_000;
+const RESEARCH_INTERVAL_MS = 60 * 60_000;
+let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 0.50);
+// Deliberately below the shared $6.50 order-size tripwire in
+// polymarket-us.js — that floor exists for the sports side and is left
+// completely untouched; BTC15 bypasses it explicitly (override: true on
+// the order call below, logged every time as [TRIPWIRE BYPASSED], never
+// silent) because this is a stated, deliberate small-size testing
+// decision, not a bug to route around quietly. Polymarket's own
+// exchange-level minimum for this market is still unconfirmed — if $0.50
+// orders start failing to fill for a reason other than the tripwire,
+// that's the next thing to check.
 
-  // OFFICIAL PARAMS from docs:
-  // categories=sports (plural, array-style)
-  // sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE (enum filter)
-  // gameStartTime via endDateMin/endDateMax
-  // volumeNumMin to filter out dead markets
-  const now = Date.now();
+// Take-profit / stop-loss, as a move in price from entry — e.g. entered at
+// 55¢, TP_PCT=0.15 sells if it reaches 70¢; SL_PCT=0.10 sells if it drops
+// to 45¢. These are round, conservative starting numbers, NOT calibrated
+// against real BTC60 volatility (that data doesn't exist yet either) —
+// treat them as a first guess to refine once real trades happen, the same
+// way every sports threshold in this project started as a guess and got
+// corrected by real logs.
+const TP_PCT = Number(process.env.BTC15_TP_PCT || 0.15);
+const SL_PCT = Number(process.env.BTC15_SL_PCT || 0.10);
 
-  // OFFICIAL API PARAMS (docs.polymarket.us): date filters are
-  // startDateMin/startDateMax/endDateMin/endDateMax (ISO 8601).
-  // endDateMin=now-12h excludes stale resolved games SERVER-SIDE.
-  // sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE = moneylines only (NO PROPS).
-  const endMin   = new Date(now - 12 * 3600_000).toISOString();
-  const startMin = new Date(now - 24 * 3600_000).toISOString();
-  const startMax = new Date(now + 48 * 3600_000).toISOString();
-  const ML = "sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE";
+let shapeLoggedDiscovery = false;
+let shapeLoggedResearch = false;
+let lastResearchRunAt = 0;
+let cachedResearch = null;
 
-  // ★★★ v10: OFFICIAL v2 SPORTS API (docs.polymarket.us/api-reference/sports) ★★★
-  // GET /v2/leagues/{slug}/events and /v2/sports/{slug}/events — this is what
-  // powers the app's league tabs (MLB, Esports, Golf, World Cup...).
-  // type=sport (default) = actual games, NOT futures. Events contain their markets.
-  // The old v1 tag sweeps are DEAD — the API now ignores tags= and returns the
-  // same stale Nov-2025 dump for every tag (proven in logs).
-  const LEAGUES = ["mlb","nba","nfl","nhl","wnba","epl","la-liga","serie-a",
-                   "bundesliga","ligue-1","mls","ucl","world-cup","kbo","npb",
-                   "atp","wta","itf","ufc","cs2","valorant","lol","dota-2"];
-  const SPORTS  = ["baseball","basketball","football","hockey","soccer","tennis",
-                   "mma","boxing","cricket","golf","esports","darts","table-tennis",
-                   "motorsports","rugby","volleyball","handball"];
+// Single active position — only one rolling hourly window trades at a
+// time, so a plain in-memory record is enough (same honest caveat as
+// tracker.js's non-Redis fallback: a restart loses this. Given a position
+// here settles within an hour regardless, worst case is losing TP/SL
+// tracking for whatever's left of the current window, not the bet itself —
+// the bet still resolves normally on-chain either way).
+let openPosition = null; // { slug, side, entryPrice, sizeUsd, endTime }
 
-  // v1 date-filtered fallback queries were REMOVED here — their own comment
-  // documented they contributed only ~5 markets, near-certainly already
-  // covered by the 39 parallel v2 sweeps below (dedup would collapse them
-  // anyway). Two fewer round trips and two fewer heavy limit=500 payloads to
-  // parse and discard, every single scan, for negligible lost coverage.
-  const urls = [
-    // ── PRIMARY: v2 sports/league event sweeps (what the app itself uses) ──
-    ...SPORTS.map(s  => `${GATEWAY}/v2/sports/${s}/events?limit=50`),
-    ...LEAGUES.map(l => `${GATEWAY}/v2/leagues/${l}/events?limit=50`),
-  ];
-
-  // BATCHED, not a single burst of ~39 simultaneous requests. That burst,
-  // combined with the BBO stage's own burst moments later in the same
-  // scan, was tripping Polymarket's rate limit hard (384 HTTP 429s in one
-  // ~90-second window, whole scans losing 100% of their price checks).
-  // Small batches with a short pause between them respect whatever the
-  // real burst ceiling is, at the cost of a little extra scan time.
-  const _fetchStart = Date.now();
-  const DISCOVERY_BATCH = 8, DISCOVERY_PAUSE_MS = 400;
-  const results = [];
-  for (let i = 0; i < urls.length; i += DISCOVERY_BATCH) {
-    const batch = urls.slice(i, i + DISCOVERY_BATCH);
-    const batchResults = await Promise.allSettled(
-      batch.map(url => axios.get(url, { timeout: 12_000 }))
-    );
-    results.push(...batchResults);
-    if (i + DISCOVERY_BATCH < urls.length) await new Promise(r => setTimeout(r, DISCOVERY_PAUSE_MS));
-  }
-  const _fetchMs = Date.now() - _fetchStart;
-  const _failedCount = results.filter(r => r.status !== "fulfilled").length;
-  if (_fetchMs > 4000 || _failedCount > 0) {
-    console.log(`  ⏱ Discovery: ${urls.length} requests in ${(_fetchMs/1000).toFixed(1)}s, ${_failedCount} failed/timed out`);
-  }
-
-  const seenKeys = new Set();
-  const marketSource = new Map(); // Track which endpoint returned each market
-  let raw = [];
-  let sportsCatCount = 0;
-  let moneylineCount = 0;
-  let shapeDumped = false;
-  let tennisShapeDumped = false;   // separate one-shot dump — baseball always
-                                    // fires the generic one first, so tennis's
-                                    // real raw shape (does it carry set-level
-                                    // history?) has never actually been seen
-  let cricketShapeDumped = false;  // cricket questions are always generic
-                                    // ("Who will win...") with no team names,
-                                    // so the exposure guard leans entirely on
-                                    // the slug — this confirms its real format
-
-  // Normalize any response shape (v2 events / v1 markets) into market objects
-  const extractMarkets = (data) => {
-    const events = data?.events || (Array.isArray(data) ? data : null);
-    if (events && Array.isArray(events)) {
-      const mkts = [];
-      for (const ev of events) {
-        const evMarkets = ev?.markets || ev?.market ? (ev.markets || [ev.market]) : [];
-        for (const m of evMarkets) {
-          // Inherit game timing/live info from the parent event when missing
-          if (!m.gameStartTime) m.gameStartTime = ev.gameStartTime || ev.startTime || ev.startDate || null;
-          if (!m.endDate)       m.endDate       = ev.endDate || ev.endTime || null;
-          if (m.eventLive === undefined) m.eventLive = ev.live ?? ev.isLive ?? undefined;
-          if (!m.question)      m.question      = m.title || ev.title || ev.name || null;
-          // Live game state (Tier-1 data): score, period, finished flag
-          if (m.evScore  === undefined) m.evScore  = ev.score  ?? null;
-          if (m.evPeriod === undefined) m.evPeriod = ev.period ?? null;
-          if (m.evEnded  === undefined) m.evEnded  = ev.ended  ?? (ev.finishedTimestamp ? true : undefined);
-          mkts.push(m);
-        }
-        // Some responses may put markets fields directly on the event
-        if (!evMarkets.length && (ev?.slug || ev?.id) && (ev?.outcomePrices || ev?.bestAsk || ev?.marketSides)) {
-          mkts.push(ev);
-        }
-      }
-      return mkts;
-    }
-    return data?.markets || [];
+// Carries forward bot-btc60.js's confirmed fix: the "tag" query param is
+// NOT reliable, question text is. 15-minute AND 5-minute questions both
+// use an explicit start-end RANGE format ("3:00PM-3:15PM" vs
+// "11:35AM-11:40AM") — a bare "has a range" check (which is all BTC60
+// needed, since hourly has NO range at all) can't tell those two apart.
+// This parses BOTH times in the range and requires the actual computed
+// gap to be close to 15 minutes, not just "some range exists".
+function parseRangeMinutes(q) {
+  const m = q.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+  if (!m) return null;
+  const to24 = (h, mm, ap) => {
+    h = parseInt(h, 10); mm = mm ? parseInt(mm, 10) : 0;
+    if (/PM/i.test(ap) && h !== 12) h += 12;
+    if (/AM/i.test(ap) && h === 12) h = 0;
+    return h * 60 + mm;
   };
+  const start = to24(m[1], m[2], m[3]);
+  let end = to24(m[4], m[5], m[6]);
+  if (end <= start) end += 24 * 60; // crossed midnight
+  return end - start;
+}
+function is15MinBtcQuestion(q) {
+  if (!/bitcoin|btc/i.test(q) || !/up or down/i.test(q)) return false;
+  const mins = parseRangeMinutes(q);
+  return mins != null && mins >= 13 && mins <= 17; // small tolerance for formatting quirks
+}
 
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r.status !== "fulfilled") continue;
-    const data = r.value?.data;
-    const arr = extractMarkets(data);
-    const label = (urls[i].match(/\/v2\/(?:sports|leagues)\/([^/]+)\//) || [])[1]
-               || ((urls[i].match(/tags=([^&]*)/) || [])[1])
-               || "v1-datefilter";
-    if (arr.length) {
-      const first = arr[0];
-      console.log(`  🌐 ${decodeURIComponent(label)} → ${arr.length} | ${first?.question?.slice(0,30) || first?.slug || "-"} | start=${first?.gameStartTime || "-"}`);
-      // 🔬 Dump ONE raw sample so the exact v2 shape is visible in logs
-      if (!shapeDumped && urls[i].includes("/v2/")) {
-        shapeDumped = true;
-        console.log(`  🔬 V2 RAW SAMPLE: ${JSON.stringify(data).slice(0, 1200)}`);
-      }
-      // 🔬 Separate dump specifically for tennis — answers whether the API
-      // exposes set-level history (sets won per player) or only the current
-      // set's game score, which decides if the "just-started-a-new-set"
-      // model gap can be fixed properly or only worked around.
-      if (!tennisShapeDumped && /tennis|atp|wta|itf/i.test(label)) {
-        tennisShapeDumped = true;
-        console.log(`  🎾 TENNIS RAW SAMPLE: ${JSON.stringify(data).slice(0, 1500)}`);
-      }
-      if (!cricketShapeDumped && /cricket/i.test(label)) {
-        cricketShapeDumped = true;
-        console.log(`  🏏 CRICKET RAW SAMPLE: ${JSON.stringify(data).slice(0, 1500)}`);
-      }
-    }
-    const urlUsed = urls[i] || "";
-    const isLiveEndpoint = true; // v2 events endpoints serve current/live events
-    
-    for (const m of arr) {
-      const rawKey = m.slug || m.id;
-      if (!rawKey) continue;
-      const key = canonicalSlug(rawKey);          // dedup on the canonical form
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      marketSource.set(key, { isLiveEndpoint });
-      // Authoritative league from the v2 endpoint this market came from —
-      // far more reliable than guessing from question text.
-      if (label && label !== "v1-datefilter" && !m._srcLeague) m._srcLeague = label.toUpperCase();
-      raw.push(m);
-      if ((m.category || "").toLowerCase().includes("sports")) sportsCatCount++;
-      if (m.sportsMarketTypeV2 === "SPORTS_MARKET_TYPE_MONEYLINE" || m.sportsMarketType === "SPORTS_MARKET_TYPE_MONEYLINE" || m.smt === "moneyline") moneylineCount++;
-    }
-  }
-
-  if (!raw.length) { console.log("⚠️ [sports API] all endpoints empty"); return _cache || []; }
-  console.log(`🔖 v12-EDGE | 📡 ${raw.length} markets from v2 sports/league events (pre-filter)`);
-
-  // ── LOG ALL MARKETS to see what's actually available ──
-  for (const m of raw.slice(0, 10)) {
-    console.log(`  🎯 ${m.closed ? "❌ CLOSED" : "✅ OPEN"} | ${m.title || m.question} | closed=${m.closed} active=${m.active} resolved=${m.resolved}`);
-  }
-
-  // ── Build output ─────────────────────────────────────────
-  const out = [];
-  const rej = { noslug: 0, active: 0, resolved: 0, prop: 0, stale: 0, faroff: 0, nodates: 0 };
-
-  for (const m of raw) {
-    const slug = m.slug || m.id || m.marketId;
-    if (!slug) { rej.noslug++; continue; }
-    
-    // Relaxed: only reject when explicitly inactive/resolved.
-    // v2 event markets may omit these fields entirely.
-    if (m.active === false) { rej.active++; continue; }
-    // ── ENDED-GAME HARD BLOCK: the v2 feed says this game is FINISHED.
-    // Buying these is how "favorites" settle to zero minutes after entry.
-    if (m.evEnded === true || /final|^ft$|full.?time/i.test(String(m.evPeriod || ""))) { rej.stale++; continue; }
-    if (m.resolved === true || m.closed === true && m.eventLive === false) { rej.resolved++; continue; }
-
-    // ── NO PROPS: moneylines only ──
-    // Changelog Jul 9: soccer "to advance" is now ONE two-sided instrument —
-    // buying "YES" on it is NOT buying the favorite. Exclude entirely.
-    const slugL = String(slug).toLowerCase();
-    if (slugL.includes("to-advance") || slugL.includes("to_advance")) { rej.prop++; continue; }
-    const smt = (m.sportsMarketTypeV2 || m.sportsMarketType || "").toUpperCase();
-    if (smt.includes("TO_ADVANCE")) { rej.prop++; continue; }
-    if (smt && smt !== "SPORTS_MARKET_TYPE_MONEYLINE" && smt !== "MONEYLINE") { rej.prop++; continue; }
-    // The type field is EMPTY for a real share of markets from the v2 event
-    // sweeps — the old check above silently did NOTHING in that case
-    // ("smt &&" short-circuits on empty string), leaving props with no
-    // type tag to slip through on nothing but luck. This is the real
-    // backstop now, and it's the ONLY thing standing between "moneyline
-    // only" and a prop bet when the exchange doesn't label the market —
-    // widened well past the original list, which was missing "cover" (the
-    // exact word in your own first spread example), "wins by", "margin",
-    // "handicap", and every prop term for cricket/golf/darts/table tennis
-    // added since this filter was first written.
-    const qText = m.question || m.title || "";
-    const PROP_PATTERN = /first half|1st half|first 5|first inning|1st inning|first quarter|1st quarter|halftime|to score|(will|who) .*(score|throw|catch|hit|pass|strikeout|touchdown|goal|assist|rebound)|first (goal|basket|touchdown|run|point|try)\\b|over\/under|\bspread\b|\btotal\b|player prop|\bcover(s|ed)?\b|wins? by|\bmargin\b|handicap|\bexact(ly)?\b|correct score|both teams to score|clean sheet|anytime|first to|most (sixes|fours|wickets|runs|points|goals|kills|rebounds|assists)|highest scorer|top scorer|man of the match|century|hat.?trick|boundary|\bwicket|make the cut|hole.?in.?one|\bbirdie\b|\beagle\b|checkout|\b180\b|nine.?dart|method of victory|round betting|\bko\/tko\b|\bsubmission\b|decision by|race to \d|first (blood|tower|dragon)|map \d winner/i;
-    if (PROP_PATTERN.test(qText)) { rej.prop++; continue; }
-    // Visibility: how often are we relying ONLY on text because the
-    // exchange gave no type tag at all? If this count stays high, the v2
-    // sweep genuinely doesn't populate the type field reliably, and that's
-    // worth knowing rather than assuming.
-    if (!smt) rej.untyped = (rej.untyped || 0) + 1;
-
-    const q = m.question || m.title || "";
-    const est = extractYesPrice(m);
-
-    // ── DATE GATE (v10) ──
-    // Only gameStartTime is real game time. Markets whose parent event is
-    // flagged live bypass the gate entirely.
-    const gameStart = m.gameStartTime || null;
-    let startMs = gameStart ? new Date(gameStart).getTime() : null;
-    const endMs  = m.endDate ? new Date(m.endDate).getTime() : null;
-    const source = marketSource.get(slug) || { isLiveEndpoint: false };
-    const evLive = m.eventLive === true;
-
-    if (!evLive) {
-      if (startMs) {
-        const hoursOut = (startMs - now) / 3_600_000;
-        if (hoursOut < -8)  { rej.stale++;  continue; }  // started >8h ago → over
-        if (hoursOut > 24)  { rej.faroff++; continue; }  // starts >24h away
-      } else {
-        if (endMs && endMs < now) { rej.stale++; continue; }  // already ended
-        if (!endMs) { rej.nodates++; continue; }              // no dates → unverifiable
-        // ends in the future & no gameStart → keep (live games; book-state check guards entry)
-      }
-    }
-
-    const detected  = detectLeague(m);
-    const league    = (detected && detected !== "SPORT") ? detected : (m._srcLeague || detected);
-    // A market is LIVE if:
-    // 1. It came from the LIVE endpoint (no closed=false filter), OR
-    // 2. It has a gameStartTime in the past (started < now)
-    // LIVE = the event is actually in progress: API live flag, or game
-    // started within the last 8h. (v11 fix: previously EVERY v2 market was
-    // flagged live, so live-first prioritization did nothing.)
-    const isLive    = m.eventLive === true ||
-                      (startMs && startMs <= now && (now - startMs) < 8 * 3_600_000);
-    const hoursUntil = isLive ? 0 : (startMs ? Math.round((startMs - now) / 3_600_000 * 10) / 10 : null);
-
-    // Compute ask/bid from available fields (est may be null)
-    const displayPrice = est ?? 0.50; // default for sorting/display
-    const ask = (est ?? amountVal(m.bestAsk) ?? 0.50) || 0.50;
-    const bid = (amountVal(m.bestBid) ?? (est && est - 0.02 > 0 ? est - 0.02 : 0.48)) || 0.48;
-
-    out.push({
-      slug, question: q,
-      subtitle: m.description?.slice(0, 80) || null,
-      league,
-      ask: Math.min(Math.max(ask, 0.01), 0.99), // ensure 0.01 - 0.99
-      bid: Math.min(Math.max(bid, 0.01), 0.99),
-      est: est || displayPrice,
-      tick:   num(m.orderPriceMinTickSize) || 0.01,
-      minQty: num(m.minimumTradeQty) || 1,
-      gameStartIso: gameStart,
-      endIso:  m.endDate || null,
-      category: m.category || "",
-      subcategory: m.subcategory || "",
-      isLive,
-      hoursUntil,
-      evScore:  m.evScore  ?? null,
-      evPeriod: m.evPeriod ?? null,
-      volume24h: num(m.volume24hr) || 0,
-      volumeTotal: num(m.volume) || 0,
-      lastTradePx: num(m.lastTradePx) || num(m.lastTradePrice) || null,
-      sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
+export async function researchBTC15History(limit = 300) {
+  let markets;
+  try {
+    const { data } = await axios.get(`${GAMMA}/markets`, {
+      params: { closed: true, order: "endDate", ascending: false, limit }, // tag param removed — confirmed unreliable, question text is what actually filters now
+      timeout: 10_000,
     });
-  }
-
-  // Sort: live first → soonest → highest volume → highest price
-  out.sort((a, b) => {
-    if (b.isLive !== a.isLive) return b.isLive ? 1 : -1;
-    const aS = a.gameStartIso ? new Date(a.gameStartIso).getTime() : now + 999_999_999;
-    const bS = b.gameStartIso ? new Date(b.gameStartIso).getTime() : now + 999_999_999;
-    if (aS !== bS) return aS - bS;
-    if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
-    return (b.est || 0) - (a.est || 0);
-  });
-
-  const liveCount = out.filter(x => x.isLive).length;
-  console.log(`📊 [sports API] ${raw.length} total → ${out.length} game moneylines (${liveCount} 🔴 live, ${out.length - liveCount} ⏳ upcoming)`);
-  console.log(`  ⛔ rejected: inactive=${rej.active} resolved=${rej.resolved} prop=${rej.prop} stale=${rej.stale} faroff=${rej.faroff} nodates=${rej.nodates}`);
-  if (rej.untyped) console.log(`  🏷 ${rej.untyped} accepted markets had NO type tag — cleared only via the text keyword check, not a confirmed moneyline flag`);
-  for (const s of out.slice(0, 8)) {
-    console.log(`  ✅ SURVIVOR: ${s.slug} | ${s.question?.slice(0,35) || "-"} | gameStart=${s.gameStartTime || "-"} end=${s.endDate || "-"}`);
-  }
-  if (out.length > 0) {
-    console.log("  Top markets: " + out.slice(0, 8).map(m =>
-      `${m.isLive ? "🔴" : "⏳"} ${m.league} ${(m.est * 100).toFixed(0)}¢ ${m.question.slice(0, 40)}`
-    ).join(" | "));
-  }
-  // Log how many per league for debugging
-  const byLeague = {};
-  out.forEach(m => { byLeague[m.league] = (byLeague[m.league] || 0) + 1; });
-  console.log("  By league: " + Object.entries(byLeague).map(([l,n]) => `${l}:${n}`).join(" "));
-
-  _cache = out;
-  _cacheTime = Date.now();
-  return out;
-}
-
-// ── verifyCandidates ─────────────────────────────────────────────
-export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
-  const checks = await Promise.all(cands.map(async c => {
-    const bbo = await getBBO(c.slug);
-    if (!bbo?.bid || !bbo?.ask) return null;
-    if (bbo.ask - bbo.bid > maxSpread) return null;
-    return { ...c, ask: bbo.ask, bid: bbo.bid };
-  }));
-  return checks.filter(Boolean);
-}
-
-// ── getBBO ───────────────────────────────────────────────────────
-// BBO response: { marketData: { bestBid: { value: "0.54", currency: "USD" }, bestAsk: { value: "0.56" }, lastTradePx: {...}, currentPx: {...} } }
-export async function getBBO(slug) {
-  try {
-    const { data } = await axios.get(
-      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/bbo`, { timeout: 8_000 });
-    const d = data?.marketData || data || {};
-    const result = {
-      bid:  amountVal(d.bestBid),
-      ask:  amountVal(d.bestAsk),
-      last: amountVal(d.lastTradePx) ?? amountVal(d.currentPx),
-    };
-    // DEBUG: log if BBO is suspiciously high
-    if (result.ask >= 0.95) {
-      console.log(`⚠️ [getBBO] HIGH ASK=${result.ask} | slug=${slug} | raw=${JSON.stringify({bid: d.bestBid, ask: d.bestAsk})}`);
-    }
-    return result;
+    markets = Array.isArray(data) ? data : (data?.markets || []);
   } catch (err) {
-    // A 429 specifically must REACH the caller so its own rate-limit
-    // detection (bot-sports.js checks the thrown error's message for
-    // "429") can actually fire. Swallowing it here and returning null —
-    // the old behaviour — meant that detector could structurally never
-    // see a 429, ever, no matter how many were really happening. That's
-    // why the "0 rate-limited" counter kept reporting clean while the raw
-    // logs showed hundreds of these errors the whole time.
-    const isRateLimit = /429/.test(err.message || "") || err.response?.status === 429;
-    if (isRateLimit) throw err;
-    console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
+    console.log(`❌ [BTC15 research] Gamma fetch failed: ${err.message}`);
     return null;
   }
-}
 
-// ── getBookState ─────────────────────────────────────────────────
-// GROUND TRUTH tradeability check (official docs): the /book endpoint
-// returns state = MARKET_STATE_OPEN only if the market is trading NOW.
-// Stale/resolved markets return EXPIRED / TERMINATED / HALTED.
-let _bookShapeLogged = false;
-export async function getBookState(slug) {
-  try {
-    const { data } = await axios.get(
-      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/book`, { timeout: 8_000 });
-    if (!_bookShapeLogged) {
-      _bookShapeLogged = true;
-      console.log(`  🔬 BOOK RAW SAMPLE (${slug}): ${JSON.stringify(data).slice(0, 500)}`);
-    }
-    const d = data?.marketData || data || {};
-    const state = d.state || d.status || d.marketState || "UNKNOWN";
-    return {
-      state,
-      isOpen: /OPEN/i.test(String(state)),
-      bestBid: amountVal(d.bids?.[0]?.px) ?? amountVal(d.bestBid),
-      bestAsk: amountVal(d.offers?.[0]?.px) ?? amountVal(d.asks?.[0]?.px) ?? amountVal(d.bestAsk),
-      bidQty:  Number(d.bids?.[0]?.qty || 0),
-      askQty:  Number(d.offers?.[0]?.qty || d.asks?.[0]?.qty || 0),
-    };
-  } catch (err) {
-    // Network/404 → state UNKNOWN (fail-open); NOT a dead-market signal
-    return { state: "UNKNOWN", isOpen: false, bestBid: null, bestAsk: null, bidQty: 0, askQty: 0 };
+  if (!shapeLoggedResearch) {
+    shapeLoggedResearch = true;
+    console.log(`🔬 BTC15 RESEARCH RAW SAMPLE (first result, truncated): ${JSON.stringify(markets[0]).slice(0, 500)}`);
   }
-}
 
-// ── getSettlement ────────────────────────────────────────────────
-export async function getSettlement(slug) {
-  try {
-    const { data } = await axios.get(
-      `${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/settlement`, { timeout: 8_000 });
-    const v = Number(data?.settlement);
-    if (!Number.isFinite(v)) return null;
-    if (v >= 0.99) return 1;
-    if (v <= 0.01) return 0;
+  const btc60 = markets.filter(m => is15MinBtcQuestion(m.question || ""));
+  if (!btc60.length) {
+    console.log(`⚠️ [BTC15 research] 0 matching resolved markets found out of ${markets.length} returned — tag/filter assumption may be wrong, check the raw sample above`);
     return null;
-  } catch { return null; }
-}
-
-// ── getBuyingPower ───────────────────────────────────────────────
-const money = x => {
-  if (x == null) return null;
-  if (typeof x === "object") return money(x.value ?? x.amount ?? x.units);
-  const n = Number(x);
-  return Number.isFinite(n) ? n : null;
-};
-
-let _balShapeLogged = false;
-export async function getBuyingPower() {
-  const b = await signedRequest("GET", "/v1/account/balances");
-  let root = b?.balances ?? b ?? {};
-  if (Array.isArray(root)) root = root[0] || {};
-  const buyingPower    = money(root.buyingPower) ?? money(root.buying_power) ?? null;
-  const currentBalance = money(root.currentBalance) ?? money(root.current_balance) ?? money(root.cashBalance) ?? null;
-  if ((buyingPower == null || buyingPower === 0) && !_balShapeLogged) {
-    _balShapeLogged = true;
-    console.log("🔍 balances raw shape:", JSON.stringify(b).slice(0, 300));
   }
-  return { buyingPower: buyingPower ?? 0, currentBalance: currentBalance ?? buyingPower ?? 0 };
-}
 
-
-// ── buyYesMaker ──────────────────────────────────────────────────
-// POST a resting limit order at/near the MIDPOINT instead of paying the ask.
-// Why: taker orders pay the spread AND the 3% taker fee, and only fill when a
-// faster counterparty wants out (adverse selection). A resting maker order
-// buys cheaper, avoids the taker fee, and earns rebates. Cost: it may not fill.
-export async function buyYesMaker({ slug, sizeUsd, bid, ask, tick = 0.01, minQty = 0.01, waitMs = 20000, override = false }) {
-  if (override) {
-    console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
-  } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
-    console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
-    return { filled: false, error: `order size $${sizeUsd} outside allowed` };
-  }
-  try {
-    const pos = await getOpenPositions();
-    if (pos) {
-      const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
-      if (open >= MAX_OPEN_POSITIONS) return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS}` };
-      if (pos[slug]) return { filled: false, error: "already holding this market" };
+  const results = btc60.map(m => {
+    let up = null;
+    if (Array.isArray(m.outcomePrices)) {
+      const prices = m.outcomePrices.map(Number);
+      if (prices[0] === 1) up = true;
+      else if (prices[0] === 0) up = false;
     }
+    if (up === null && typeof m.outcome === "string") up = /up/i.test(m.outcome);
+    return { up, endDate: m.endDate };
+  }).filter(r => r.up !== null).sort((a, b) => new Date(a.endDate) - new Date(b.endDate));
+
+  if (results.length < 10) {
+    console.log(`⚠️ [BTC15 research] Only ${results.length} markets had a parseable outcome — not enough to say anything real yet`);
+    return null;
+  }
+
+  const upCount = results.filter(r => r.up).length;
+  let afterUp = 0, afterUpThenUp = 0, afterDown = 0, afterDownThenUp = 0;
+  for (let i = 1; i < results.length; i++) {
+    if (results[i - 1].up) { afterUp++; if (results[i].up) afterUpThenUp++; }
+    else { afterDown++; if (results[i].up) afterDownThenUp++; }
+  }
+  const baseRateUpPct = +((upCount / results.length) * 100).toFixed(1);
+  const continuationPct = afterUp ? +((afterUpThenUp / afterUp) * 100).toFixed(1) : null;
+  const reversalPct = afterDown ? +((afterDownThenUp / afterDown) * 100).toFixed(1) : null;
+
+  console.log(`📊 BTC15 RESEARCH: n=${results.length} | base rate Up=${baseRateUpPct}% Down=${(100 - baseRateUpPct).toFixed(1)}%`);
+  console.log(`📊 BTC15 RESEARCH: after an Up window → next Up ${continuationPct}% (n=${afterUp}) | after a Down window → next Up ${reversalPct}% (n=${afterDown})`);
+  if (continuationPct != null && Math.abs(continuationPct - baseRateUpPct) < 3 && Math.abs(reversalPct - baseRateUpPct) < 3) {
+    console.log(`📊 BTC15 RESEARCH: no meaningful serial correlation detected — consistent with an efficient market, NOT evidence of a usable signal yet`);
+  }
+
+  cachedResearch = { n: results.length, baseRateUpPct, continuationPct, reversalPct, ts: Date.now() };
+  return cachedResearch;
+}
+
+async function discoverCurrentBTC15Market() {
+  // Direct, computed lookup FIRST — bypasses the whole discovery-sweep
+  // problem entirely by trying the exact slug this specific window should
+  // have, based on the app-confirmed :00/:15/:30/:45 ET alignment. Falls
+  // through to the sweep below only if none of the guessed slug patterns
+  // match — genuinely unproven whether polymarket.us shares
+  // polymarket.com's naming convention, so this is tried, not assumed.
+  try {
+    const direct = await pm.findCurrentBtcWindowBySlug(15);
+    if (direct) return direct;
+  } catch (err) {
+    console.log(`  ❌ [BTC15] direct slug lookup threw: ${err.message}`);
+  }
+  // REWIRED to the correct venue: fetchCryptoMarkets() (polymarket-us.js)
+  // queries gateway.polymarket.us — the SAME platform orders actually get
+  // placed on — instead of gamma-api.polymarket.com, a completely
+  // different platform whose market IDs were never orderable here at
+  // all. That venue mismatch, not the regex or the sort order, was very
+  // likely the real cause of the whole "stale December 2025" saga.
+  let markets;
+  try {
+    markets = await pm.fetchCryptoMarkets();
+  } catch (err) {
+    console.log(`❌ [BTC15] fetchCryptoMarkets failed: ${err.message}`);
+    return null;
+  }
+
+  const now = Date.now();
+  // Still checking staleness ourselves — Polymarket's own closed/active
+  // flags were proven unreliable on the OLD endpoint; keeping this
+  // defensively even on the new one until it's proven trustworthy too.
+  const notStale = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now; };
+  const anyBtcMention = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
+  const btcMatches = anyBtcMention.filter(notStale);
+  console.log(`  🔍 [DISCOVERY] ${anyBtcMention.length} of ${markets.length} mention bitcoin+up/down at all | ${btcMatches.length} of those are genuinely fresh`);
+  if (btcMatches.length) console.log(`  🔍 [DISCOVERY] sample questions: ${btcMatches.slice(0,4).map(m=>JSON.stringify(m.question)).join(" | ")}`);
+
+  const current = btcMatches.find(m => is15MinBtcQuestion(m.question || ""));
+  if (!current) {
+    console.log(`⚠️ [BTC15] No open 15-minute BTC up/down market found among ${markets.length} results from the correct venue — check the raw sample above`);
+    return null;
+  }
+  // Normalize to the shape the rest of this file expects (outcomePrices
+  // array), computed from fetchCryptoMarkets' already-extracted yesPrice.
+  return { ...current, outcomePrices: [String(current.yesPrice ?? 0.5), String(1 - (current.yesPrice ?? 0.5))] };
+}
+
+/** Fires when the window has ended and TP/SL never triggered — the
+ * position resolves to $1 or $0 on-chain regardless, but without this,
+ * nothing would ever RECORD that outcome. Fetches the now-closed market by
+ * id to read its resolved side, same win/loss math as the sports bot's
+ * expiry settlement. */
+async function checkNaturalResolution15() {
+  if (!openPosition) return;
+  if (new Date(openPosition.endTime).getTime() > Date.now()) return; // window still open
+
+  let market;
+  try {
+    const { data } = await axios.get(`${GAMMA}/markets/${openPosition.slug}`, { timeout: 10_000 });
+    market = data;
+  } catch (err) {
+    console.log(`  ❌ [BTC15] Couldn't fetch resolution for ${openPosition.slug}: ${err.message} — will retry next scan`);
+    return;
+  }
+  if (!market || market.closed !== true || !Array.isArray(market.outcomePrices)) return; // not resolved yet, try again next scan
+
+  const prices = market.outcomePrices.map(Number);
+  const resolvedUp = prices[0] === 1;
+  const won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
+  const shares = openPosition.sizeUsd / openPosition.entryPrice;
+  // Same expiryPnl formula the sports bot uses — win pays out shares at
+  // $1 each minus the stake, loss is the full stake gone. No fee estimate
+  // here (unlike sports' feeFor()) — BTC15 fee structure isn't confirmed,
+  // so this is a simplification, not a claim of exact precision.
+  const pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
+
+  console.log(`  ${won ? "✅ WIN" : "❌ LOSS"} | BTC15 | ${(openPosition.question || "").slice(0, 50)} | pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
+  try {
+    await tracker.recordSettle(openPosition.slug, { won, pnl, exitPrice: won ? 1 : 0, reason: "expiry",
+      fallback: { slug: openPosition.slug, question: openPosition.question, league: "BTC15",
+                  entry: openPosition.entryPrice, size: openPosition.sizeUsd, at: new Date().toISOString() } });
   } catch {}
+  openPosition = null;
+}
 
-  if (!(bid > 0 && ask > 0 && ask > bid)) return { filled: false, error: "no two-sided book for maker order" };
-  // MAKER PRICING (fixed): the old code rounded the midpoint to the nearest
-  // tick, which on a 1¢ spread (bid .67 / ask .68) rounded UP to .68 — the ask.
-  // That crosses the book and fills as a TAKER, paying the 3% fee we were
-  // trying to avoid. Now: never price at or above the ask, and floor-round.
-  const mid = (bid + ask) / 2;
-  let price = Math.min(mid, ask - tick);          // strictly inside the spread
-  price = Math.floor(price / tick) * tick;        // floor, never round up into the ask
-  price = Math.round(price * 1000) / 1000;
-  if (price >= ask) price = +(ask - tick).toFixed(4);
-  if (price < bid) price = bid;                   // never worse than the current bid
-  if (!(price > 0.01 && price < 0.99)) return { filled: false, error: "maker price out of bounds" };
+/** Real exit check against an already-open position — sells early via the
+ * same closePositionLive() the sports bot uses if TP or SL is hit. Holding
+ * to natural resolution (the window simply ending) is also a completely
+ * valid, unforced outcome for a binary market — this only fires early. */
+async function checkTakeProfitStopLoss15(market) {
+  if (!openPosition) return;
+  const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
+  if (yesPrice == null) return;
 
-  const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
-  let qty = Math.floor((sizeUsd / price) / step) * step;
-  qty = Math.round(qty * 1000) / 1000;
-  while (qty > step && qty * price > sizeUsd + 1e-9) qty = Math.round((qty - step) * 1000) / 1000;
-  if (!(qty > 0)) return { filled: false, error: "size too small for maker order" };
+  const currentPrice = openPosition.side === "Up" ? yesPrice : (1 - yesPrice);
+  const moveFromEntry = currentPrice - openPosition.entryPrice;
 
-  let id = null;
-  try {
-    const order = await signedRequest("POST", "/v1/orders", {
-      marketSlug: slug,
-      intent:     "ORDER_INTENT_BUY_LONG",
-      type:       "ORDER_TYPE_LIMIT",
-      price:      { value: price.toFixed(2), currency: "USD" },
-      quantity:   qty,
-      tif:        "TIME_IN_FORCE_GOOD_TILL_CANCEL",
-    });
-    id = order?.id;
-    if (!id) return { filled: false, error: `no order id (${order?.state || "unknown"})` };
-
-    // Poll for a fill, then cancel whatever hasn't filled.
-    const deadline = Date.now() + waitMs;
-    let state = order?.state;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 2500));
-      try { state = (await signedRequest("GET", `/v1/order/${id}`))?.state; } catch {}
-      if (state === "ORDER_STATE_FILLED") {
-        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
-      }
-      if (state && /CANCEL|REJECT|EXPIRED/i.test(state)) break;
-    }
-    try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {}
-    // A fill can land in the same instant we cancel — verify TWICE, two ways.
-    await new Promise(r => setTimeout(r, 2000));
-    try {
-      const fin = await signedRequest("GET", `/v1/order/${id}`);
-      if (fin?.state === "ORDER_STATE_FILLED") {
-        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
-      }
-    } catch {}
-    // Positions are the ground truth — if the slug now shows a position, it filled.
-    try {
-      const pos2 = await getOpenPositions();
-      if (pos2 && pos2[slug] && pos2[slug].qtyBought > 0) {
-        console.log(`  ✅ Maker filled late (confirmed via positions) | ${slug}`);
-        return { filled: true, qty, fillPrice: price, cost: +(qty * price).toFixed(2), orderId: id, maker: true };
-      }
-    } catch {}
-    return { filled: false, error: `maker unfilled @ ${price.toFixed(2)} (cancelled)`, orderId: id };
-  } catch (err) {
-    if (id) { try { await signedRequest("DELETE", `/v1/order/${id}`); } catch {} }
-    return { filled: false, error: err.message };
+  if (moveFromEntry >= TP_PCT) {
+    console.log(`  🎯 TP hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (+${(moveFromEntry*100).toFixed(0)}¢) — closing`);
+    await exitPosition("take_profit", currentPrice);
+  } else if (moveFromEntry <= -SL_PCT) {
+    console.log(`  🛑 SL hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (${(moveFromEntry*100).toFixed(0)}¢) — closing`);
+    await exitPosition("stop_loss", currentPrice);
   }
 }
 
-// ── buyYesFOK ────────────────────────────────────────────────────
-// ── ORDER-SIZE TRIPWIRE ──────────────────────────────────────────
-// EVERY buy passes through here. Regardless of which code path calls,
-// orders outside these bounds are refused. Raise ORDER_MAX_USD if you
-// ever intentionally raise the flat bet above $5.
-const ORDER_MIN_USD = 6.50;   // $8 flat, small buffer
-const ORDER_MAX_USD = 10.50;  // $8 flat + room for edge-weighted sizing up to +25%
-const MAX_OPEN_POSITIONS = 5;  // hard slot cap enforced AT THE ORDER GATE
-// ONE BET PER MARKET, ALWAYS. With DCA removed there is no legitimate reason
-// to add to a position, so allowAddOn is ignored while this is true.
-const NO_STACKING = true;
-
-export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01, allowAddOn = false, override = false }) {
-  if (override) {
-    console.log(`⚠️ [TRIPWIRE BYPASSED] manual order $${sizeUsd} | ${slug}`);
-  } else if (!(sizeUsd >= ORDER_MIN_USD && sizeUsd <= ORDER_MAX_USD)) {
-    console.log(`🛑 [TRIPWIRE] Order $${sizeUsd} outside $${ORDER_MIN_USD}-$${ORDER_MAX_USD} REFUSED | ${slug}`);
-    return { filled: false, error: `order size $${sizeUsd} outside allowed $${ORDER_MIN_USD}-$${ORDER_MAX_USD}` };
-  }
-  // ── SLOT TRIPWIRE: count REAL open positions before every order.
-  // Enforced here so the cap holds no matter which code path calls.
+async function exitPosition(reason, exitPrice) {
+  if (!openPosition) return;
+  const slug = openPosition.slug;
+  const shares = openPosition.sizeUsd / openPosition.entryPrice;
+  // Same exitPnl formula the sports bot uses for an early sell — mark to
+  // market at the actual exit price, not the binary $1/$0 settlement.
+  const pnl = shares * exitPrice - openPosition.sizeUsd;
   try {
-    const pos = await getOpenPositions();
-    if (pos) {
-      const open = Object.values(pos).filter(p => p.qtyBought > 0).length;
-      // Canonical comparison — catches a duplicate-spelling market even if
-      // it reached the order stage in a different scan than the original.
-      const canonPos = Object.fromEntries(Object.entries(pos).map(([k, v]) => [canonicalSlug(k), v]));
-      if (canonPos[canonicalSlug(slug)] && (NO_STACKING || !allowAddOn)) {
-        console.log(`🛑 [TRIPWIRE] Duplicate market (canonical match) — already holding a spelling of this game | ${slug}`);
-        return { filled: false, error: "already holding this market (duplicate slug spelling)" };
-      }
-      if (open >= MAX_OPEN_POSITIONS && !allowAddOn) {
-        console.log(`🛑 [TRIPWIRE] ${open}/${MAX_OPEN_POSITIONS} slots already full — order REFUSED | ${slug}`);
-        return { filled: false, error: `slot cap ${open}/${MAX_OPEN_POSITIONS} reached` };
-      }
-      if (pos[slug] && (NO_STACKING || !allowAddOn)) {
-        console.log(`🛑 [TRIPWIRE] Already holding ${slug} — no stacking — REFUSED`);
-        return { filled: false, error: "already holding this market" };
-      }
-    }
-  } catch (e) { /* position check unavailable — size tripwire still applies */ }
-  const limit = Math.min(0.99, Math.round((ask + tick) / tick) * tick);
-  // PARTIAL CONTRACTS (API since Jun 8): decimal quantities allowed.
-  // Buy exactly sizeUsd worth, floored to the instrument's minQty step.
-  const step = (minQty && minQty > 0 && minQty < 1) ? minQty : 0.01;
-  let qty = Math.floor((sizeUsd / limit) / step) * step;
-  qty = Math.round(qty * 1000) / 1000;
-  // HARD CAP: cost can NEVER exceed sizeUsd
-  while (qty > step && qty * limit > sizeUsd + 1e-9) qty = Math.round((qty - step) * 1000) / 1000;
-  if (!(qty > 0)) return { filled: false, error: `size $${sizeUsd} too small @ ${limit.toFixed(3)}` };
-  try {
-    const order = await signedRequest("POST", "/v1/orders", {
-      marketSlug: slug,
-      intent:     "ORDER_INTENT_BUY_LONG",
-      type:       "ORDER_TYPE_LIMIT",
-      price:      { value: limit.toFixed(2), currency: "USD" },
-      quantity:   qty,
-      tif:        "TIME_IN_FORCE_FILL_OR_KILL",
-    });
-    let state = order?.state ?? order?.orderState ?? order?.status;
-    const id = order?.id ?? order?.orderId;
-    const filledOf = o => {
-      const q = parseFloat(o?.filledQuantity ?? o?.filledQty ?? o?.cumQty ?? o?.executedQuantity ?? 0);
-      return Number.isFinite(q) ? q : 0;
-    };
-    let filledQty = filledOf(order);
-
-    // Poll a few times: the API sometimes returns no state on the POST, and a
-    // single 1.2s look was declaring good orders "unknown" (they had filled).
-    if (!/FILLED/i.test(String(state)) && filledQty <= 0 && id) {
-      for (let i = 0; i < 3; i++) {
-        await new Promise(r => setTimeout(r, 900));
-        try {
-          const o = await signedRequest("GET", `/v1/order/${id}`);
-          state = o?.state ?? o?.orderState ?? o?.status ?? state;
-          filledQty = filledOf(o) || filledQty;
-        } catch {}
-        if (/FILLED/i.test(String(state)) || filledQty > 0) break;
-        if (/CANCEL|REJECT|EXPIRED|KILL/i.test(String(state))) break;
-      }
-    }
-
-    if (/FILLED/i.test(String(state)) || filledQty > 0) {
-      const q = filledQty > 0 ? filledQty : qty;
-      return { filled: true, qty: q, fillPrice: limit, cost: +(q * limit).toFixed(2), orderId: id };
-    }
-
-    // Last resort: the portfolio is ground truth — a fill may have landed
-    // without the order endpoint ever reporting it.
-    try {
-      const pos = await getOpenPositions();
-      if (pos && pos[slug] && pos[slug].qtyBought > 0) {
-        console.log(`  ✅ Fill confirmed via positions (order reported "${state || "no state"}") | ${slug}`);
-        return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id };
-      }
-    } catch {}
-
-    if (!state) console.log(`  🔎 Order response had no state: ${JSON.stringify(order).slice(0, 220)}`);
-    return { filled: false, error: `order ${state || "unknown"}`, orderId: id };
-  } catch (err) {
-    return { filled: false, error: err.message };
-  }
-}
-
-// ── closePositionLive ─────────────────────────────────────────────
-export async function closePositionLive(slug) {
-  try {
-    await signedRequest("POST", "/v1/order/close-position", { marketSlug: slug });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-}
-
-// ── getOpenPositions ─────────────────────────────────────────────
-export async function getOpenPositions() {
-  try {
-    // Pagination-ready (changelog v0.0.53): follow nextCursor until eof.
-    let positions = {};
-    let cursor = null;
-    for (let page = 0; page < 20; page++) {
-      const path = "/v1/portfolio/positions" + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : "");
-      const data = await signedRequest("GET", path);
-      Object.assign(positions, data?.positions || {});
-      if (data?.eof !== false || !data?.nextCursor) break;
-      cursor = data.nextCursor;
-    }
-    const out = {};
-    for (const [slug, p] of Object.entries(positions)) {
-      // Same field fallbacks as getOpenPositionsEnriched (proven against live API):
-      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? p?.netPosition ?? 0);
-      const avg = p?.avgPx != null ? parseFloat(p.avgPx) : null;
-      const cost = p?.cost?.value != null ? parseFloat(p.cost.value) : null;
-      const cashValue = p?.cashValue?.value != null ? parseFloat(p.cashValue.value) : null;
-      const meta = p?.marketMetadata || p?.market_metadata || {};
-      out[slug] = {
-        qtyBought: qty, netPosition: qty,
-        avgPx: (avg && avg > 0.02 && avg < 0.99) ? +avg.toFixed(4) : null,
-        cost, cashValue, question: meta.title || meta.question || meta.name || null,
-      };
-    }
-    return out;
-  } catch (err) {
-    console.error("⚠️ getOpenPositions failed:", err.message);
-    return null;
-  }
-}
-
-// ── getTradeHistory ──────────────────────────────────────────────
-// Fetches activities from /v1/portfolio/activities (correct endpoint per docs).
-// Filters to TRADE + POSITION_RESOLUTION types.
-// Activity shape:
-//   { type, trade: { marketSlug, price:{value,currency}, qtyDecimal, costBasis:{value}, realizedPnl:{value}, createTime, state }, positionResolution: { ... } }
-// Cached so repeated dashboard polls never re-hit the API.
-let _tradeCache = { data: null, ts: 0 };
-const TRADE_TTL = 120_000;   // 2 minutes
-
-export async function getTradeHistory({ limit = 500, force = false } = {}) {
-  if (!force && _tradeCache.data && Date.now() - _tradeCache.ts < TRADE_TTL) {
-    return _tradeCache.data;
-  }
-  try {
-    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
-    const allActivities = [];
-    let cursor = null;
-    let page = 0;
-    // Pages are fetched with a gap: firing 10 requests back-to-back is what
-    // produced "429 rate limited" and left the history panel empty.
-    const MAX_PAGES = 3;
-
-    while (page < MAX_PAGES) {
-      if (page > 0) await new Promise(r => setTimeout(r, 1200));
-      const params = new URLSearchParams({ limit: "200", sortOrder: "SORT_ORDER_DESCENDING" });
-      if (cursor) params.set("cursor", cursor);
-      const data = await signedRequest("GET", `/v1/portfolio/activities?${params}`);
-
-      // Log raw shape on first page so we can see real field names
-      if (page === 0) {
-        const sample = (data?.activities || [])[0];
-        if (sample) {
-          console.log(`📋 Activity sample: ${JSON.stringify(sample).slice(0, 500)}`);
-          console.log(`📋 Activity types found: ${[...new Set((data.activities||[]).map(a=>a.type))].join(", ")}`);
-        } else {
-          console.log(`📋 No activities returned. Response keys: ${JSON.stringify(Object.keys(data||{}))}`);
-        }
-      }
-
-      const acts = data?.activities || [];
-      allActivities.push(...acts);
-      if (!data?.nextCursor || acts.length === 0 || data?.eof) break;
-      cursor = data.nextCursor;
-      page++;
-      if (allActivities.length >= limit) break;
-    }
-
-    console.log(`📋 Total activities: ${allActivities.length}`);
-
-    const mapped = allActivities.map(a => {
-      // ACTIVITY_TYPE_TRADE — a buy or sell fill
-      if (a.type === "ACTIVITY_TYPE_TRADE" && a.trade) {
-        const t = a.trade;
-        const pl   = amtVal(t.realizedPnl) ?? 0;
-        const cost = amtVal(t.costBasis) ?? amtVal(t.cost) ?? 0;
-
-        // Price from aggressorExecution (fill price) or makerExecution
-        // aggressorExecution: { price: {value, currency}, quantity, ... }
-        const aggEx  = t.aggressorExecution || t.aggressor_execution || {};
-        const mkEx   = t.makerExecution     || t.maker_execution     || {};
-        const exPrice = amtVal(aggEx.lastPx) ?? amtVal(aggEx.price) ?? amtVal(mkEx.lastPx) ?? amtVal(mkEx.price) ?? amtVal(t.price) ?? null;
-
-        // Quantity from execution
-        const exQty = parseFloat(aggEx.quantity ?? aggEx.qty ?? mkEx.quantity ?? t.qtyDecimal ?? t.qty ?? 0);
-
-        // Side: aggressorExecution side or trade-level side
-        const rawSide = (aggEx.side || t.side || "").toUpperCase();
-        const side = rawSide || (cost > 0 && pl <= 0 ? "BUY" : "SELL");
-
-        // For a BUY: entryPrice = exPrice (the price you paid per contract)
-        // This is the reliable source — not cost/qty
-        const entryPrice = exPrice;
-
-        const slug = t.marketSlug || a.marketSlug || "";
-        const q    = t.marketTitle || t.question || t.marketSlug || "";
-        // Log first few trades to see full field structure
-        if (!getTradeHistory._logged || getTradeHistory._logged < 3) {
-          getTradeHistory._logged = (getTradeHistory._logged || 0) + 1;
-          console.log(`📋 Trade[${getTradeHistory._logged}]: ${slug.slice(0,30)} side=${side} price=${entryPrice} qty=${exQty} cost=${cost}`);
-          console.log(`📋   aggEx fields: ${JSON.stringify(Object.keys(aggEx))}`);
-          console.log(`📋   aggEx.price: ${JSON.stringify(aggEx.price)}`);
-        }
-        return {
-          _type:       "trade",
-          marketSlug:  slug,
-          question:    q,
-          price:       entryPrice,   // real fill price (0-1)
-          qty:         exQty,
-          costBasis:   cost,
-          realizedPnl: pl,
-          side,
-          createTime:  t.createTime || a.createTime || "",
-          state:       t.state || "",
-        };
-      }
-
-      // ACTIVITY_TYPE_POSITION_RESOLUTION — market settled WIN or LOSS
-      if (a.type === "ACTIVITY_TYPE_POSITION_RESOLUTION" && a.positionResolution) {
-        const r = a.positionResolution;
-        const beforeReal = amtVal(r.beforePosition?.realized) ?? 0;
-        const afterReal  = amtVal(r.afterPosition?.realized)  ?? 0;
-        // Incremental P/L from this resolution
-        const pl = afterReal - beforeReal;
-        // Also try direct pnl fields
-        const directPl = amtVal(r.pnl) ?? amtVal(r.realizedPnl) ?? null;
-        const finalPl  = directPl !== null ? directPl : pl;
-        const won = finalPl > 0
-          || r.side === "POSITION_RESOLUTION_SIDE_LONG"
-          || r.outcome === "YES" || r.outcome === "WON";
-        const question = r.afterPosition?.marketMetadata?.title
-          || r.beforePosition?.marketMetadata?.title
-          || r.marketTitle || r.marketSlug || "";
-        console.log(`📋 RESOLUTION: ${question.slice(0,40)} pl=$${finalPl.toFixed(2)} won=${won}`);
-        return {
-          _type:       "resolution",
-          marketSlug:  r.marketSlug || a.marketSlug || "",
-          question,
-          realizedPnl: finalPl,
-          createTime:  r.updateTime || r.createTime || a.createTime || "",
-          won,
-        };
-      }
-      return null;
-    }).filter(Boolean);
-
-    _tradeCache = { data: mapped, ts: Date.now() };
-    return mapped;
-
-  } catch (err) {
-    const rateLimited = /429|rate limit/i.test(err.message || "");
-    console.error(`⚠️ getTradeHistory failed: ${err.message}${rateLimited ? " — serving cached history" : ""}`);
-    if (_tradeCache.data) {
-      // Keep the stale copy alive rather than blanking the history panel,
-      // and hold off re-requesting for a while so we stop being throttled.
-      _tradeCache.ts = Date.now() - TRADE_TTL + 30_000;   // retry in ~30s
-      return _tradeCache.data;
-    }
-    return [];
-  }
-}
-
-
-export async function getOpenPositionsEnriched(stateBets = [], entryPriceCache = {}) {
-  try {
-    const amtVal = x => x?.value != null ? parseFloat(x.value) : null;
-    const data = await signedRequest("GET", "/v1/portfolio/positions");
-    const raw = data?.positions || {};
-
-    // Log full raw shape so we know exact field names
-    const slugs = Object.keys(raw);
-    if (slugs.length > 0) {
-      console.log(`🔍 Position keys (slugs): ${slugs.slice(0,5).join(" | ")}`);
-      console.log(`🔍 Position sample fields: ${JSON.stringify(Object.keys(raw[slugs[0]]||{}))}`);
-      console.log(`🔍 Position sample values: ${JSON.stringify(raw[slugs[0]]).slice(0,400)}`);
-      console.log(`🔍 State bet IDs: ${stateBets.slice(0,5).map(b=>b.marketConditionId).join(" | ")}`);
-    }
-
-    const out = [];
-    for (const [slug, p] of Object.entries(raw)) {
-      const qty = parseFloat(p?.qtyBoughtDecimal ?? p?.netPositionDecimal ?? p?.qtyBought ?? 0);
-      if (qty <= 0) continue;
-
-      // Dollar amounts from API
-      const costBasis = amtVal(p?.cost);
-      const cashValue = amtVal(p?.cashValue);
-      const realized  = amtVal(p?.realized);
-
-      // avgPx: the actual average fill price from the API — most reliable source
-      const apiAvgPx = p?.avgPx != null ? parseFloat(p.avgPx) : null;
-
-      // Market metadata
-      const meta = p?.marketMetadata || p?.market_metadata || {};
-      let question = meta.title || meta.question || meta.name ||
-                     p?.title || p?.question || null;
-      let category = meta.category || p?.category || "";
-      let entryPrice = null;
-      let placedAt = null;
-
-      // avgPx from API is ground truth for entry price when available
-      if (!entryPrice && apiAvgPx && apiAvgPx > 0.05 && apiAvgPx < 0.99) {
-        entryPrice = +apiAvgPx.toFixed(4);
-      }
-
-      // Cross-ref state bets — try multiple matching strategies
-      const stateBet = stateBets.find(b => {
-        const id = (b.marketConditionId || "").toLowerCase();
-        const s  = slug.toLowerCase();
-        return id === s
-          || id === s + "-yes"
-          || s === id + "-yes"
-          || s.startsWith(id.replace(/-yes$/,""))
-          || id.startsWith(s.replace(/-yes$/,""))
-          || (id.length > 8 && s.includes(id.slice(0,15)))
-          || (s.length > 8 && id.includes(s.slice(0,15)));
-      });
-
-      if (stateBet) {
-        if (!question)    question   = (stateBet.marketQuestion||"").replace(/^\[.*?\]\s*/,"") || null;
-        if (!category)    category   = stateBet.entryCoin || "";
-        if (!entryPrice)  entryPrice = stateBet.entryPrice || null;
-        if (!placedAt)    placedAt   = stateBet.placedAt || null;
-        console.log(`  ✅ Matched: ${slug.slice(0,30)} → entry=${entryPrice}`);
-      } else {
-        // No state match (state reset on restart)
-        // DO NOT derive entryPrice from cost/qty — qty scale is unreliable
-        // Try bodPosition fields from the API instead
-        const bod = p?.bodPosition || {};
-        const bodCost = amtVal(bod?.cost);
-        const bodQty  = parseFloat(bod?.qtyBought ?? 0);
-        if (!entryPrice && bodCost && bodQty > 0) {
-          const derived = +(bodCost / bodQty).toFixed(4);
-          // Only use if it's a sane probability (5% - 98%)
-          if (derived >= 0.05 && derived <= 0.98) {
-            entryPrice = derived;
-            console.log(`  📊 bodDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
-          }
-        }
-        // Try entryPriceCache from recent trade activities
-        if (!entryPrice && entryPriceCache[slug]) {
-          entryPrice = entryPriceCache[slug];
-          console.log(`  📊 CacheDerived: ${slug.slice(0,30)} → entry=${entryPrice}`);
-        }
-        if (!entryPrice) {
-          console.log(`  ❌ No entry price: ${slug.slice(0,40)} cost=${costBasis} qty=${qty}`);
-        }
-      }
-
-      // Payout = costBasis / entryPrice = contracts × $1 per contract
-      const payout = (costBasis && entryPrice && entryPrice > 0)
-        ? +(costBasis / entryPrice).toFixed(2) : null;
-
-      // Live BBO
-      let currentBid = null;
+    const res = DRY_RUN ? { ok: true } : await pm.closePositionLive(slug);
+    if (res.ok) {
+      console.log(`  ✅ BTC15 exit (${reason}) filled for ${slug} | pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
       try {
-        const bbo = await getBBO(slug);
-        currentBid = bbo?.bid ?? null;
+        await tracker.recordSettle(slug, { won: pnl > 0, pnl, exitPrice, reason,
+          fallback: { slug, question: openPosition.question, league: "BTC15",
+                      entry: openPosition.entryPrice, size: openPosition.sizeUsd, at: new Date().toISOString() } });
       } catch {}
-
-      // P/L = (currentBid - entryPrice) * payout
-      let openPnl = null;
-      if (currentBid != null && entryPrice && payout) {
-        openPnl = +((currentBid - entryPrice) * payout).toFixed(2);
-      } else if (cashValue != null && costBasis != null) {
-        openPnl = +(cashValue - costBasis).toFixed(2);
-      }
-
-      const currentVal = (currentBid && payout)
-        ? +(currentBid * payout).toFixed(2) : cashValue;
-
-      out.push({
-        slug,
-        question:   question || slug,
-        category,
-        qty,
-        avgPrice:   entryPrice,
-        costBasis,
-        cashValue,
-        currentBid,
-        currentVal,
-        openPnl,
-        payout,
-        realized,
-        updateTime: p?.updateTime,
-        placedAt,
-      });
+    } else {
+      console.log(`  ❌ BTC15 exit (${reason}) failed for ${slug}: ${res.error} — will retry next scan, or it resolves naturally at window end regardless`);
+      return; // leave openPosition set, try again next scan
     }
-    return out;
   } catch (err) {
-    console.error("⚠️ getOpenPositionsEnriched failed:", err.message);
-    return [];
+    console.log(`  ❌ BTC15 exit (${reason}) threw: ${err.message}`);
+    return;
+  }
+  openPosition = null;
+}
+
+// User-defined entry rule: bet the favored side only when its price sits
+// between 66% and 80%, AND only in the final 4 minutes before the window
+// closes. This is a real, specific, stated strategy — not a placeholder —
+// but it has NOT been backtested against researchBTC15History's data yet,
+// which is worth doing once enough real trades exist under this rule.
+const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.63);
+const ENTRY_EDGE_MAX = Number(process.env.BTC15_ENTRY_EDGE_MAX || 0.74);
+const ENTRY_WINDOW_MS = Number(process.env.BTC15_ENTRY_WINDOW_MIN || 3) * 60_000;
+
+function userEntryRule(market) {
+  const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
+  if (yesPrice == null) return null;
+
+  const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
+  if (endsInMs == null || endsInMs > ENTRY_WINDOW_MS || endsInMs < 0) return null; // not yet in the last 15 minutes
+
+  const side = yesPrice >= 0.5 ? "Up" : "Down";
+  const price = yesPrice >= 0.5 ? yesPrice : 1 - yesPrice;
+  if (price < ENTRY_EDGE_MIN || price > ENTRY_EDGE_MAX) return null; // outside the 63-74% band
+
+  return { side, price };
+}
+
+export async function runBTC15ScanCycle() {
+  try {
+    const c = await getConfig();
+    if (c.BTC15_ENABLED != null) BTC15_ENABLED = c.BTC15_ENABLED;
+  } catch {}
+  if (!BTC15_ENABLED) return;
+
+  if (Date.now() - lastResearchRunAt > RESEARCH_INTERVAL_MS) {
+    lastResearchRunAt = Date.now();
+    researchBTC15History().catch(() => {});
+  }
+
+  // Runs BEFORE discovery, and independent of whether discovery finds
+  // anything — a held position's window can end right as the NEXT window
+  // hasn't shown up as "active" yet, or discovery can fail transiently.
+  // This must not depend on that succeeding.
+  if (openPosition) await checkNaturalResolution15();
+
+  const market = await discoverCurrentBTC15Market();
+  if (!market) return;
+
+  const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
+  const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
+  const endsInSec = endsInMs != null ? Math.round(endsInMs / 1000) : "?";
+  console.log(`₿ BTC15 window: "${(market.question || "").slice(0, 50)}" | Up price ${yesPrice != null ? (yesPrice * 100).toFixed(0) + "¢" : "?"} | ends in ${endsInSec}s`);
+
+  // If we're already holding a position in THIS window, check TP/SL —
+  // this runs regardless of the live-trading flag, since it only manages
+  // an existing position, never opens a new one.
+  if (openPosition && openPosition.slug === market.id) {
+    await checkTakeProfitStopLoss15(market);
+    return;
+  }
+  if (openPosition) return; // still holding a DIFFERENT (older) window, not yet resolved — don't open a new one on top of it
+
+  if (!LIVE_TRADING_ENABLED) {
+    console.log(`  👁 OBSERVE MODE — BTC15_LIVE_TRADING is off. No entries, no exits, logging only.`);
+    return;
+  }
+
+  // New window, no position yet — this is where DEFAULT_ENTRY_RULE fires.
+  const entry = userEntryRule(market);
+  if (!entry) return;
+  console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
+
+  try {
+    const res = DRY_RUN
+      ? { filled: true, fillPrice: entry.price }
+      : await pm.buyYesFOK({ slug: market.id, sizeUsd: BET_SIZE_USD, ask: entry.price, override: true });
+    if (res.filled) {
+      openPosition = { slug: market.id, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question };
+      console.log(`  ✅ BTC15 ENTRY ${DRY_RUN ? "[DRY]" : ""} ${entry.side} $${BET_SIZE_USD} @ ${(entry.price*100).toFixed(0)}¢`);
+      try {
+        await tracker.recordEntry({ slug: market.id, question: market.question, league: "BTC15",
+          entry: entry.price, size: BET_SIZE_USD, live: true });
+      } catch {}
+    } else {
+      console.log(`  ❌ BTC15 entry did not fill: ${res.error || "unknown"}`);
+    }
+  } catch (err) {
+    console.log(`  ❌ BTC15 entry threw: ${err.message}`);
   }
 }
 
-
-export async function preflightUS() {
-  const msgs = [];
-  let keyId;
-  try { keyId = getCreds().keyId; msgs.push("✅ API credentials parsed (Ed25519 key loaded)"); }
-  catch (e) { msgs.push("❌ " + e.message); return { ok: false, messages: msgs }; }
-  try {
-    const { buyingPower, currentBalance } = await getBuyingPower();
-    msgs.push(`✅ Auth works | balance $${currentBalance.toFixed(2)} | buying power $${buyingPower.toFixed(2)}`);
-    if (buyingPower <= 0) {
-      msgs.push("❌ Buying power is $0 — deposit funds in the Polymarket app");
-      return { ok: false, messages: msgs };
-    }
-  } catch (e) {
-    msgs.push("❌ Auth/balance check failed: " + e.message);
-    msgs.push(`🔎 Key ID: ${keyId.slice(0, 13)}… (${keyId.length} chars, ${looksUuid(keyId) ? "uuid ✓" : "⚠️ NOT uuid"})`);
-    if (/not found/i.test(e.message)) msgs.push("👉 Generate new API keys at polymarket.us/developer");
-    return { ok: false, messages: msgs };
-  }
-  return { ok: true, messages: msgs };
+export function btc15Status() {
+  return { enabled: BTC15_ENABLED, liveTrading: LIVE_TRADING_ENABLED, dryRun: DRY_RUN, tpPct: TP_PCT, slPct: SL_PCT, openPosition, lastResearch: cachedResearch };
 }
