@@ -163,13 +163,17 @@ async function discoverCurrentBTC15Market() {
   let markets;
   try {
     const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: false, active: true, order: "endDate", ascending: false, limit: 500 },
-      // Switched from ascending. Now that we know there's a backlog of
-      // permanently-stuck "active:true" garbage from months ago,
-      // ascending (soonest-ending-first) sorts THAT ancient backlog to
-      // the very front — a bigger limit just meant more of the same
-      // dead weight before reaching anything current. Descending
-      // (furthest-future-first) avoids that specific failure mode.
+      params: { closed: false, active: true, limit: 500 },
+      // Both sort directions now tried and both failed, for OPPOSITE,
+      // now-understood reasons: ascending (soonest-first) surfaced an
+      // ancient backlog of permanently-stuck "active:true" garbage;
+      // descending (furthest-first) surfaced long-dated, unrelated
+      // markets (elections, multi-year forecasts) instead — crypto
+      // windows are never more than hours out, so they can't win at
+      // either sorted extreme against an entirely unfiltered, platform-
+      // wide result set. Removing the sort assumption entirely — the
+      // genuinely current window may sit in the middle of whatever the
+      // API's own natural/default order actually is.
       // Widened from 20 — sorted soonest-ending-first across EVERY crypto
       // asset and EVERY window length (BTC/ETH/SOL/etc x 5m/15m/1h/4h) all
       // mixed together, the one relevant window can easily get crowded out
