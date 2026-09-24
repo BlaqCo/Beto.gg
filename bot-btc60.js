@@ -163,7 +163,13 @@ async function discoverCurrentBTC60Market() {
   let markets;
   try {
     const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 500 },
+      params: { closed: false, active: true, order: "endDate", ascending: false, limit: 500 },
+      // Switched from ascending. Now that we know there's a backlog of
+      // permanently-stuck "active:true" garbage from months ago,
+      // ascending (soonest-ending-first) sorts THAT ancient backlog to
+      // the very front — a bigger limit just meant more of the same
+      // dead weight before reaching anything current. Descending
+      // (furthest-future-first) avoids that specific failure mode.
       // Widened from 20 — sorted soonest-ending-first across EVERY crypto
       // asset and EVERY window length (BTC/ETH/SOL/etc x 5m/15m/1h/4h) all
       // mixed together, the one relevant window can easily get crowded out
@@ -189,8 +195,9 @@ async function discoverCurrentBTC60Market() {
   // FIRST, before duration matching, is now the primary defense against
   // that — not an afterthought that duration-mismatch was masking.
   const notStale = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now; };
-  const btcMatches = markets.filter(m => notStale(m) && /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
-  console.log(`  🔍 [DISCOVERY] ${btcMatches.length} of ${markets.length} fetched results are genuinely fresh BTC up/down markets (before duration filtering; stale closed:false/active:true entries excluded)`);
+  const anyBtcMention = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
+  const btcMatches = anyBtcMention.filter(notStale);
+  console.log(`  🔍 [DISCOVERY] ${anyBtcMention.length} of ${markets.length} mention bitcoin+up/down at all | ${btcMatches.length} of those are genuinely fresh (not stale despite closed:false/active:true)`);
   // Print the REAL question text on every scan, not gated behind a
   // one-time flag — that flag has now missed its window three times in a
   // row across redeploys. This is the actual evidence needed to build a
