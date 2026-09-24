@@ -307,7 +307,7 @@ button:active{transform:translateY(1px)}
   <div class="cell"><div class="clabel">VOLUME</div><div class="cval" id="vol">—</div><div class="csub" id="volsub">lifetime</div></div>
 </div>
 
-<div class="cryptopanel" id="cryptoPanel" style="display:none">
+<div class="cryptopanel" id="cryptoPanel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
     <span class="cryptotitle">BTC60 CRYPTO</span>
@@ -510,8 +510,9 @@ async function loadFunnel(){
     // The stepper reflects the REAL live value, not a locally-remembered
     // one — always pull it from the same config the bot actually reads.
     try{
-      const cfg = await (await fetch('/api/config?t='+Date.now())).json();
-      currentFetchLimit = cfg.BBO_FETCH_LIMIT ?? cfg.bboFetchLimit ?? currentFetchLimit;
+      const cfgRes = await (await fetch('/api/config?t='+Date.now())).json();
+      const cc = cfgRes.config || {};
+      currentFetchLimit = cc.BBO_FETCH_LIMIT ?? currentFetchLimit;
       $('fetchLimitVal').textContent = currentFetchLimit ?? '—';
     }catch(e){}
   }catch(e){}
@@ -738,16 +739,26 @@ async function loadLatency(){
 }
 
 async function loadCryptoStats(){
+  // Always visible, same as the main WIN RATE cell showing "N/A" rather
+  // than disappearing — a hidden panel looks identical to a missing
+  // feature, which is exactly what "no separate crypto area" reported.
+  $('cryptoPanel').style.display='block';
   try{
     const a = await (await fetch('/api/analytics?t='+Date.now())).json();
     const btc = (a.byLeague||[]).find(x => x.key === 'BTC60');
-    if(!btc || btc.n === 0){ $('cryptoPanel').style.display='none'; return; }
-    $('cryptoPanel').style.display='block';
+    if(!btc || btc.n === 0){
+      $('cWl').textContent = '0W / 0L'; $('cWr').textContent = 'N/A';
+      $('cPnl').textContent = '$0.00'; $('cRoi').textContent = '—';
+      return;
+    }
     $('cWl').textContent = btc.w+'W / '+btc.l+'L';
     $('cWr').textContent = btc.winRate+'%';
     $('cPnl').innerHTML = '<span class="'+cls(btc.pnl)+'">'+money(btc.pnl)+'</span>';
     $('cRoi').innerHTML = '<span class="'+cls(btc.roi)+'">'+(btc.roi>=0?'+':'')+btc.roi+'%</span>';
-  }catch(e){ $('cryptoPanel').style.display='none'; }
+  }catch(e){
+    $('cWl').textContent = '0W / 0L'; $('cWr').textContent = 'N/A';
+    $('cPnl').textContent = '$0.00'; $('cRoi').textContent = '—';
+  }
 }
 async function loadEdge(){
   try{
