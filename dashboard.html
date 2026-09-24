@@ -271,21 +271,6 @@ button:active{transform:translateY(1px)}
   </div>
 </div>
 
-<div class="funnel">
-  <div class="fhead">
-    <div class="ftitle">SCAN PIPELINE</div>
-    <div class="fmeta" id="fmeta">waiting for scan…</div>
-  </div>
-  <div id="stages"></div>
-  <div id="healthStrip" class="healthstrip"></div>
-  <div class="fetchctl">
-    <span class="fetchlabel">markets priced per scan</span>
-    <button class="fetchbtn" onclick="adjustFetchLimit(-5)">−5</button>
-    <span class="fetchval" id="fetchLimitVal">—</span>
-    <button class="fetchbtn" onclick="adjustFetchLimit(5)">+5</button>
-  </div>
-</div>
-
 <div class="grid">
   <div class="cell"><div class="clabel">BALANCE</div><div class="cval" id="bal">—</div><div class="csub" id="balsub">cash</div></div>
   <div class="cell"><div class="clabel">WIN RATE</div><div class="cval" id="wr">—</div><div class="csub" id="wrsub">settled</div></div>
@@ -303,6 +288,19 @@ button:active{transform:translateY(1px)}
     <div class="ccell"><div class="clabel">WIN RATE</div><div class="cval" id="cWr">—</div></div>
     <div class="ccell"><div class="clabel">P/L</div><div class="cval" id="cPnl">—</div></div>
     <div class="ccell"><div class="clabel">ROI</div><div class="cval" id="cRoi">—</div></div>
+  </div>
+</div>
+
+<div class="cryptopanel" id="crypto15Panel">
+  <div class="cryptohead">
+    <span class="cryptoicon">₿</span>
+    <span class="cryptotitle">BTC15 CRYPTO</span>
+  </div>
+  <div class="cryptogrid">
+    <div class="ccell"><div class="clabel">RECORD</div><div class="cval" id="c15Wl">—</div></div>
+    <div class="ccell"><div class="clabel">WIN RATE</div><div class="cval" id="c15Wr">—</div></div>
+    <div class="ccell"><div class="clabel">P/L</div><div class="cval" id="c15Pnl">—</div></div>
+    <div class="ccell"><div class="clabel">ROI</div><div class="cval" id="c15Roi">—</div></div>
   </div>
 </div>
 
@@ -491,70 +489,19 @@ async function toggleBot(which){
   finally{ btn.disabled = false; toggleBusy = false; }
 }
 
-let currentFetchLimit = null, fetchAdjustBusy = false;
-async function adjustFetchLimit(delta){
-  if(fetchAdjustBusy || currentFetchLimit==null) return;
-  fetchAdjustBusy = true;
-  const next = Math.max(5, currentFetchLimit + delta);
-  const btns = document.querySelectorAll('.fetchbtn');
-  btns.forEach(function(b){ b.disabled = true; });
-  const prevLabel = $('fetchLimitVal').textContent;
-  $('fetchLimitVal').textContent = '\u2026';
-  try{
-    const res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ BBO_FETCH_LIMIT: next }) });
-    if(!res.ok) throw new Error('save failed');
-    currentFetchLimit = next;
-    $('fetchLimitVal').textContent = next;
-  }catch(e){
-    $('fetchLimitVal').textContent = prevLabel;
-  }finally{
-    btns.forEach(function(b){ b.disabled = false; });
-    fetchAdjustBusy = false;
-  }
-}
 
 async function loadFunnel(){
+  // Scan-pipeline panel removed — this now only keeps the two things still
+  // actually displayed elsewhere: the version string and the open-slots
+  // count. Everything else this used to write to no longer exists in the
+  // DOM, and writing to a removed element throws and silently kills the
+  // rest of whatever function it's in — exactly the bug this project has
+  // already been bitten by twice. Not risking a third time.
   try{
     const f = await (await fetch('/api/funnel?t='+Date.now())).json();
-    if(!f.stages || !f.stages.length){ $('fmeta').textContent='waiting for scan…'; return; }
-    const max = Math.max.apply(null, f.stages.map(function(s){return s.count;}).concat([1]));
-    $('stages').innerHTML = f.stages.map(function(s){
-      return '<div class="stage"><div class="srow"><span class="sname">'+s.name.toUpperCase()+
-        '</span><span class="scount">'+s.count+'</span></div>'+
-        '<div class="track"><div class="fill" style="width:'+Math.max(2,(s.count/max)*100)+'%"></div></div></div>';
-    }).join('');
-    const age = f.ageMs==null ? '—' : (f.ageMs<60000 ? Math.round(f.ageMs/1000)+'s ago' : Math.round(f.ageMs/60000)+'m ago');
-    const band = f.band ? Math.round(f.band[0]*100)+'–'+Math.round(f.band[1]*100)+'¢' : '';
-    $('fmeta').textContent = band+' · $'+f.betSize+' · '+age;
     $('ver').textContent = f.version||'';
     window.__lastFunnelMode = f.mode||'—'; // loadBotToggles reads this to fill in the LIVE case
     if(f.slots) $('slots').textContent = f.slots.used + (f.slots.max<9999 ? '/'+f.slots.max : '');
-
-    // Health strip — scan speed, BBO coverage, model coverage, proven leagues.
-    // All previously visible only by exporting raw Railway logs.
-    const chips = [];
-    if(f.health){
-      const h = f.health;
-      const scanCls = h.scanSec>6?'bad':h.scanSec>3?'warn':'good';
-      chips.push('<span class="hchip '+scanCls+'">scan '+h.scanSec+'s</span>');
-      const covPct = h.bboFetched ? Math.round(h.bboWithData/h.bboFetched*100) : 0;
-      chips.push('<span class="hchip">priced '+h.bboWithData+'/'+h.bboFetched+' ('+covPct+'%)</span>');
-      if(h.overflowCount>0) chips.push('<span class="hchip warn actionable" onclick="adjustFetchLimit(10)">+'+h.overflowCount+' overflow — tap to raise limit</span>');
-    }
-    if(f.modelledLeagues && f.modelledLeagues.length)
-      chips.push('<span class="hchip good">model: '+f.modelledLeagues.join(', ')+'</span>');
-    if(f.provenLeagues && f.provenLeagues.length)
-      chips.push('<span class="hchip good">🏆 proven: '+f.provenLeagues.join(', ')+'</span>');
-    $('healthStrip').innerHTML = chips.join('');
-
-    // The stepper reflects the REAL live value, not a locally-remembered
-    // one — always pull it from the same config the bot actually reads.
-    try{
-      const cfgRes = await (await fetch('/api/config?t='+Date.now())).json();
-      const cc = cfgRes.config || {};
-      currentFetchLimit = cc.BBO_FETCH_LIMIT ?? currentFetchLimit;
-      $('fetchLimitVal').textContent = currentFetchLimit ?? '—';
-    }catch(e){}
   }catch(e){}
 }
 
@@ -762,26 +709,31 @@ async function loadLatency(){
   }catch(e){ $('latPanel').style.display='none'; }
 }
 
+function renderCryptoPanel(ids, stats){
+  if(!stats || stats.n === 0){
+    $(ids.wl).textContent = '0W / 0L'; $(ids.wr).textContent = 'N/A';
+    $(ids.pnl).textContent = '$0.00'; $(ids.roi).textContent = '—';
+    return;
+  }
+  $(ids.wl).textContent = stats.w+'W / '+stats.l+'L';
+  $(ids.wr).textContent = stats.winRate+'%';
+  $(ids.pnl).innerHTML = '<span class="'+cls(stats.pnl)+'">'+money(stats.pnl)+'</span>';
+  $(ids.roi).innerHTML = '<span class="'+cls(stats.roi)+'">'+(stats.roi>=0?'+':'')+stats.roi+'%</span>';
+}
 async function loadCryptoStats(){
   // Always visible, same as the main WIN RATE cell showing "N/A" rather
   // than disappearing — a hidden panel looks identical to a missing
   // feature, which is exactly what "no separate crypto area" reported.
   $('cryptoPanel').style.display='block';
+  $('crypto15Panel').style.display='block';
   try{
     const a = await (await fetch('/api/analytics?t='+Date.now())).json();
-    const btc = (a.byLeague||[]).find(x => x.key === 'BTC60');
-    if(!btc || btc.n === 0){
-      $('cWl').textContent = '0W / 0L'; $('cWr').textContent = 'N/A';
-      $('cPnl').textContent = '$0.00'; $('cRoi').textContent = '—';
-      return;
-    }
-    $('cWl').textContent = btc.w+'W / '+btc.l+'L';
-    $('cWr').textContent = btc.winRate+'%';
-    $('cPnl').innerHTML = '<span class="'+cls(btc.pnl)+'">'+money(btc.pnl)+'</span>';
-    $('cRoi').innerHTML = '<span class="'+cls(btc.roi)+'">'+(btc.roi>=0?'+':'')+btc.roi+'%</span>';
+    const byLeague = a.byLeague||[];
+    renderCryptoPanel({wl:'cWl',wr:'cWr',pnl:'cPnl',roi:'cRoi'}, byLeague.find(x => x.key === 'BTC60'));
+    renderCryptoPanel({wl:'c15Wl',wr:'c15Wr',pnl:'c15Pnl',roi:'c15Roi'}, byLeague.find(x => x.key === 'BTC15'));
   }catch(e){
-    $('cWl').textContent = '0W / 0L'; $('cWr').textContent = 'N/A';
-    $('cPnl').textContent = '$0.00'; $('cRoi').textContent = '—';
+    renderCryptoPanel({wl:'cWl',wr:'cWr',pnl:'cPnl',roi:'cRoi'}, null);
+    renderCryptoPanel({wl:'c15Wl',wr:'c15Wr',pnl:'c15Pnl',roi:'c15Roi'}, null);
   }
 }
 async function loadEdge(){
