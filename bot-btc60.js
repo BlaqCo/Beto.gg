@@ -82,20 +82,28 @@ let cachedResearch = null;
 // the bet still resolves normally on-chain either way).
 let openPosition = null; // { slug, side, entryPrice, sizeUsd, endTime }
 
+// Real evidence from production logs: the "tag" query param below is NOT
+// reliably honored by Gamma's API — it returned a 5-MINUTE window
+// ("11:35AM-11:40AM") from roughly 9 months in the past, despite
+// closed:false/active:true. Two confirmed real examples show a reliable
+// TEXT pattern instead: hourly questions state a single time point
+// ("...1PM ET"), shorter windows state an explicit start-end RANGE
+// ("...11:35AM-11:40AM"). That's what this now keys off, not the tag —
+// don't trust an unverified tag name a second time when a directly
+// observed text pattern is available.
 function isHourlyBtcQuestion(q) {
   if (!/bitcoin|btc/i.test(q) || !/up or down/i.test(q)) return false;
-  // Defensive exclusion: if the tag filter below doesn't cleanly isolate
-  // the hourly family, explicit mentions of other durations in the
-  // question text rule those out rather than silently mixing windows.
-  if (/\b5\s*-?\s*min|15\s*-?\s*min|4\s*-?\s*hour|4h\b/i.test(q)) return false;
-  return true;
+  const hasTimeRange = /\d{1,2}(:\d{2})?\s*(AM|PM)\s*-\s*\d{1,2}(:\d{2})?\s*(AM|PM)/i.test(q);
+  if (hasTimeRange) return false; // ranged questions are 5m/15m/4h, not hourly
+  const hasSingleTime = /\d{1,2}(:\d{2})?\s*(AM|PM)\s*ET/i.test(q);
+  return hasSingleTime;
 }
 
 export async function researchBTC60History(limit = 300) {
   let markets;
   try {
     const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: true, order: "endDate", ascending: false, limit, tag: "1-hour-crypto" },
+      params: { closed: true, order: "endDate", ascending: false, limit }, // tag param removed — confirmed unreliable, question text is what actually filters now
       timeout: 10_000,
     });
     markets = Array.isArray(data) ? data : (data?.markets || []);
@@ -155,7 +163,7 @@ async function discoverCurrentBTC60Market() {
   let markets;
   try {
     const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 20, tag: "1-hour-crypto" },
+      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 20 }, // tag param removed — confirmed unreliable, question text is what actually filters now
       timeout: 10_000,
     });
     markets = Array.isArray(data) ? data : (data?.markets || []);
@@ -169,7 +177,13 @@ async function discoverCurrentBTC60Market() {
     console.log(`🔬 BTC60 DISCOVERY RAW SAMPLE (first result, truncated): ${JSON.stringify(markets[0]).slice(0, 500)}`);
   }
 
-  const current = markets.find(m => isHourlyBtcQuestion(m.question || ""));
+  const now = Date.now();
+  const current = markets.find(m => {
+    if (!isHourlyBtcQuestion(m.question || "")) return false;
+    const endsAt = m.endDate ? new Date(m.endDate).getTime() : null;
+    if (endsAt == null || endsAt <= now) return false; // stale/closed despite the query filter
+    return true;
+  });
   if (!current) {
     console.log(`⚠️ [BTC60] No open hourly BTC up/down market found among ${markets.length} active results — check the raw sample above`);
     return null;
