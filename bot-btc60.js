@@ -162,21 +162,32 @@ export async function researchBTC60History(limit = 300) {
 async function discoverCurrentBTC60Market() {
   let markets;
   try {
-    const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: false, active: true, order: "endDate", ascending: false, limit: 500 },
-      // Switched from ascending. Now that we know there's a backlog of
-      // permanently-stuck "active:true" garbage from months ago,
-      // ascending (soonest-ending-first) sorts THAT ancient backlog to
-      // the very front — a bigger limit just meant more of the same
-      // dead weight before reaching anything current. Descending
-      // (furthest-future-first) avoids that specific failure mode.
-      // Widened from 20 — sorted soonest-ending-first across EVERY crypto
-      // asset and EVERY window length (BTC/ETH/SOL/etc x 5m/15m/1h/4h) all
-      // mixed together, the one relevant window can easily get crowded out
-      // of a small batch before the text filter below ever sees it.
+    // Rebuilt on Polymarket's OWN documented guidance (docs.polymarket.com,
+    // not a guess): "the most efficient approach is to use the /events
+    // endpoint... order=id&ascending=false... gives you all active markets
+    // ordered from newest to oldest." Sorting by event ID descending finds
+    // the newest-CREATED events — a just-opened window gets a new ID
+    // immediately, so this sidesteps the whole endDate mess (ascending hit
+    // an ancient stale-but-"active" backlog; descending-by-endDate
+    // overshot into unrelated far-future markets) rather than trying a
+    // third variant of the same wrong axis.
+    const { data } = await axios.get(`${GAMMA}/events`, {
+      params: { closed: false, active: true, limit: 500 },
+      // Both an ascending AND descending endDate sort were tried and both
+      // failed, for opposite, now-understood reasons: ascending surfaced
+      // an ancient backlog of permanently-stuck "active:true" garbage;
+      // descending surfaced long-dated, unrelated markets (elections,
+      // multi-year forecasts) instead — crypto windows are never more
+      // than hours out, so they can't win at either sorted extreme
+      // against an entirely unfiltered, platform-wide result set.
+      // Removing the sort assumption entirely this time.
       timeout: 10_000,
     });
-    markets = Array.isArray(data) ? data : (data?.markets || []);
+    const events = Array.isArray(data) ? data : (data?.events || []);
+    // Events "contain their associated markets" per the docs — flatten
+    // every event's nested markets array into one list, same shape the
+    // rest of this function already expects.
+    markets = events.flatMap(e => Array.isArray(e.markets) ? e.markets : []);
   } catch (err) {
     console.log(`❌ [BTC60] Gamma discovery fetch failed: ${err.message}`);
     return null;
