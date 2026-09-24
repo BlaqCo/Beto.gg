@@ -467,6 +467,14 @@ async function loadBotToggles(){
     cryptoOn = cc.BTC60_ENABLED != null ? cc.BTC60_ENABLED : cryptoOn;
     $('sportsToggle').classList.toggle('on', !!sportsOn);
     $('cryptoToggle').classList.toggle('on', !!cryptoOn);
+
+    // Combined status — this badge used to just mirror sports' own PAUSED
+    // flag, which made crypto running alone look identical to everything
+    // being off. Now it reflects the real, combined state of both.
+    if(sportsOn && cryptoOn){ $('mode').textContent = window.__lastFunnelMode || 'LIVE'; $('dot').style.background = 'var(--up)'; }
+    else if(sportsOn && !cryptoOn){ $('mode').textContent = 'SPORTS ONLY'; $('dot').style.background = 'var(--up)'; }
+    else if(!sportsOn && cryptoOn){ $('mode').textContent = 'CRYPTO ONLY'; $('dot').style.background = 'var(--up)'; }
+    else { $('mode').textContent = 'PAUSED'; $('dot').style.background = 'var(--amber)'; }
   }catch(e){}
 }
 async function toggleBot(which){
@@ -518,9 +526,8 @@ async function loadFunnel(){
     const age = f.ageMs==null ? '—' : (f.ageMs<60000 ? Math.round(f.ageMs/1000)+'s ago' : Math.round(f.ageMs/60000)+'m ago');
     const band = f.band ? Math.round(f.band[0]*100)+'–'+Math.round(f.band[1]*100)+'¢' : '';
     $('fmeta').textContent = band+' · $'+f.betSize+' · '+age;
-    $('ver').textContent = (f.version||'')+(f.paused?' · PAUSED':'');
-    $('mode').textContent = f.paused ? 'PAUSED' : (f.mode||'—');
-    $('dot').style.background = f.paused ? 'var(--amber)' : 'var(--up)';
+    $('ver').textContent = f.version||'';
+    window.__lastFunnelMode = f.mode||'—'; // loadBotToggles reads this to fill in the LIVE case
     if(f.slots) $('slots').textContent = f.slots.used + (f.slots.max<9999 ? '/'+f.slots.max : '');
 
     // Health strip — scan speed, BBO coverage, model coverage, proven leagues.
