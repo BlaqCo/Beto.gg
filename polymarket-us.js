@@ -295,6 +295,46 @@ const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
  * Genuinely speculative whether polymarket.us shares polymarket.com's
  * exact slug convention — logged clearly either way.
  */
+/**
+ * fetchCryptoMarketsV1() — the ACTUALLY DOCUMENTED discovery mechanism,
+ * confirmed directly from Polymarket US's own docs (docs.polymarket.us/
+ * faqs/crypto-faqs): "GET /v1/markets?categories=crypto&closed=false".
+ * Completely different endpoint family from the v2/sports/leagues sweep
+ * this file was trying before (which is confirmed, by its own response,
+ * to be scoped to "Games"/"Sport" only) — same /v1/ base this file
+ * already uses successfully for getBBO/getBookState/getSettlement, just
+ * never pointed at the crypto-specific listing path until now.
+ *
+ * Per the docs: automated markets carry a typed `assetPriceTerms` object
+ * (market type, window, strike/range bounds, priceToBeat once known).
+ * The EXACT field names inside assetPriceTerms for "which window length"
+ * aren't given verbatim in the FAQ text, so this still leans on the
+ * already-proven question-text duration matching as the primary filter,
+ * with assetPriceTerms logged raw so the real field names are visible for
+ * a tighter, schema-based filter next round instead of another guess.
+ */
+export async function fetchCryptoMarketsV1() {
+  let data;
+  try {
+    const res = await axios.get(`${GATEWAY}/v1/markets`, {
+      params: { categories: "crypto", closed: false },
+      timeout: 12_000,
+    });
+    data = res.data;
+  } catch (err) {
+    console.log(`  ❌ [fetchCryptoMarketsV1] request failed: ${err.message}`);
+    return [];
+  }
+  const markets = Array.isArray(data) ? data : (data?.markets || []);
+  console.log(`  🔬 CRYPTO V1 RAW SAMPLE: ${JSON.stringify(markets[0]).slice(0, 1000)}`);
+  console.log(`  🌐 [fetchCryptoMarketsV1] ${markets.length} total crypto markets returned`);
+  return markets.map(m => ({
+    ...m,
+    question: m.question || m.title || null,
+    yesPrice: extractYesPrice(m),
+  }));
+}
+
 export async function findCurrentBtcWindowBySlug(windowMinutes) {
   const stepMs = windowMinutes * 60_000;
   const windowStartMs = Math.floor(Date.now() / stepMs) * stepMs;
