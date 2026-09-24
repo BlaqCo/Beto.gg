@@ -282,6 +282,45 @@ const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
  * call. Raw-sample logging below is the safety net if it's wrong, same
  * discipline as every other discovery endpoint in this file.
  */
+/**
+ * findCurrentBtcWindowBySlug() — direct, computed lookup instead of
+ * sweeping a category listing. Confirmed from the app itself: 15-minute
+ * windows align exactly to :00/:15/:30/:45 ET, settled against CF
+ * Benchmarks' BRTI. The main polymarket.com platform names these windows
+ * "btc-updown-15m-<unix timestamp>" (observed directly). This tries that
+ * same convention, and plausible variants, against the CURRENT window's
+ * computed start time — a fundamentally different strategy than sweeping
+ * a sports/leagues taxonomy that's now confirmed not to contain crypto
+ * at all ("typeTitle":"Games","sectionTitle":"Sport" on an empty result).
+ * Genuinely speculative whether polymarket.us shares polymarket.com's
+ * exact slug convention — logged clearly either way.
+ */
+export async function findCurrentBtcWindowBySlug(windowMinutes) {
+  const stepMs = windowMinutes * 60_000;
+  const windowStartMs = Math.floor(Date.now() / stepMs) * stepMs;
+  const ts = Math.floor(windowStartMs / 1000);
+  const unit = windowMinutes === 60 ? "1h" : `${windowMinutes}m`;
+  const candidates = [
+    `btc-updown-${unit}-${ts}`,
+    `bitcoin-updown-${unit}-${ts}`,
+    `btc-up-or-down-${unit}-${ts}`,
+  ];
+  for (const slug of candidates) {
+    try {
+      const bbo = await getBBO(slug);
+      if (bbo?.bid && bbo?.ask) {
+        console.log(`  ✅ [findCurrentBtcWindowBySlug] "${slug}" is real — bid=${bbo.bid} ask=${bbo.ask}`);
+        // outcomePrices included so this matches the shape the rest of
+        // the calling code already expects from the sweep-based path.
+        return { slug, endDate: new Date(windowStartMs + stepMs).toISOString(), yesPrice: bbo.ask,
+                 outcomePrices: [String(bbo.ask), String(1 - bbo.ask)], question: `Bitcoin Up or Down (${unit})` };
+      }
+    } catch {}
+  }
+  console.log(`  🔍 [findCurrentBtcWindowBySlug] none of these matched: ${candidates.join(", ")}`);
+  return null;
+}
+
 export async function fetchCryptoMarkets() {
   // Last attempt tried "crypto" as a SPORT-level category — zero errors,
   // zero events, meaning that category name almost certainly doesn't
