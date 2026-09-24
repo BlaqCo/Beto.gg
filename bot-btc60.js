@@ -163,7 +163,11 @@ async function discoverCurrentBTC60Market() {
   let markets;
   try {
     const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 20 }, // tag param removed — confirmed unreliable, question text is what actually filters now
+      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 200 },
+      // Widened from 20 — sorted soonest-ending-first across EVERY crypto
+      // asset and EVERY window length (BTC/ETH/SOL/etc x 5m/15m/1h/4h) all
+      // mixed together, the one relevant window can easily get crowded out
+      // of a small batch before the text filter below ever sees it.
       timeout: 10_000,
     });
     markets = Array.isArray(data) ? data : (data?.markets || []);
@@ -282,8 +286,8 @@ async function exitPosition(reason, exitPrice) {
 // closes. This is a real, specific, stated strategy — not a placeholder —
 // but it has NOT been backtested against researchBTC60History's data yet,
 // which is worth doing once enough real trades exist under this rule.
-const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.66);
-const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 0.80);
+const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.63);
+const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 0.74);
 const ENTRY_WINDOW_MS = Number(process.env.BTC60_ENTRY_WINDOW_MIN || 15) * 60_000;
 
 function userEntryRule(market) {
@@ -295,7 +299,7 @@ function userEntryRule(market) {
 
   const side = yesPrice >= 0.5 ? "Up" : "Down";
   const price = yesPrice >= 0.5 ? yesPrice : 1 - yesPrice;
-  if (price < ENTRY_EDGE_MIN || price > ENTRY_EDGE_MAX) return null; // outside the 66-80% band
+  if (price < ENTRY_EDGE_MIN || price > ENTRY_EDGE_MAX) return null; // outside the 63-74% band
 
   return { side, price };
 }
