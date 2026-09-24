@@ -101,7 +101,7 @@ const amountVal = x => {
 };
 
 // ── Price extraction (handles ALL field formats from docs) ────────
-function extractYesPrice(m) {
+export function extractYesPrice(m) {
   // 1) marketSides — most accurate: find the "long" side (YES)
   const sides = Array.isArray(m.marketSides) ? m.marketSides : [];
   if (sides.length > 0) {
@@ -264,6 +264,64 @@ const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
 // point of caching. 60s means discovery's 39-request sweep now fires
 // roughly once every 2-3 scans instead of nearly every one, cutting real
 // cumulative request volume, not just moving it around.
+
+/**
+ * fetchCryptoMarkets() — discovers Bitcoin Up/Down markets on the SAME
+ * venue orders actually get placed on (gateway.polymarket.us), using the
+ * SAME proven v2/events pattern fetchSportsMoneylines() already uses
+ * successfully. Previously, bot-btc60.js/bot-btc15.js queried
+ * gamma-api.polymarket.com directly — a DIFFERENT platform entirely,
+ * whose market IDs are not orderable via buyYesFOK/closePositionLive at
+ * all. That mismatch, not a bad regex or a bad sort order, was very
+ * likely the real root cause of the whole "stale December 2025 data"
+ * saga — the old v1 tag-based Gamma approach was ALREADY proven broken
+ * for sports (see the comment below) and abandoned for exactly this v2
+ * pattern; crypto discovery just hadn't been moved onto it yet.
+ *
+ * Category name is a best-effort guess ("crypto") — not a verified live
+ * call. Raw-sample logging below is the safety net if it's wrong, same
+ * discipline as every other discovery endpoint in this file.
+ */
+let cryptoShapeDumped = false;
+export async function fetchCryptoMarkets() {
+  const urls = [`${GATEWAY}/v2/sports/crypto/events?limit=100`];
+  let results;
+  try {
+    results = await Promise.allSettled(urls.map(url => axios.get(url, { timeout: 12_000 })));
+  } catch (err) {
+    console.log(`  ❌ [fetchCryptoMarkets] request failed: ${err.message}`);
+    return [];
+  }
+
+  const out = [];
+  for (const r of results) {
+    if (r.status !== "fulfilled") {
+      console.log(`  ❌ [fetchCryptoMarkets] one request rejected: ${r.reason?.message || r.reason}`);
+      continue;
+    }
+    const data = r.value?.data;
+    if (!cryptoShapeDumped) {
+      cryptoShapeDumped = true;
+      console.log(`  🔬 CRYPTO V2 RAW SAMPLE: ${JSON.stringify(data).slice(0, 1200)}`);
+    }
+    const events = data?.events || (Array.isArray(data) ? data : []);
+    for (const ev of events) {
+      const evMarkets = ev?.markets || (ev?.market ? [ev.market] : []);
+      for (const m of evMarkets) {
+        if (!m.endDate) m.endDate = ev.endDate || ev.endTime || null;
+        if (!m.question) m.question = m.title || ev.title || ev.name || null;
+        const yesPrice = extractYesPrice(m);
+        out.push({ ...m, question: m.question, endDate: m.endDate, yesPrice });
+      }
+      // Some responses put market fields directly on the event, same as sports.
+      if (!evMarkets.length && (ev?.slug || ev?.id) && (ev?.outcomePrices || ev?.bestAsk || ev?.marketSides)) {
+        out.push({ ...ev, question: ev.question || ev.title, yesPrice: extractYesPrice(ev) });
+      }
+    }
+  }
+  console.log(`  🌐 crypto → ${out.length} market(s) from ${GATEWAY}/v2/sports/crypto/events`);
+  return out;
+}
 
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
