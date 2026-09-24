@@ -163,7 +163,7 @@ async function discoverCurrentBTC15Market() {
   let markets;
   try {
     const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 200 },
+      params: { closed: false, active: true, order: "endDate", ascending: true, limit: 500 },
       // Widened from 20 — sorted soonest-ending-first across EVERY crypto
       // asset and EVERY window length (BTC/ETH/SOL/etc x 5m/15m/1h/4h) all
       // mixed together, the one relevant window can easily get crowded out
@@ -182,6 +182,14 @@ async function discoverCurrentBTC15Market() {
   }
 
   const now = Date.now();
+  // Real diagnostic, not a guess: how many of the fetched results even
+  // MENTION bitcoin/up-or-down at all, before the duration check runs.
+  // If this is 0, the problem is the batch not containing BTC results at
+  // all (limit still too low, or something else crowding it out). If
+  // it's >0 but nothing passes the full check, the duration parsing
+  // itself is the thing to look at next.
+  const btcMentions = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||"")).length;
+  console.log(`  🔍 [DISCOVERY] ${btcMentions} of ${markets.length} fetched results mention bitcoin+up/down at all (before duration filtering)`);
   const current = markets.find(m => {
     if (!is15MinBtcQuestion(m.question || "")) return false;
     const endsAt = m.endDate ? new Date(m.endDate).getTime() : null;
