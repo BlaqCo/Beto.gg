@@ -48,6 +48,7 @@ export const SCHEMA = {
   KILL_FLOOR:    { v: 120,   label: "Stop below",          group: "Safety",  unit: "$",  step: 10,   min: 0,   max: 100000 },
   PAUSED:        { v: true,  label: "Sports on/off",         group: "Safety",  bool: true },
   BTC60_ENABLED: { v: false, label: "Crypto (BTC60) on/off", group: "Safety",  bool: true },
+  BTC15_ENABLED: { v: false, label: "Crypto (BTC15) on/off", group: "Safety",  bool: true },
 
   LEAGUE_FOCUS:  { v: [],    label: "Only these sports",    group: "Sports",  list: true },
   LEAGUE_BLOCK:  { v: [],    label: "Never these sports",   group: "Sports",  list: true },
