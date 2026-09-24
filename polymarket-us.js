@@ -282,9 +282,18 @@ const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
  * call. Raw-sample logging below is the safety net if it's wrong, same
  * discipline as every other discovery endpoint in this file.
  */
-let cryptoShapeDumped = false;
 export async function fetchCryptoMarkets() {
-  const urls = [`${GATEWAY}/v2/sports/crypto/events?limit=100`];
+  // Last attempt tried "crypto" as a SPORT-level category — zero errors,
+  // zero events, meaning that category name almost certainly doesn't
+  // exist under /v2/sports/. This codebase already has a proven, exactly
+  // analogous precedent: "esports" is a SPORT, while specific games
+  // (cs2/valorant/lol/dota-2) are LEAGUES underneath it. Trying "bitcoin"
+  // as a LEAGUE this time, in parallel with the original guess, rather
+  // than betting everything on one more single guess.
+  const urls = [
+    `${GATEWAY}/v2/sports/crypto/events?limit=100`,
+    `${GATEWAY}/v2/leagues/bitcoin/events?limit=100`,
+  ];
   let results;
   try {
     results = await Promise.allSettled(urls.map(url => axios.get(url, { timeout: 12_000 })));
@@ -294,16 +303,18 @@ export async function fetchCryptoMarkets() {
   }
 
   const out = [];
-  for (const r of results) {
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
     if (r.status !== "fulfilled") {
-      console.log(`  ❌ [fetchCryptoMarkets] one request rejected: ${r.reason?.message || r.reason}`);
+      console.log(`  ❌ [fetchCryptoMarkets] ${urls[i]} rejected: ${r.reason?.message || r.reason}`);
       continue;
     }
     const data = r.value?.data;
-    if (!cryptoShapeDumped) {
-      cryptoShapeDumped = true;
-      console.log(`  🔬 CRYPTO V2 RAW SAMPLE: ${JSON.stringify(data).slice(0, 1200)}`);
-    }
+    // UNCONDITIONAL now, not gated behind a one-time flag — that flag has
+    // now missed its window on multiple different diagnostics across this
+    // whole debugging thread. Always printing costs a little log noise,
+    // guarantees real evidence never gets missed again.
+    console.log(`  🔬 CRYPTO V2 RAW SAMPLE (${urls[i]}): ${JSON.stringify(data).slice(0, 800)}`);
     const events = data?.events || (Array.isArray(data) ? data : []);
     for (const ev of events) {
       const evMarkets = ev?.markets || (ev?.market ? [ev.market] : []);
@@ -319,7 +330,7 @@ export async function fetchCryptoMarkets() {
       }
     }
   }
-  console.log(`  🌐 crypto → ${out.length} market(s) from ${GATEWAY}/v2/sports/crypto/events`);
+  console.log(`  🌐 crypto → ${out.length} market(s) total across both attempted endpoints`);
   return out;
 }
 
