@@ -160,12 +160,27 @@ export async function researchBTC60History(limit = 300) {
 }
 
 async function discoverCurrentBTC60Market() {
-  // Direct, computed lookup FIRST — bypasses the whole discovery-sweep
-  // problem entirely by trying the exact slug this specific window should
-  // have, based on the app-confirmed :00/:15/:30/:45 ET alignment. Falls
-  // through to the sweep below only if none of the guessed slug patterns
-  // match — genuinely unproven whether polymarket.us shares
-  // polymarket.com's naming convention, so this is tried, not assumed.
+  // PRIMARY: the actually-documented endpoint, confirmed directly from
+  // Polymarket US's own docs — GET /v1/markets?categories=crypto. Tried
+  // first now; the slug-guessing and old sports/leagues sweep below are
+  // demoted to fallbacks since this one is no longer a guess.
+  try {
+    const docMarkets = await pm.fetchCryptoMarketsV1();
+    const now2 = Date.now();
+    const notStaleDoc = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now2; };
+    const docMatch = docMarkets.find(m => notStaleDoc(m) && /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||"") && isHourlyBtcQuestion(m.question||""));
+    if (docMatch) {
+      return { ...docMatch, outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
+    }
+  } catch (err) {
+    console.log(`  ❌ [BTC60] fetchCryptoMarketsV1 path threw: ${err.message}`);
+  }
+
+  // Direct, computed lookup — trying the exact slug this specific window
+  // should have, based on the app-confirmed :00/:15/:30/:45 ET alignment.
+  // Genuinely unproven whether polymarket.us shares polymarket.com's
+  // naming convention, so this is tried, not assumed, and only as a
+  // fallback now that the documented endpoint above exists.
   try {
     const direct = await pm.findCurrentBtcWindowBySlug(60);
     if (direct) return direct;
