@@ -195,6 +195,14 @@ async function discoverCurrentBTC60Market() {
   // row across redeploys. This is the actual evidence needed to build a
   // correct duration regex instead of guessing a third unverified format.
   if (btcMatches.length) console.log(`  🔍 [DISCOVERY] sample questions: ${btcMatches.slice(0,4).map(m=>JSON.stringify(m.question)).join(" | ")}`);
+  // The question text alone showed the SAME stale "December 19" 5-minute
+  // batch across multiple independent sessions, regardless of when
+  // queried — that's not a regex problem, it's a data problem. This next
+  // line checks whether Polymarket's OWN metadata on these same items
+  // agrees they're closed/expired (meaning the closed:false/active:true
+  // query params are being ignored) or claims they're still open (a
+  // deeper data issue). One or the other — this settles which.
+  if (btcMatches.length) console.log(`  🔍 [DISCOVERY] raw flags: ${btcMatches.slice(0,3).map(m=>JSON.stringify({closed:m.closed, active:m.active, endDate:m.endDate})).join(" | ")}`);
   const current = markets.find(m => {
     if (!isHourlyBtcQuestion(m.question || "")) return false;
     const endsAt = m.endDate ? new Date(m.endDate).getTime() : null;
