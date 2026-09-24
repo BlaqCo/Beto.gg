@@ -48,7 +48,16 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 const SCAN_INTERVAL_MS = 20_000;
 const RESEARCH_INTERVAL_MS = 60 * 60_000;
-const BET_SIZE_USD = Number(process.env.BTC60_BET_SIZE || 8);
+let BET_SIZE_USD = Number(process.env.BTC60_BET_SIZE || 0.50);
+// Deliberately below the shared $6.50 order-size tripwire in
+// polymarket-us.js — that floor exists for the sports side and is left
+// completely untouched; BTC60 bypasses it explicitly (override: true on
+// the order call below, logged every time as [TRIPWIRE BYPASSED], never
+// silent) because this is a stated, deliberate small-size testing
+// decision, not a bug to route around quietly. Polymarket's own
+// exchange-level minimum for this market is still unconfirmed — if $0.50
+// orders start failing to fill for a reason other than the tripwire,
+// that's the next thing to check.
 
 // Take-profit / stop-loss, as a move in price from entry — e.g. entered at
 // 55¢, TP_PCT=0.15 sells if it reaches 70¢; SL_PCT=0.10 sells if it drops
@@ -254,18 +263,27 @@ async function exitPosition(reason, exitPrice) {
   openPosition = null;
 }
 
-/**
- * DEFAULT_ENTRY_RULE — explicitly a placeholder, not a strategy. Follows
- * whichever side the market currently prices as favorite. This has NOT
- * been validated by researchBTC60History or anything else; it exists so
- * TP/SL has something real to exercise in DRY_RUN paper mode. Every time
- * it fires, it says so in the log — this is not meant to be mistaken for
- * a real signal later.
- */
-function defaultEntryRule(market) {
+// User-defined entry rule: bet the favored side only when its price sits
+// between 66% and 80%, AND only in the final 15 minutes before the hour
+// closes. This is a real, specific, stated strategy — not a placeholder —
+// but it has NOT been backtested against researchBTC60History's data yet,
+// which is worth doing once enough real trades exist under this rule.
+const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.66);
+const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 0.80);
+const ENTRY_WINDOW_MS = Number(process.env.BTC60_ENTRY_WINDOW_MIN || 15) * 60_000;
+
+function userEntryRule(market) {
   const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
   if (yesPrice == null) return null;
-  return yesPrice >= 0.5 ? { side: "Up", price: yesPrice } : { side: "Down", price: 1 - yesPrice };
+
+  const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
+  if (endsInMs == null || endsInMs > ENTRY_WINDOW_MS || endsInMs < 0) return null; // not yet in the last 15 minutes
+
+  const side = yesPrice >= 0.5 ? "Up" : "Down";
+  const price = yesPrice >= 0.5 ? yesPrice : 1 - yesPrice;
+  if (price < ENTRY_EDGE_MIN || price > ENTRY_EDGE_MAX) return null; // outside the 66-80% band
+
+  return { side, price };
 }
 
 export async function runBTC60ScanCycle() {
@@ -309,14 +327,14 @@ export async function runBTC60ScanCycle() {
   }
 
   // New window, no position yet — this is where DEFAULT_ENTRY_RULE fires.
-  const entry = defaultEntryRule(market);
+  const entry = userEntryRule(market);
   if (!entry) return;
-  console.log(`  ⚠️ UNVALIDATED ENTRY RULE firing: buying ${entry.side} @ ${(entry.price*100).toFixed(0)}¢ — this is a placeholder to exercise TP/SL, not a proven signal`);
+  console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
 
   try {
     const res = DRY_RUN
       ? { filled: true, fillPrice: entry.price }
-      : await pm.buyYesFOK({ slug: market.id, sizeUsd: BET_SIZE_USD, ask: entry.price });
+      : await pm.buyYesFOK({ slug: market.id, sizeUsd: BET_SIZE_USD, ask: entry.price, override: true });
     if (res.filled) {
       openPosition = { slug: market.id, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question };
       console.log(`  ✅ BTC60 ENTRY ${DRY_RUN ? "[DRY]" : ""} ${entry.side} $${BET_SIZE_USD} @ ${(entry.price*100).toFixed(0)}¢`);
