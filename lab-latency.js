@@ -27,7 +27,13 @@ import * as pm from "./polymarket-us.js";
 export const LAT = {
   ENABLED:   process.env.LATENCY_LAB === "true",
   SCAN_MS:   3_000,       // poll fast — we're measuring reaction time
-  LEAGUES:   ["CS2", "CSGO", "COUNTER-STRIKE", "VALORANT", "LOL", "LCK", "LEC", "LPL", "LCS"],
+  // Slug/league tokens for the three games we care about. Polymarket labels
+  // some markets only as "ESPORTS", so the title is checked too.
+  LEAGUES:   ["CS2", "CSGO", "COUNTER-STRIKE", "COUNTERSTRIKE",
+              "VALORANT", "VCT",
+              "LOL", "LEAGUE-OF-LEGENDS", "LEAGUE OF LEGENDS", "LCK", "LEC", "LPL", "LCS", "MSI", "WORLDS"],
+  // Extra safety: markets tagged ESPORTS whose title names one of the games.
+  TITLE_HINTS: ["COUNTER-STRIKE", "COUNTER STRIKE", "CS2", "VALORANT", "LEAGUE OF LEGENDS"],
   MOVE_MIN:  0.02,        // a "reprice" means the price moved at least 2¢
   WATCH_MS:  90_000,      // how long to watch after an event before giving up
   TRACK_MAX: 12,
@@ -63,8 +69,11 @@ export function latencyStats() {
 }
 
 const inLeague = m => {
-  const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""}`.toUpperCase();
-  return LAT.LEAGUES.some(t => hay.includes(t));
+  const hay = `${m.league || ""} ${m.slug || ""} ${m.question || ""} ${m.subcategory || ""}`.toUpperCase();
+  if (LAT.LEAGUES.some(t => hay.includes(t))) return true;
+  // Some markets are only tagged ESPORTS — check the title for the game name.
+  if (hay.includes("ESPORT") && LAT.TITLE_HINTS.some(t => hay.includes(t))) return true;
+  return false;
 };
 
 export async function runLatencyCycle() {
@@ -75,7 +84,18 @@ export async function runLatencyCycle() {
     lastRun = Date.now(); cycles++;
 
     const markets = await pm.fetchSportsMoneylines();
-    const live = markets.filter(m => m.isLive && inLeague(m)).slice(0, LAT.TRACK_MAX);
+    const allLive = markets.filter(m => m.isLive);
+    const live = allLive.filter(inLeague).slice(0, LAT.TRACK_MAX);
+
+    if (cycles % 20 === 1) {
+      const esports = allLive.filter(m => `${m.league||""} ${m.slug||""} ${m.question||""}`.toUpperCase().includes("ESPORT"));
+      console.log(`⏱ Latency lab: ${live.length} tracked of ${allLive.length} live ` +
+                  `(${esports.length} tagged esports)`);
+      if (!live.length && esports.length) {
+        // Show what we're rejecting so a naming mismatch is obvious, not silent.
+        console.log(`⏱   esports seen but not matched: ${esports.slice(0, 4).map(m => m.slug).join(", ")}`);
+      }
+    }
     if (!live.length) return;
 
     const now = Date.now();
