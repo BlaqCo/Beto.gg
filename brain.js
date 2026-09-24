@@ -243,6 +243,8 @@ function answerSettings(s) {
 const QUESTIONS = [
   { re: /\b(analytics|tracker|what.*(data|learned)|edge (report|table)|segments?|breakdown)\b/i,
     fn: () => "__ANALYTICS__" },
+  { re: /\b(near.?miss|costing|blocking|what.*(missing|skipping)|which gate)\b/i,
+    fn: () => "__NEARMISS__" },
   { re: /\b(promising|look good|worth betting|what.*(watch|tracking|board)|any (good )?(games|plays|bets))\b/i,
     fn: (s) => answerPromising(s) },
   { re: /\b(suggest|recommend|what).*(edge|band|range)\b|\bbest (edge|band|range)\b/i,
@@ -349,6 +351,14 @@ export async function answer(text, history = []) {
       if (out === "__ANALYTICS__") {
         try { return { answer: renderAnalytics(await tracker.analytics()), source: "tracker" }; }
         catch (e) { return { answer: `Tracker unavailable: ${e.message}`, source: "data" }; }
+      }
+      if (out === "__NEARMISS__") {
+        try {
+          const nm = await tracker.nearMissSummary({ hours: 24 });
+          if (!nm.total) return { answer: nm.verdict, source: "tracker" };
+          const lines = nm.gates.slice(0, 4).map(g => `${g.gate}: ${g.n} misses, avg ${g.avgGap}¢ short`);
+          return { answer: `${nm.verdict}\n\n${lines.join("\n")}`, source: "tracker" };
+        } catch (e) { return { answer: `Near-miss data unavailable: ${e.message}`, source: "data" }; }
       }
       return { answer: out, source: "data" };
     }
