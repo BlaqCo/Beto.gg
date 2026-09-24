@@ -266,7 +266,8 @@ button:active{transform:translateY(1px)}
     <div class="ver" id="ver">—</div>
     <div class="botctl-compact">
       <button class="minitoggle" id="sportsToggle" onclick="toggleBot('sports')" title="Sports"><span>🏈</span></button>
-      <button class="minitoggle" id="cryptoToggle" onclick="toggleBot('crypto')" title="Crypto"><span>₿</span></button>
+      <button class="minitoggle" id="cryptoToggle" onclick="toggleBot('crypto60')" title="Crypto BTC60"><span>₿60</span></button>
+      <button class="minitoggle" id="crypto15Toggle" onclick="toggleBot('crypto15')" title="Crypto BTC15"><span>₿15</span></button>
     </div>
   </div>
 </div>
@@ -456,32 +457,39 @@ async function loadConfig(){
   }
 }
 
-let sportsOn = null, cryptoOn = null, toggleBusy = false;
+let sportsOn = null, cryptoOn = null, crypto15On = null, toggleBusy = false;
 async function loadBotToggles(){
   try{
     const cfgRes = await (await fetch('/api/config?t='+Date.now())).json();
     const cc = cfgRes.config || {};
     sportsOn = cc.PAUSED != null ? !cc.PAUSED : sportsOn;
     cryptoOn = cc.BTC60_ENABLED != null ? cc.BTC60_ENABLED : cryptoOn;
+    crypto15On = cc.BTC15_ENABLED != null ? cc.BTC15_ENABLED : crypto15On;
     $('sportsToggle').classList.toggle('on', !!sportsOn);
     $('cryptoToggle').classList.toggle('on', !!cryptoOn);
+    $('crypto15Toggle').classList.toggle('on', !!crypto15On);
 
-    // Combined status — this badge used to just mirror sports' own PAUSED
-    // flag, which made crypto running alone look identical to everything
-    // being off. Now it reflects the real, combined state of both.
-    if(sportsOn && cryptoOn){ $('mode').textContent = window.__lastFunnelMode || 'LIVE'; $('dot').style.background = 'var(--up)'; }
-    else if(sportsOn && !cryptoOn){ $('mode').textContent = 'SPORTS ONLY'; $('dot').style.background = 'var(--up)'; }
-    else if(!sportsOn && cryptoOn){ $('mode').textContent = 'CRYPTO ONLY'; $('dot').style.background = 'var(--up)'; }
-    else { $('mode').textContent = 'PAUSED'; $('dot').style.background = 'var(--amber)'; }
+    // Combined status across all three — lists whichever are actually on
+    // instead of a binary paused/live that can't represent "two of three".
+    const onLabels = [];
+    if(sportsOn) onLabels.push('SPORTS');
+    if(cryptoOn) onLabels.push('BTC60');
+    if(crypto15On) onLabels.push('BTC15');
+    if(onLabels.length === 3){ $('mode').textContent = window.__lastFunnelMode || 'LIVE'; $('dot').style.background = 'var(--up)'; }
+    else if(onLabels.length === 0){ $('mode').textContent = 'PAUSED'; $('dot').style.background = 'var(--amber)'; }
+    else { $('mode').textContent = onLabels.join('+')+' ONLY'; $('dot').style.background = 'var(--up)'; }
   }catch(e){}
 }
 async function toggleBot(which){
   if(toggleBusy) return;
   toggleBusy = true;
-  const btn = $(which==='sports' ? 'sportsToggle' : 'cryptoToggle');
+  const btnId = which==='sports' ? 'sportsToggle' : which==='crypto60' ? 'cryptoToggle' : 'crypto15Toggle';
+  const btn = $(btnId);
   btn.disabled = true;
   try{
-    const body = which==='sports' ? { PAUSED: !!sportsOn } : { BTC60_ENABLED: !cryptoOn };
+    const body = which==='sports' ? { PAUSED: !!sportsOn }
+      : which==='crypto60' ? { BTC60_ENABLED: !cryptoOn }
+      : { BTC15_ENABLED: !crypto15On };
     const res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     if(!res.ok) throw new Error('save failed');
     await loadBotToggles();
