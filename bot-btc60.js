@@ -160,6 +160,18 @@ export async function researchBTC60History(limit = 300) {
 }
 
 async function discoverCurrentBTC60Market() {
+  // Direct, computed lookup FIRST — bypasses the whole discovery-sweep
+  // problem entirely by trying the exact slug this specific window should
+  // have, based on the app-confirmed :00/:15/:30/:45 ET alignment. Falls
+  // through to the sweep below only if none of the guessed slug patterns
+  // match — genuinely unproven whether polymarket.us shares
+  // polymarket.com's naming convention, so this is tried, not assumed.
+  try {
+    const direct = await pm.findCurrentBtcWindowBySlug(60);
+    if (direct) return direct;
+  } catch (err) {
+    console.log(`  ❌ [BTC60] direct slug lookup threw: ${err.message}`);
+  }
   // REWIRED to the correct venue: fetchCryptoMarkets() (polymarket-us.js)
   // queries gateway.polymarket.us — the SAME platform orders actually get
   // placed on — instead of gamma-api.polymarket.com, a completely
