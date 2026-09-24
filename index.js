@@ -663,6 +663,7 @@ app.listen(PORT, () => {
 // ── Bot loaders + independent scanners ───────────────────────────
 let sportsLoadError = null;
 let btc60Bot = null, btc60LoadError = null;
+let btc15Bot = null, btc15LoadError = null;
 async function loadBots() {
   try {
     const botMod = await import("./bot-sports.js");
@@ -684,6 +685,16 @@ async function loadBots() {
   } catch (err) {
     btc60LoadError = `${err.message} | ${(err.stack || "").split("\n").slice(1, 3).join(" | ")}`;
     console.error("❌❌ BTC60 BOT FAILED TO LOAD:", err.message);
+  }
+  // Fully independent of both sports AND btc60 — its own try/catch, so a
+  // failure here cannot take either of the other two down, and vice versa.
+  try {
+    btc15Bot = await import("./bot-btc15.js");
+    btc15LoadError = null;
+    console.log("[INFO] Loaded bot-btc15.js");
+  } catch (err) {
+    btc15LoadError = `${err.message} | ${(err.stack || "").split("\n").slice(1, 3).join(" | ")}`;
+    console.error("❌❌ BTC15 BOT FAILED TO LOAD:", err.message);
   }
   // Crypto bot disabled — not legal in California
   console.log("[INFO] Crypto bot disabled (CA regulations)");
@@ -823,6 +834,21 @@ async function loadBots() {
       }
     } catch (err) {
       console.error("BTC60 scan error:", err.message, err.stack?.split("\n")[1]);
+    }
+  }, 20_000);
+
+  // BTC15 scanner — same pattern, own interval, own error boundary.
+  let btc15ScanCount = 0;
+  setInterval(async () => {
+    try {
+      btc15ScanCount++;
+      if (btc15Bot?.runBTC15ScanCycle) {
+        await btc15Bot.runBTC15ScanCycle();
+      } else if (btc15ScanCount === 1) {
+        console.error(`[ERROR] btc15Bot not loaded — reason: ${btc15LoadError || "unknown"}`);
+      }
+    } catch (err) {
+      console.error("BTC15 scan error:", err.message, err.stack?.split("\n")[1]);
     }
   }, 20_000);
 
