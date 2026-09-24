@@ -96,6 +96,11 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .togglesw.on{background:rgba(61,255,158,.18);border-color:rgba(61,255,158,.4)}
 .togglesw.on .knob{left:22px;background:var(--up)}
 .togglesw:disabled{opacity:.5;cursor:default}
+.botctl-compact{display:flex;gap:5px;margin-top:6px}
+.minitoggle{width:30px;height:26px;border-radius:8px;border:1px solid var(--line);
+  background:#1A2338;font-size:13px;cursor:pointer;padding:0;opacity:.4;transition:all .15s}
+.minitoggle.on{opacity:1;background:rgba(61,255,158,.15);border-color:rgba(61,255,158,.4)}
+.minitoggle:disabled{cursor:default}
 .cryptopanel{position:relative;border-radius:16px;padding:2px;margin-bottom:14px;
   background:linear-gradient(135deg,#F7931A,#9945FF,#14F195,#F7931A);background-size:300% 300%;
   animation:cryptoborder 6s ease infinite}
@@ -259,29 +264,10 @@ button:active{transform:translateY(1px)}
   <div class="state">
     <span class="pill"><span class="dot live" id="dot"></span><span id="mode">CONNECTING</span></span>
     <div class="ver" id="ver">—</div>
-  </div>
-</div>
-
-<div class="verdict">
-  <div class="vlabel">NET POSITION</div>
-  <div class="vrow">
-    <div class="vnum" id="net">—</div>
-    <div class="vside">
-      <div>realized <b id="realized">—</b></div>
-      <div class="openrow" onclick="toggleOpenDrawer()">open <b id="open">—</b> <span class="drawertoggle" id="drawerToggle">▾</span></div>
+    <div class="botctl-compact">
+      <button class="minitoggle" id="sportsToggle" onclick="toggleBot('sports')" title="Sports"><span>🏈</span></button>
+      <button class="minitoggle" id="cryptoToggle" onclick="toggleBot('crypto')" title="Crypto"><span>₿</span></button>
     </div>
-  </div>
-  <div class="opendrawer" id="openDrawer" style="display:none"></div>
-</div>
-
-<div class="botctl">
-  <div class="botctl-row">
-    <span class="botctl-label">🏈 Sports</span>
-    <button class="togglesw" id="sportsToggle" onclick="toggleBot('sports')"><span class="knob"></span></button>
-  </div>
-  <div class="botctl-row">
-    <span class="botctl-label">₿ Crypto</span>
-    <button class="togglesw" id="cryptoToggle" onclick="toggleBot('crypto')"><span class="knob"></span></button>
   </div>
 </div>
 
@@ -472,6 +458,53 @@ async function loadConfig(){
   }
 }
 
+let sportsOn = null, cryptoOn = null, toggleBusy = false;
+async function loadBotToggles(){
+  try{
+    const cfgRes = await (await fetch('/api/config?t='+Date.now())).json();
+    const cc = cfgRes.config || {};
+    sportsOn = cc.PAUSED != null ? !cc.PAUSED : sportsOn;
+    cryptoOn = cc.BTC60_ENABLED != null ? cc.BTC60_ENABLED : cryptoOn;
+    $('sportsToggle').classList.toggle('on', !!sportsOn);
+    $('cryptoToggle').classList.toggle('on', !!cryptoOn);
+  }catch(e){}
+}
+async function toggleBot(which){
+  if(toggleBusy) return;
+  toggleBusy = true;
+  const btn = $(which==='sports' ? 'sportsToggle' : 'cryptoToggle');
+  btn.disabled = true;
+  try{
+    const body = which==='sports' ? { PAUSED: !!sportsOn } : { BTC60_ENABLED: !cryptoOn };
+    const res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if(!res.ok) throw new Error('save failed');
+    await loadBotToggles();
+  }catch(e){}
+  finally{ btn.disabled = false; toggleBusy = false; }
+}
+
+let currentFetchLimit = null, fetchAdjustBusy = false;
+async function adjustFetchLimit(delta){
+  if(fetchAdjustBusy || currentFetchLimit==null) return;
+  fetchAdjustBusy = true;
+  const next = Math.max(5, currentFetchLimit + delta);
+  const btns = document.querySelectorAll('.fetchbtn');
+  btns.forEach(function(b){ b.disabled = true; });
+  const prevLabel = $('fetchLimitVal').textContent;
+  $('fetchLimitVal').textContent = '\u2026';
+  try{
+    const res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ BBO_FETCH_LIMIT: next }) });
+    if(!res.ok) throw new Error('save failed');
+    currentFetchLimit = next;
+    $('fetchLimitVal').textContent = next;
+  }catch(e){
+    $('fetchLimitVal').textContent = prevLabel;
+  }finally{
+    btns.forEach(function(b){ b.disabled = false; });
+    fetchAdjustBusy = false;
+  }
+}
+
 async function loadFunnel(){
   try{
     const f = await (await fetch('/api/funnel?t='+Date.now())).json();
@@ -522,10 +555,6 @@ async function loadStats(){
   try{
     const d = await (await fetch('/')).json();
     const s = d.stats||{};
-    const realized = parseFloat(s.pnl||0), open = parseFloat(s.openPnl||0), net = realized+open;
-    $('net').textContent = money(net); $('net').className = 'vnum '+cls(net);
-    $('realized').textContent = money(realized);
-    $('open').textContent = money(open);
     const bal = (s.liveBalance!=null) ? s.liveBalance : s.dryBalance;
     if(bal!=null){ $('bal').textContent = '$'+Number(bal).toFixed(2);
       $('balsub').textContent = (d.settings&&d.settings.dryRun) ? 'paper' : 'cash'; }
@@ -550,23 +579,11 @@ function renderPositionRows(p){
       '<span class="pl '+cls(pl)+'">'+(pl==null?'—':money(pl))+'</span></div>';
   }).join('');
 }
-let lastPositions = [];
 async function loadPositions(){
   try{
     const p = await (await fetch('/api/positions')).json();
-    lastPositions = p;
     $('positions').innerHTML = renderPositionRows(p);
-    // Keep the top-card drawer in sync too, if it's open — same data,
-    // rendered in both places, never fetched twice.
-    if($('openDrawer').style.display !== 'none') $('openDrawer').innerHTML = renderPositionRows(p);
   }catch(e){}
-}
-function toggleOpenDrawer(){
-  const d = $('openDrawer'), t = $('drawerToggle');
-  const opening = d.style.display === 'none';
-  d.style.display = opening ? 'block' : 'none';
-  t.classList.toggle('open', opening);
-  if(opening) d.innerHTML = renderPositionRows(lastPositions);
 }
 
 async function loadLog(){
