@@ -85,6 +85,31 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .fetchbtn:active{background:#141E33}
 .fetchbtn:disabled{opacity:.4;cursor:default}
 .fetchval{font-size:13px;font-weight:700;color:var(--fg);min-width:24px;text-align:center}
+.botctl{display:flex;flex-direction:column;gap:9px;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;padding:14px 16px;margin-bottom:14px}
+.botctl-row{display:flex;align-items:center;justify-content:space-between}
+.botctl-label{font-size:13px;font-weight:700;color:var(--fg)}
+.togglesw{width:44px;height:24px;border-radius:99px;border:1px solid var(--line);background:#1A2338;
+  position:relative;cursor:pointer;padding:0;transition:background .15s}
+.togglesw .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#5A6478;transition:left .15s,background .15s}
+.togglesw.on{background:rgba(61,255,158,.18);border-color:rgba(61,255,158,.4)}
+.togglesw.on .knob{left:22px;background:var(--up)}
+.togglesw:disabled{opacity:.5;cursor:default}
+.cryptopanel{position:relative;border-radius:16px;padding:2px;margin-bottom:14px;
+  background:linear-gradient(135deg,#F7931A,#9945FF,#14F195,#F7931A);background-size:300% 300%;
+  animation:cryptoborder 6s ease infinite}
+@keyframes cryptoborder{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.cryptohead,.cryptogrid{background:#0B1120;border-radius:14px}
+.cryptohead{display:flex;align-items:center;gap:8px;padding:12px 16px 8px}
+.cryptoicon{font-size:16px}
+.cryptotitle{font-size:12px;font-weight:900;letter-spacing:.08em;
+  background:linear-gradient(90deg,#F7931A,#9945FF,#14F195);-webkit-background-clip:text;
+  background-clip:text;color:transparent}
+.cryptogrid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1px;padding:0 8px 12px}
+.ccell{padding:4px 8px;text-align:center}
+.ccell .clabel{font-size:8px;letter-spacing:.06em}
+.ccell .cval{font-size:15px;font-weight:800;margin-top:2px}
 .hchip.actionable{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .cell{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:10px 9px}
@@ -249,6 +274,17 @@ button:active{transform:translateY(1px)}
   <div class="opendrawer" id="openDrawer" style="display:none"></div>
 </div>
 
+<div class="botctl">
+  <div class="botctl-row">
+    <span class="botctl-label">🏈 Sports</span>
+    <button class="togglesw" id="sportsToggle" onclick="toggleBot('sports')"><span class="knob"></span></button>
+  </div>
+  <div class="botctl-row">
+    <span class="botctl-label">₿ Crypto</span>
+    <button class="togglesw" id="cryptoToggle" onclick="toggleBot('crypto')"><span class="knob"></span></button>
+  </div>
+</div>
+
 <div class="funnel">
   <div class="fhead">
     <div class="ftitle">SCAN PIPELINE</div>
@@ -269,6 +305,19 @@ button:active{transform:translateY(1px)}
   <div class="cell"><div class="clabel">WIN RATE</div><div class="cval" id="wr">—</div><div class="csub" id="wrsub">settled</div></div>
   <div class="cell"><div class="clabel">OPEN</div><div class="cval" id="slots">—</div><div class="csub">positions</div></div>
   <div class="cell"><div class="clabel">VOLUME</div><div class="cval" id="vol">—</div><div class="csub" id="volsub">lifetime</div></div>
+</div>
+
+<div class="cryptopanel" id="cryptoPanel" style="display:none">
+  <div class="cryptohead">
+    <span class="cryptoicon">₿</span>
+    <span class="cryptotitle">BTC60 CRYPTO</span>
+  </div>
+  <div class="cryptogrid">
+    <div class="ccell"><div class="clabel">RECORD</div><div class="cval" id="cWl">—</div></div>
+    <div class="ccell"><div class="clabel">WIN RATE</div><div class="cval" id="cWr">—</div></div>
+    <div class="ccell"><div class="clabel">P/L</div><div class="cval" id="cPnl">—</div></div>
+    <div class="ccell"><div class="clabel">ROI</div><div class="cval" id="cRoi">—</div></div>
+  </div>
 </div>
 
 <div class="ask">
@@ -688,6 +737,18 @@ async function loadLatency(){
   }catch(e){ $('latPanel').style.display='none'; }
 }
 
+async function loadCryptoStats(){
+  try{
+    const a = await (await fetch('/api/analytics?t='+Date.now())).json();
+    const btc = (a.byLeague||[]).find(x => x.key === 'BTC60');
+    if(!btc || btc.n === 0){ $('cryptoPanel').style.display='none'; return; }
+    $('cryptoPanel').style.display='block';
+    $('cWl').textContent = btc.w+'W / '+btc.l+'L';
+    $('cWr').textContent = btc.winRate+'%';
+    $('cPnl').innerHTML = '<span class="'+cls(btc.pnl)+'">'+money(btc.pnl)+'</span>';
+    $('cRoi').innerHTML = '<span class="'+cls(btc.roi)+'">'+(btc.roi>=0?'+':'')+btc.roi+'%</span>';
+  }catch(e){ $('cryptoPanel').style.display='none'; }
+}
 async function loadEdge(){
   try{
     const a = await (await fetch('/api/analytics?t='+Date.now())).json();
@@ -747,7 +808,7 @@ $('clearHist').onclick = async function(){
   }catch(e){ toast(false,'Could not reach the bot'); }
 };
 
-function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); }
+function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); loadBotToggles(); loadCryptoStats(); }
 loadConfig(); tick(); setInterval(tick, 4000);
 </script>
 </body>
