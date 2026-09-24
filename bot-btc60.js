@@ -182,14 +182,15 @@ async function discoverCurrentBTC60Market() {
   }
 
   const now = Date.now();
-  // Real diagnostic, not a guess: how many of the fetched results even
-  // MENTION bitcoin/up-or-down at all, before the duration check runs.
-  // If this is 0, the problem is the batch not containing BTC results at
-  // all (limit still too low, or something else crowding it out). If
-  // it's >0 but nothing passes the full check, the duration parsing
-  // itself is the thing to look at next.
-  const btcMatches = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
-  console.log(`  🔍 [DISCOVERY] ${btcMatches.length} of ${markets.length} fetched results mention bitcoin+up/down at all (before duration filtering)`);
+  // CONFIRMED via production logs: Polymarket's own closed/active fields
+  // cannot be trusted — a market with endDate 2025-12-19 (nine months
+  // past) was still being reported as closed:false, active:true, every
+  // single query, regardless of when asked. Checking the date ourselves,
+  // FIRST, before duration matching, is now the primary defense against
+  // that — not an afterthought that duration-mismatch was masking.
+  const notStale = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now; };
+  const btcMatches = markets.filter(m => notStale(m) && /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
+  console.log(`  🔍 [DISCOVERY] ${btcMatches.length} of ${markets.length} fetched results are genuinely fresh BTC up/down markets (before duration filtering; stale closed:false/active:true entries excluded)`);
   // Print the REAL question text on every scan, not gated behind a
   // one-time flag — that flag has now missed its window three times in a
   // row across redeploys. This is the actual evidence needed to build a
@@ -203,12 +204,7 @@ async function discoverCurrentBTC60Market() {
   // query params are being ignored) or claims they're still open (a
   // deeper data issue). One or the other — this settles which.
   if (btcMatches.length) console.log(`  🔍 [DISCOVERY] raw flags: ${btcMatches.slice(0,3).map(m=>JSON.stringify({closed:m.closed, active:m.active, endDate:m.endDate})).join(" | ")}`);
-  const current = markets.find(m => {
-    if (!isHourlyBtcQuestion(m.question || "")) return false;
-    const endsAt = m.endDate ? new Date(m.endDate).getTime() : null;
-    if (endsAt == null || endsAt <= now) return false; // stale/closed despite the query filter
-    return true;
-  });
+  const current = btcMatches.find(m => isHourlyBtcQuestion(m.question || ""));
   if (!current) {
     console.log(`⚠️ [BTC60] No open hourly BTC up/down market found among ${markets.length} active results — check the raw sample above`);
     return null;
