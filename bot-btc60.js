@@ -188,8 +188,13 @@ async function discoverCurrentBTC60Market() {
   // all (limit still too low, or something else crowding it out). If
   // it's >0 but nothing passes the full check, the duration parsing
   // itself is the thing to look at next.
-  const btcMentions = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||"")).length;
-  console.log(`  🔍 [DISCOVERY] ${btcMentions} of ${markets.length} fetched results mention bitcoin+up/down at all (before duration filtering)`);
+  const btcMatches = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
+  console.log(`  🔍 [DISCOVERY] ${btcMatches.length} of ${markets.length} fetched results mention bitcoin+up/down at all (before duration filtering)`);
+  // Print the REAL question text on every scan, not gated behind a
+  // one-time flag — that flag has now missed its window three times in a
+  // row across redeploys. This is the actual evidence needed to build a
+  // correct duration regex instead of guessing a third unverified format.
+  if (btcMatches.length) console.log(`  🔍 [DISCOVERY] sample questions: ${btcMatches.slice(0,4).map(m=>JSON.stringify(m.question)).join(" | ")}`);
   const current = markets.find(m => {
     if (!isHourlyBtcQuestion(m.question || "")) return false;
     const endsAt = m.endDate ? new Date(m.endDate).getTime() : null;
