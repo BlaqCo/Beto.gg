@@ -152,7 +152,20 @@ async function discoverCurrentBTC15Market() {
   try {
     const docMarkets = await pm.fetchCryptoMarketsV1();
     const now2 = Date.now();
-    const notStaleDoc = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now2; };
+    // FIX: checking endDate > now alone isn't enough — the docs confirm
+    // windows are listed ~12 hours before they actually START, meaning
+    // ~48 future-queued 15-min windows (and ~24 hourly) sit in the batch
+    // at any moment, ALL with endDate > now, but only ONE has genuinely
+    // started. A future-queued window's marketSides have no price field
+    // at all (confirmed directly: raw outcomePrices "["0","0"]") — that's
+    // the real cause of the persistent 50¢ default, not thin liquidity on
+    // an active market. Now requiring startDate <= now too, so only the
+    // single genuinely-live window can match.
+    const notStaleDoc = m => {
+      const end = m.endDate ? new Date(m.endDate).getTime() : null;
+      const start = m.startDate ? new Date(m.startDate).getTime() : null;
+      return end != null && end > now2 && start != null && start <= now2;
+    };
     // Primary: text-based match — only ever confirmed against the WRONG
     // platform's question phrasing, so treated as a hint, not ground truth.
     let docMatch = docMarkets.find(m => notStaleDoc(m) && /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||"") && is15MinBtcQuestion(m.question||""));
@@ -219,7 +232,13 @@ async function discoverCurrentBTC15Market() {
   // Still checking staleness ourselves — Polymarket's own closed/active
   // flags were proven unreliable on the OLD endpoint; keeping this
   // defensively even on the new one until it's proven trustworthy too.
-  const notStale = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now; };
+  // Same start-time fix as the primary path above — same reasoning,
+  // applied here for consistency even though this fallback rarely runs now.
+  const notStale = m => {
+    const end = m.endDate ? new Date(m.endDate).getTime() : null;
+    const start = m.startDate ? new Date(m.startDate).getTime() : null;
+    return end != null && end > now && start != null && start <= now;
+  };
   const anyBtcMention = markets.filter(m => /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||""));
   const btcMatches = anyBtcMention.filter(notStale);
   console.log(`  🔍 [DISCOVERY] ${anyBtcMention.length} of ${markets.length} mention bitcoin+up/down at all | ${btcMatches.length} of those are genuinely fresh`);
