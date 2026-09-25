@@ -328,26 +328,25 @@ async function checkNaturalResolution15() {
   if (!openPosition) return;
   if (new Date(openPosition.endTime).getTime() > Date.now()) return; // window still open
 
-  let market;
+  // REWIRED — the old approach called the WRONG platform's single-market
+  // Gamma endpoint (confirmed via real logs: 422 error, every scan, for
+  // over an hour, leaving the position permanently stuck and blocking
+  // every future entry). getTradeHistory() already exists, already hits
+  // the CORRECT, authenticated venue (/v1/portfolio/activities), and is
+  // already PROVEN working — it's where the real "pl=$0.08 won=true" log
+  // line came from. Using that instead of a second, broken lookup.
+  let history;
   try {
-    const { data } = await axios.get(`${GAMMA}/markets/${openPosition.slug}`, { timeout: 10_000 });
-    market = data;
+    history = await pm.getTradeHistory({ force: true });
   } catch (err) {
-    console.log(`  ❌ [BTC15] Couldn't fetch resolution for ${openPosition.slug}: ${err.message} — will retry next scan`);
+    console.log(`  ❌ [BTC15] Couldn't fetch trade history for ${openPosition.slug}: ${err.message} — will retry next scan`);
     return;
   }
-  if (!market || market.closed !== true || !Array.isArray(market.outcomePrices)) return; // not resolved yet, try again next scan
+  const resolution = (history || []).find(a => a._type === "resolution" && a.marketSlug === openPosition.slug);
+  if (!resolution) return; // not resolved yet on Polymarket's side — try again next scan
 
-  const prices = market.outcomePrices.map(Number);
-  const resolvedUp = prices[0] === 1;
-  const won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
-  const shares = openPosition.sizeUsd / openPosition.entryPrice;
-  // Same expiryPnl formula the sports bot uses — win pays out shares at
-  // $1 each minus the stake, loss is the full stake gone. No fee estimate
-  // here (unlike sports' feeFor()) — BTC15 fee structure isn't confirmed,
-  // so this is a simplification, not a claim of exact precision.
-  const pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
-
+  const won = !!resolution.won;
+  const pnl = resolution.realizedPnl;
   console.log(`  ${won ? "✅ WIN" : "❌ LOSS"} | BTC15 | ${(openPosition.question || "").slice(0, 50)} | pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
   try {
     await tracker.recordSettle(openPosition.slug, { won, pnl, exitPrice: won ? 1 : 0, reason: "expiry",
