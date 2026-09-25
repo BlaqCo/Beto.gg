@@ -351,6 +351,11 @@ export async function fetchCryptoMarketsV1() {
     console.log(`  🔬 CRYPTO V1 — top-level keys on this market: ${Object.keys(withTerms).join(", ")}`);
     console.log(`  🔬 CRYPTO V1 — assetPriceTerms keys: ${withTerms.assetPriceTerms ? Object.keys(withTerms.assetPriceTerms).join(", ") : "n/a"}`);
     console.log(`  🔬 CRYPTO V1 — extractYesPrice result: ${extractYesPrice(withTerms)}`);
+    // The previous dump got cut off right at marketSides' price field —
+    // dumping ONLY marketSides directly (much smaller than the whole
+    // object) so nothing truncates it away this time.
+    console.log(`  🔬 CRYPTO V1 — marketSides in full: ${JSON.stringify(withTerms.marketSides)}`);
+    console.log(`  🔬 CRYPTO V1 — outcomePrices: ${JSON.stringify(withTerms.outcomePrices)} | outcomes: ${JSON.stringify(withTerms.outcomes)}`);
   } else {
     console.log(`  🔬 CRYPTO V1 — 0 of ${markets.length} markets have assetPriceTerms populated (all appear hand-listed/futures — automated families may genuinely be absent from this response)`);
   }
