@@ -51,6 +51,8 @@ export const SCHEMA = {
   BTC15_ENABLED: { v: false, label: "Crypto (BTC15) on/off", group: "Safety",  bool: true },
   BTC60_LIVE_TRADING: { v: false, label: "BTC60 real-money trading", group: "Safety", bool: true },
   BTC15_LIVE_TRADING: { v: false, label: "BTC15 real-money trading", group: "Safety", bool: true },
+  BTC60_SL_ENABLED: { v: false, label: "BTC60 stop-loss", group: "Manage", bool: true },
+  BTC15_SL_ENABLED: { v: false, label: "BTC15 stop-loss", group: "Manage", bool: true },
 
   LEAGUE_FOCUS:  { v: [],    label: "Only these sports",    group: "Sports",  list: true },
   LEAGUE_BLOCK:  { v: [],    label: "Never these sports",   group: "Sports",  list: true },
