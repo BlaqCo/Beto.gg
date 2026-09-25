@@ -206,6 +206,13 @@ async function discoverCurrentBTC60Market() {
       // have real data extractYesPrice still isn't finding).
       if (docMatch.yesPrice == null) {
         console.log(`  🔍 [BTC60] yesPrice is null for "${docMatch.slug}" — raw marketSides: ${JSON.stringify(docMatch.marketSides)} | raw outcomePrices: ${JSON.stringify(docMatch.outcomePrices)}`);
+        // Countdown is STILL impossibly large even after the startDate
+        // fix — real hypothesis: top-level startDate/endDate may be a
+        // WIDER listing/tradability period, distinct from the actual
+        // price-tracking window boundary, which assetPriceTerms confirmed
+        // carries its OWN windowStart/windowEnd fields. Comparing both
+        // directly instead of guessing which pair is the real one.
+        console.log(`  🔍 [BTC60] top-level startDate=${docMatch.startDate} endDate=${docMatch.endDate} | assetPriceTerms.windowStart=${docMatch.assetPriceTerms?.windowStart} windowEnd=${docMatch.assetPriceTerms?.windowEnd}`);
       }
       return { ...docMatch, outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
     }
