@@ -115,6 +115,9 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .ccell{padding:4px 8px;text-align:center}
 .ccell .clabel{font-size:8px;letter-spacing:.06em}
 .ccell .cval{font-size:15px;font-weight:800;margin-top:2px}
+.livebadge{font-size:8px;font-weight:800;letter-spacing:.05em;padding:2px 6px;border-radius:5px;vertical-align:middle}
+.livebadge.paper{background:rgba(255,182,61,.15);color:var(--amber);border:1px solid rgba(255,182,61,.4)}
+.livebadge.live{background:rgba(255,78,106,.15);color:var(--down);border:1px solid rgba(255,78,106,.4)}
 .hchip.actionable{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .cell{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:10px 9px}
@@ -282,7 +285,7 @@ button:active{transform:translateY(1px)}
 <div class="cryptopanel" id="cryptoPanel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
-    <span class="cryptotitle">BTC60 CRYPTO</span>
+    <span class="cryptotitle">BTC60 CRYPTO</span> <span class="livebadge" id="btc60LiveBadge">—</span>
   </div>
   <div class="cryptogrid">
     <div class="ccell"><div class="clabel">RECORD</div><div class="cval" id="cWl">—</div></div>
@@ -295,7 +298,7 @@ button:active{transform:translateY(1px)}
 <div class="cryptopanel" id="crypto15Panel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
-    <span class="cryptotitle">BTC15 CRYPTO</span>
+    <span class="cryptotitle">BTC15 CRYPTO</span> <span class="livebadge" id="btc15LiveBadge">—</span>
   </div>
   <div class="cryptogrid">
     <div class="ccell"><div class="clabel">RECORD</div><div class="cval" id="c15Wl">—</div></div>
@@ -468,6 +471,17 @@ async function loadBotToggles(){
     $('sportsToggle').classList.toggle('on', !!sportsOn);
     $('cryptoToggle').classList.toggle('on', !!cryptoOn);
     $('crypto15Toggle').classList.toggle('on', !!crypto15On);
+
+    // Live-trading status — previously invisible anywhere, only a raw env
+    // var with no dashboard indicator at all. Now sourced from the SAME
+    // config fetch already happening here, no extra request needed.
+    const setLiveBadge = (id, isLive) => {
+      const el = $(id);
+      el.textContent = isLive ? 'LIVE $' : 'PAPER';
+      el.className = 'livebadge ' + (isLive ? 'live' : 'paper');
+    };
+    setLiveBadge('btc60LiveBadge', !!cc.BTC60_LIVE_TRADING);
+    setLiveBadge('btc15LiveBadge', !!cc.BTC15_LIVE_TRADING);
 
     // Combined status across all three — lists whichever are actually on
     // instead of a binary paused/live that can't represent "two of three".
