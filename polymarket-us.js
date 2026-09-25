@@ -341,11 +341,20 @@ export async function fetchCryptoMarketsV1() {
   // at all, independent of a possibly-wrong text guess.
   const withTerms = markets.find(m => m.assetPriceTerms != null);
   if (withTerms) {
-    console.log(`  🔬 CRYPTO V1 — FOUND a market with assetPriceTerms populated: ${JSON.stringify(withTerms).slice(0, 1000)}`);
+    console.log(`  🔬 CRYPTO V1 — FOUND a market with assetPriceTerms populated: ${JSON.stringify(withTerms).slice(0, 2500)}`);
+    // Price is coming back frozen at exactly 0.5 every scan — the
+    // extractYesPrice() fallback default, meaning it isn't finding real
+    // price data in THIS market family's shape (built for sports markets).
+    // Dumping the actual top-level keys directly is far more targeted
+    // than another truncated JSON blob — reveals the real field names
+    // without guessing how much of a giant object to print.
+    console.log(`  🔬 CRYPTO V1 — top-level keys on this market: ${Object.keys(withTerms).join(", ")}`);
+    console.log(`  🔬 CRYPTO V1 — assetPriceTerms keys: ${withTerms.assetPriceTerms ? Object.keys(withTerms.assetPriceTerms).join(", ") : "n/a"}`);
+    console.log(`  🔬 CRYPTO V1 — extractYesPrice result: ${extractYesPrice(withTerms)}`);
   } else {
     console.log(`  🔬 CRYPTO V1 — 0 of ${markets.length} markets have assetPriceTerms populated (all appear hand-listed/futures — automated families may genuinely be absent from this response)`);
   }
-  if (markets.length) console.log(`  🔬 CRYPTO V1 RAW SAMPLE: ${JSON.stringify(markets[0]).slice(0, 1000)}`);
+  if (markets.length) console.log(`  🔬 CRYPTO V1 RAW SAMPLE: ${JSON.stringify(markets[0]).slice(0, 2500)}`);
   else console.log(`  🔬 CRYPTO V1 RAW SAMPLE: (empty array this scan)`);
   console.log(`  🌐 [fetchCryptoMarketsV1] ${markets.length} total crypto markets returned`);
   return markets.map(m => ({
