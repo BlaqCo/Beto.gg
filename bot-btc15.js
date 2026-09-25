@@ -72,31 +72,16 @@ let cachedResearch = null;
 // the bet still resolves normally on-chain either way).
 let openPosition = null; // { slug, side, entryPrice, sizeUsd, endTime }
 
-// Carries forward bot-btc60.js's confirmed fix: the "tag" query param is
-// NOT reliable, question text is. 15-minute AND 5-minute questions both
-// use an explicit start-end RANGE format ("3:00PM-3:15PM" vs
-// "11:35AM-11:40AM") — a bare "has a range" check (which is all BTC60
-// needed, since hourly has NO range at all) can't tell those two apart.
-// This parses BOTH times in the range and requires the actual computed
-// gap to be close to 15 minutes, not just "some range exists".
-function parseRangeMinutes(q) {
-  const m = q.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
-  if (!m) return null;
-  const to24 = (h, mm, ap) => {
-    h = parseInt(h, 10); mm = mm ? parseInt(mm, 10) : 0;
-    if (/PM/i.test(ap) && h !== 12) h += 12;
-    if (/AM/i.test(ap) && h === 12) h = 0;
-    return h * 60 + mm;
-  };
-  const start = to24(m[1], m[2], m[3]);
-  let end = to24(m[4], m[5], m[6]);
-  if (end <= start) end += 24 * 60; // crossed midnight
-  return end - start;
-}
+// CONFIRMED from real production data on the CORRECT venue (Polymarket
+// US, /v1/markets?categories=crypto): the hourly market's real question
+// text is "BTC Up or Down: 60 min" — a simple explicit duration label,
+// exactly matching the title shown on the very first BTC15 app screenshot
+// ("BTC Up or Down: 15 min"). The old time-RANGE-parsing approach here was
+// built assuming a completely different, wrong-platform phrasing
+// ("3:00PM-3:15PM") that was never actually confirmed for this venue.
 function is15MinBtcQuestion(q) {
-  if (!/bitcoin|btc/i.test(q) || !/up or down/i.test(q)) return false;
-  const mins = parseRangeMinutes(q);
-  return mins != null && mins >= 13 && mins <= 17; // small tolerance for formatting quirks
+  if (!/\bbtc\b|bitcoin/i.test(q) || !/up or down/i.test(q)) return false;
+  return /\b15\s*-?\s*min\b/i.test(q);
 }
 
 export async function researchBTC15History(limit = 300) {
