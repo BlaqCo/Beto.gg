@@ -233,10 +233,28 @@ async function discoverCurrentBTC60Market() {
       // automatically gets the correct values without needing separate
       // fixes scattered through the rest of the file.
       const { start: realStart, end: realEnd } = windowFor(docMatch);
+      // If the bulk listing shows no price, try the DIRECT per-market
+      // order book before giving up. The bulk /v1/markets?categories=crypto
+      // response may just be a cached/batch snapshot that doesn't stay
+      // current for lower-volume markets — getBBO() queries that ONE
+      // market's real order book directly, the same proven mechanism
+      // already used throughout the sports side.
+      let finalYesPrice = docMatch.yesPrice;
+      if (finalYesPrice == null) {
+        try {
+          const bbo = await pm.getBBO(docMatch.slug);
+          if (bbo?.bid && bbo?.ask) {
+            finalYesPrice = (bbo.bid + bbo.ask) / 2;
+            console.log(`  ✅ [BTC60] direct BBO lookup found a real price the bulk listing missed: bid=${bbo.bid} ask=${bbo.ask} for "${docMatch.slug}"`);
+          }
+        } catch (err) {
+          console.log(`  ❌ [BTC60] direct BBO fallback threw: ${err.message}`);
+        }
+      }
       return { ...docMatch,
         startDate: realStart != null ? new Date(realStart).toISOString() : docMatch.startDate,
         endDate: realEnd != null ? new Date(realEnd).toISOString() : docMatch.endDate,
-        outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
+        outcomePrices: [String(finalYesPrice ?? 0.5), String(1 - (finalYesPrice ?? 0.5))] };
     }
   } catch (err) {
     console.log(`  ❌ [BTC60] fetchCryptoMarketsV1 path threw: ${err.message}`);
