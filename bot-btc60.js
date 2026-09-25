@@ -82,21 +82,16 @@ let cachedResearch = null;
 // the bet still resolves normally on-chain either way).
 let openPosition = null; // { slug, side, entryPrice, sizeUsd, endTime }
 
-// Real evidence from production logs: the "tag" query param below is NOT
-// reliably honored by Gamma's API — it returned a 5-MINUTE window
-// ("11:35AM-11:40AM") from roughly 9 months in the past, despite
-// closed:false/active:true. Two confirmed real examples show a reliable
-// TEXT pattern instead: hourly questions state a single time point
-// ("...1PM ET"), shorter windows state an explicit start-end RANGE
-// ("...11:35AM-11:40AM"). That's what this now keys off, not the tag —
-// don't trust an unverified tag name a second time when a directly
-// observed text pattern is available.
+// CONFIRMED from real production data on the CORRECT venue (Polymarket
+// US, /v1/markets?categories=crypto): the actual question text is
+// "BTC Up or Down: 60 min" — a simple, explicit duration label, nothing
+// like the time-of-day format ("...1PM ET") this function used to require.
+// That old pattern was built from the WRONG platform's phrasing (regular
+// Polymarket's Gamma API) and never matched anything real here — this
+// replaces it with the format actually observed on this venue.
 function isHourlyBtcQuestion(q) {
-  if (!/bitcoin|btc/i.test(q) || !/up or down/i.test(q)) return false;
-  const hasTimeRange = /\d{1,2}(:\d{2})?\s*(AM|PM)\s*-\s*\d{1,2}(:\d{2})?\s*(AM|PM)/i.test(q);
-  if (hasTimeRange) return false; // ranged questions are 5m/15m/4h, not hourly
-  const hasSingleTime = /\d{1,2}(:\d{2})?\s*(AM|PM)\s*ET/i.test(q);
-  return hasSingleTime;
+  if (!/\bbtc\b|bitcoin/i.test(q) || !/up or down/i.test(q)) return false;
+  return /\b60\s*-?\s*min|\b1\s*-?\s*hour|\b1h\b/i.test(q);
 }
 
 export async function researchBTC60History(limit = 300) {
