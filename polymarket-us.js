@@ -317,7 +317,12 @@ export async function fetchCryptoMarketsV1() {
   let data;
   try {
     const res = await axios.get(`${GATEWAY}/v1/markets`, {
-      params: { categories: "crypto", closed: false },
+      params: { categories: "crypto", closed: false, limit: 500 },
+      // 20 came back with no explicit limit — almost certainly a default
+      // page size. Docs confirm ~48 fifteen-minute + ~24 hourly Up/Down
+      // windows are open at any time, before even counting the other
+      // three market families — the real total is easily 100+, and
+      // Up/Down windows may simply sort well past the first 20.
       timeout: 12_000,
     });
     data = res.data;
@@ -326,7 +331,8 @@ export async function fetchCryptoMarketsV1() {
     return [];
   }
   const markets = Array.isArray(data) ? data : (data?.markets || []);
-  console.log(`  🔬 CRYPTO V1 RAW SAMPLE: ${JSON.stringify(markets[0]).slice(0, 1000)}`);
+  if (markets.length) console.log(`  🔬 CRYPTO V1 RAW SAMPLE: ${JSON.stringify(markets[0]).slice(0, 1000)}`);
+  else console.log(`  🔬 CRYPTO V1 RAW SAMPLE: (empty array this scan)`);
   console.log(`  🌐 [fetchCryptoMarketsV1] ${markets.length} total crypto markets returned`);
   return markets.map(m => ({
     ...m,
