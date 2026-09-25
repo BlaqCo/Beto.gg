@@ -97,6 +97,27 @@ const RULES = [
 
   // ── maker
   { re: /\bmaker\b.*\b(off|on|enable|disable)\b/i, apply: m => ({ MAKER_MODE: onOff(m[0]) }) },
+
+  // ── crypto (BTC60/BTC15) — added after "turn on BTC60 real money
+  // trading" failed with no deterministic rule to catch it. This whole
+  // table predates crypto entirely; these close that gap the same way
+  // every other toggle here already works, with no dependency on an LLM
+  // fallback being configured at all.
+  //
+  // Order-independent on purpose: "turn ON btc60..." puts the status word
+  // BEFORE the subject; "maker mode... off" (the existing pattern above)
+  // puts it after. Real phrasing isn't consistent about this, so each
+  // rule's apply() checks for the status word ANYWHERE in the sentence
+  // rather than assuming one fixed order — that ordering assumption was
+  // the actual bug in the first version of this fix.
+  { re: /\bbtc\s*-?\s*60\b.*\b(?:real\s*money|live)\b|\b(?:real\s*money|live)\b.*\bbtc\s*-?\s*60\b/i,
+    apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC60_LIVE_TRADING: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_LIVE_TRADING: true } : {}; } },
+  { re: /\bbtc\s*-?\s*15\b.*\b(?:real\s*money|live)\b|\b(?:real\s*money|live)\b.*\bbtc\s*-?\s*15\b/i,
+    apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC15_LIVE_TRADING: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_LIVE_TRADING: true } : {}; } },
+  { re: /\bbtc\s*-?\s*60\b/i,
+    apply: m => { const text = m.input; return /\b(?:real\s*money|live)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC60_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_ENABLED: true } : {}; } },
+  { re: /\bbtc\s*-?\s*15\b/i,
+    apply: m => { const text = m.input; return /\b(?:real\s*money|live)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC15_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_ENABLED: true } : {}; } },
 ];
 
 /** Split on connectors so multiple instructions in one sentence each get a shot. */
