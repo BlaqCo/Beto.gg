@@ -463,7 +463,7 @@ export async function runBTC15ScanCycle() {
   // If we're already holding a position in THIS window, check TP/SL —
   // this runs regardless of the live-trading flag, since it only manages
   // an existing position, never opens a new one.
-  if (openPosition && openPosition.slug === market.id) {
+  if (openPosition && openPosition.slug === market.slug) {
     await checkTakeProfitStopLoss15(market);
     return;
   }
@@ -485,12 +485,12 @@ export async function runBTC15ScanCycle() {
   try {
     const res = DRY_RUN
       ? { filled: true, fillPrice: entry.price }
-      : await pm.buyYesFOK({ slug: market.id, sizeUsd: BET_SIZE_USD, ask: entry.price, override: true });
+      : await pm.buyYesFOK({ slug: market.slug, sizeUsd: BET_SIZE_USD, ask: entry.price, override: true });
     if (res.filled) {
-      openPosition = { slug: market.id, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question };
+      openPosition = { slug: market.slug, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question };
       console.log(`  ✅ BTC15 ENTRY ${DRY_RUN ? "[DRY]" : ""} ${entry.side} $${BET_SIZE_USD} @ ${(entry.price*100).toFixed(0)}¢`);
       try {
-        await tracker.recordEntry({ slug: market.id, question: market.question, league: "BTC15",
+        await tracker.recordEntry({ slug: market.slug, question: market.question, league: "BTC15",
           entry: entry.price, size: BET_SIZE_USD, live: true });
       } catch {}
     } else {
