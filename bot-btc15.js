@@ -168,7 +168,28 @@ async function discoverCurrentBTC15Market() {
     const docMarkets = await pm.fetchCryptoMarketsV1();
     const now2 = Date.now();
     const notStaleDoc = m => { const t = m.endDate ? new Date(m.endDate).getTime() : null; return t != null && t > now2; };
-    const docMatch = docMarkets.find(m => notStaleDoc(m) && /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||"") && is15MinBtcQuestion(m.question||""));
+    // Primary: text-based match — only ever confirmed against the WRONG
+    // platform's question phrasing, so treated as a hint, not ground truth.
+    let docMatch = docMarkets.find(m => notStaleDoc(m) && /bitcoin|btc/i.test(m.question||"") && /up or down/i.test(m.question||"") && is15MinBtcQuestion(m.question||""));
+
+    // Structural fallback, independent of any guessed wording: the docs
+    // confirm automated markets carry a populated `assetPriceTerms`
+    // object, and duration is computable directly from startDate/endDate
+    // without needing to match text at all. If the text guess above finds
+    // nothing, this checks for ANY bitcoin market with the right computed
+    // duration AND the documented automated-market marker — regardless of
+    // how Polymarket US actually phrases the question.
+    if (!docMatch) {
+      docMatch = docMarkets.find(m => {
+        if (!notStaleDoc(m) || !/bitcoin|btc/i.test(m.question||"")) return false;
+        if (m.assetPriceTerms == null) return false; // hand-listed, not automated
+        if (!m.startDate || !m.endDate) return false;
+        const durMin = (new Date(m.endDate).getTime() - new Date(m.startDate).getTime()) / 60000;
+        return Math.abs(durMin - 15) <= 2; // small tolerance
+      });
+      if (docMatch) console.log(`  🔍 [BTC15] matched via STRUCTURAL fallback (assetPriceTerms + computed duration), not text: "${docMatch.question}"`);
+    }
+
     if (docMatch) {
       return { ...docMatch, outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
     }
