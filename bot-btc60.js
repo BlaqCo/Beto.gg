@@ -186,6 +186,14 @@ async function discoverCurrentBTC60Market() {
     }
 
     if (docMatch) {
+      // Targeted check: fires ONLY when yesPrice is genuinely missing,
+      // dumping the ACTUAL raw marketSides/outcomePrices at that exact
+      // moment — proves whether this is real thin liquidity on a brand-new
+      // window (fields genuinely empty/unset) or a parsing bug (fields
+      // have real data extractYesPrice still isn't finding).
+      if (docMatch.yesPrice == null) {
+        console.log(`  🔍 [BTC60] yesPrice is null for "${docMatch.slug}" — raw marketSides: ${JSON.stringify(docMatch.marketSides)} | raw outcomePrices: ${JSON.stringify(docMatch.outcomePrices)}`);
+      }
       return { ...docMatch, outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
     }
   } catch (err) {
