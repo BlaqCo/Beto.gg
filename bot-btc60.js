@@ -419,20 +419,26 @@ async function exitPosition(reason, exitPrice) {
 // closes. This is a real, specific, stated strategy — not a placeholder —
 // but it has NOT been backtested against researchBTC60History's data yet,
 // which is worth doing once enough real trades exist under this rule.
-const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.63);
-const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 0.74);
+const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.45);
+const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 1.0);
 const ENTRY_WINDOW_MS = Number(process.env.BTC60_ENTRY_WINDOW_MIN || 15) * 60_000;
 
 function userEntryRule(market) {
   const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
   if (yesPrice == null) return null;
 
+  // Timing restriction removed entirely — enters at ANY point in the
+  // window's life, not just the final stretch. Still requires the window
+  // to genuinely be open (endsInMs > 0), just no longer requires being
+  // close to close.
   const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
-  if (endsInMs == null || endsInMs > ENTRY_WINDOW_MS || endsInMs < 0) return null; // not yet in the last 15 minutes
+  if (endsInMs == null || endsInMs < 0) return null;
 
+  // Widened from 63-74% to 45-100% — essentially "bet the favorite,
+  // whenever," not a tight edge band anymore.
   const side = yesPrice >= 0.5 ? "Up" : "Down";
   const price = yesPrice >= 0.5 ? yesPrice : 1 - yesPrice;
-  if (price < ENTRY_EDGE_MIN || price > ENTRY_EDGE_MAX) return null; // outside the 63-74% band
+  if (price < ENTRY_EDGE_MIN || price > ENTRY_EDGE_MAX) return null;
 
   return { side, price };
 }
