@@ -477,7 +477,10 @@ export async function runBTC60ScanCycle() {
     await checkTakeProfitStopLoss(market);
     return;
   }
-  if (openPosition) return; // still holding a DIFFERENT (older) window, not yet resolved — don't open a new one on top of it
+  if (openPosition) {
+    console.log(`  🔒 [BTC60] blocking new entry — still marked as holding "${openPosition.slug}" (${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, opened for endTime ${openPosition.endTime}), not yet resolved`);
+    return; // still holding a DIFFERENT (older) window, not yet resolved — don't open a new one on top of it
+  }
 
   if (!LIVE_TRADING_ENABLED) {
     console.log(`  👁 OBSERVE MODE — BTC60_LIVE_TRADING is off. No entries, no exits, logging only.`);
