@@ -360,7 +360,7 @@ export async function runBTC15ScanCycle() {
   const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
   const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
   const endsInSec = endsInMs != null ? Math.round(endsInMs / 1000) : "?";
-  console.log(`₿ BTC15 window: "${(market.question || "").slice(0, 50)}" | Up price ${yesPrice != null ? (yesPrice * 100).toFixed(0) + "¢" : "?"} | ends in ${endsInSec}s`);
+  console.log(`₿ BTC15 window: "${(market.question || "").slice(0, 50)}" | slug=${market.slug||market.id||"?"} | Up price ${yesPrice != null ? (yesPrice * 100).toFixed(0) + "¢" : "?"} | ends in ${endsInSec}s`);
 
   // If we're already holding a position in THIS window, check TP/SL —
   // this runs regardless of the live-trading flag, since it only manages
