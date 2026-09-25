@@ -33,7 +33,7 @@ const GAMMA = "https://gamma-api.polymarket.com";
 // toggle from the UI, no redeploy. The env var is only the very first
 // default before a live config value has ever been read.
 let BTC15_ENABLED = process.env.BTC15_ENABLED === "true";
-const LIVE_TRADING_ENABLED = process.env.BTC15_LIVE_TRADING === "true";
+let LIVE_TRADING_ENABLED = process.env.BTC15_LIVE_TRADING === "true";
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 const SCAN_INTERVAL_MS = 20_000;
@@ -71,6 +71,14 @@ let cachedResearch = null;
 // tracking for whatever's left of the current window, not the bet itself —
 // the bet still resolves normally on-chain either way).
 let openPosition = null; // { slug, side, entryPrice, sizeUsd, endTime }
+// Short-lived cache for the BBO fallback specifically — without this, a
+// single 429 on any given scan throws away a price fetched successfully
+// just 20 seconds earlier, causing real, in-band prices to flicker back
+// to the fake 50c default purely on rate-limit luck, not real market
+// movement. A recent real price is a much better estimate than a
+// hardcoded default.
+let lastRealBBO = null; // { slug, price, ts }
+const BBO_CACHE_MS = 45_000;
 
 // CONFIRMED from real production data on the CORRECT venue (Polymarket
 // US, /v1/markets?categories=crypto): the hourly market's real question
@@ -235,10 +243,19 @@ async function discoverCurrentBTC15Market() {
           const bbo = await pm.getBBO(docMatch.slug);
           if (bbo?.bid && bbo?.ask) {
             finalYesPrice = (bbo.bid + bbo.ask) / 2;
+            lastRealBBO = { slug: docMatch.slug, price: finalYesPrice, ts: Date.now() };
             console.log(`  ✅ [BTC15] direct BBO lookup found a real price the bulk listing missed: bid=${bbo.bid} ask=${bbo.ask} for "${docMatch.slug}"`);
           }
         } catch (err) {
           console.log(`  ❌ [BTC15] direct BBO fallback threw: ${err.message}`);
+        }
+        // Rate-limited or otherwise failed — use a recent REAL price for
+        // this SAME market instead of jumping straight to the fake 50c
+        // default. A 429 doesn't mean the market moved to 50/50, it means
+        // we simply couldn't check this one scan.
+        if (finalYesPrice == null && lastRealBBO && lastRealBBO.slug === docMatch.slug && (Date.now() - lastRealBBO.ts) < BBO_CACHE_MS) {
+          finalYesPrice = lastRealBBO.price;
+          console.log(`  🔁 [BTC15] using cached real price ${(finalYesPrice*100).toFixed(0)}¢ from ${Math.round((Date.now()-lastRealBBO.ts)/1000)}s ago (this scan's lookup failed) for "${docMatch.slug}"`);
         }
       }
       return { ...docMatch,
@@ -414,6 +431,7 @@ export async function runBTC15ScanCycle() {
   try {
     const c = await getConfig();
     if (c.BTC15_ENABLED != null) BTC15_ENABLED = c.BTC15_ENABLED;
+    if (c.BTC15_LIVE_TRADING != null) LIVE_TRADING_ENABLED = c.BTC15_LIVE_TRADING;
   } catch {}
   if (!BTC15_ENABLED) return;
 
