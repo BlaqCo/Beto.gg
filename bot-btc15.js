@@ -38,7 +38,7 @@ const DRY_RUN = process.env.DRY_RUN !== "false";
 
 const SCAN_INTERVAL_MS = 20_000;
 const RESEARCH_INTERVAL_MS = 60 * 60_000;
-let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 0.50);
+let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 0.20);
 // Deliberately below the shared $6.50 order-size tripwire in
 // polymarket-us.js — that floor exists for the sports side and is left
 // completely untouched; BTC15 bypasses it explicitly (override: true on
@@ -58,6 +58,7 @@ let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 0.50);
 // corrected by real logs.
 const TP_PCT = Number(process.env.BTC15_TP_PCT || 0.15);
 const SL_PCT = Number(process.env.BTC15_SL_PCT || 0.10);
+let SL_ENABLED = process.env.BTC15_SL_ENABLED === "true"; // OFF by default per direct request — set BTC15_SL_ENABLED=true to bring it back
 
 let shapeLoggedDiscovery = false;
 let shapeLoggedResearch = false;
@@ -371,7 +372,7 @@ async function checkTakeProfitStopLoss15(market) {
   if (moveFromEntry >= TP_PCT) {
     console.log(`  🎯 TP hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (+${(moveFromEntry*100).toFixed(0)}¢) — closing`);
     await exitPosition("take_profit", currentPrice);
-  } else if (moveFromEntry <= -SL_PCT) {
+  } else if (SL_ENABLED && moveFromEntry <= -SL_PCT) {
     console.log(`  🛑 SL hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (${(moveFromEntry*100).toFixed(0)}¢) — closing`);
     await exitPosition("stop_loss", currentPrice);
   }
@@ -438,6 +439,7 @@ export async function runBTC15ScanCycle() {
     const c = await getConfig();
     if (c.BTC15_ENABLED != null) BTC15_ENABLED = c.BTC15_ENABLED;
     if (c.BTC15_LIVE_TRADING != null) LIVE_TRADING_ENABLED = c.BTC15_LIVE_TRADING;
+    if (c.BTC15_SL_ENABLED != null) SL_ENABLED = c.BTC15_SL_ENABLED;
   } catch {}
   if (!BTC15_ENABLED) return;
 
