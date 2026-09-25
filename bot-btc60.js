@@ -171,9 +171,21 @@ async function discoverCurrentBTC60Market() {
     // the real cause of the persistent 50¢ default, not thin liquidity on
     // an active market. Now requiring startDate <= now too, so only the
     // single genuinely-live window can match.
+    // CONFIRMED via direct log evidence: top-level startDate/endDate are
+    // NOT the real settlement boundary — they're a wider listing period
+    // (startDate = ~12h before the window even opens; endDate = some
+    // later archival time, not the actual close). assetPriceTerms.
+    // windowStart/windowEnd are the REAL boundary (confirmed: exactly 15
+    // minutes apart in real data, matching the window duration exactly).
+    // windowFor() prefers those, falls back to top-level only if absent.
+    const windowFor = m => {
+      const apt = m.assetPriceTerms;
+      const start = apt?.windowStart ? new Date(apt.windowStart).getTime() : (m.startDate ? new Date(m.startDate).getTime() : null);
+      const end = apt?.windowEnd ? new Date(apt.windowEnd).getTime() : (m.endDate ? new Date(m.endDate).getTime() : null);
+      return { start, end };
+    };
     const notStaleDoc = m => {
-      const end = m.endDate ? new Date(m.endDate).getTime() : null;
-      const start = m.startDate ? new Date(m.startDate).getTime() : null;
+      const { start, end } = windowFor(m);
       return end != null && end > now2 && start != null && start <= now2;
     };
     // Primary: text-based match — only ever confirmed against the WRONG
@@ -191,8 +203,9 @@ async function discoverCurrentBTC60Market() {
       docMatch = docMarkets.find(m => {
         if (!notStaleDoc(m) || !/bitcoin|btc/i.test(m.question||"")) return false;
         if (m.assetPriceTerms == null) return false; // hand-listed, not automated
-        if (!m.startDate || !m.endDate) return false;
-        const durMin = (new Date(m.endDate).getTime() - new Date(m.startDate).getTime()) / 60000;
+        const { start, end } = windowFor(m);
+        if (start == null || end == null) return false;
+        const durMin = (end - start) / 60000;
         return Math.abs(durMin - 60) <= 2; // small tolerance
       });
       if (docMatch) console.log(`  🔍 [BTC60] matched via STRUCTURAL fallback (assetPriceTerms + computed duration), not text: "${docMatch.question}"`);
@@ -214,7 +227,16 @@ async function discoverCurrentBTC60Market() {
         // directly instead of guessing which pair is the real one.
         console.log(`  🔍 [BTC60] top-level startDate=${docMatch.startDate} endDate=${docMatch.endDate} | assetPriceTerms.windowStart=${docMatch.assetPriceTerms?.windowStart} windowEnd=${docMatch.assetPriceTerms?.windowEnd}`);
       }
-      return { ...docMatch, outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
+      // Normalize endDate/startDate to the REAL window boundary right
+      // here, at the source — so every downstream consumer (TP/SL,
+      // natural-resolution checks, the "ends in" display, entry timing)
+      // automatically gets the correct values without needing separate
+      // fixes scattered through the rest of the file.
+      const { start: realStart, end: realEnd } = windowFor(docMatch);
+      return { ...docMatch,
+        startDate: realStart != null ? new Date(realStart).toISOString() : docMatch.startDate,
+        endDate: realEnd != null ? new Date(realEnd).toISOString() : docMatch.endDate,
+        outcomePrices: [String(docMatch.yesPrice ?? 0.5), String(1 - (docMatch.yesPrice ?? 0.5))] };
     }
   } catch (err) {
     console.log(`  ❌ [BTC60] fetchCryptoMarketsV1 path threw: ${err.message}`);
