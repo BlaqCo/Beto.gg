@@ -331,6 +331,20 @@ export async function fetchCryptoMarketsV1() {
     return [];
   }
   const markets = Array.isArray(data) ? data : (data?.markets || []);
+  // Targeted, not just "the first item" — the text-based "up or down"
+  // filter was only ever confirmed against the WRONG platform's question
+  // phrasing (regular Polymarket). Polymarket US may word these
+  // differently entirely. assetPriceTerms is the actual documented,
+  // structural signal for "this is an automated market" — checking for
+  // ANY market where it's populated, regardless of question wording,
+  // is a real test of whether automated families exist in this response
+  // at all, independent of a possibly-wrong text guess.
+  const withTerms = markets.find(m => m.assetPriceTerms != null);
+  if (withTerms) {
+    console.log(`  🔬 CRYPTO V1 — FOUND a market with assetPriceTerms populated: ${JSON.stringify(withTerms).slice(0, 1000)}`);
+  } else {
+    console.log(`  🔬 CRYPTO V1 — 0 of ${markets.length} markets have assetPriceTerms populated (all appear hand-listed/futures — automated families may genuinely be absent from this response)`);
+  }
   if (markets.length) console.log(`  🔬 CRYPTO V1 RAW SAMPLE: ${JSON.stringify(markets[0]).slice(0, 1000)}`);
   else console.log(`  🔬 CRYPTO V1 RAW SAMPLE: (empty array this scan)`);
   console.log(`  🌐 [fetchCryptoMarketsV1] ${markets.length} total crypto markets returned`);
