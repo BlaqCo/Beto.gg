@@ -91,6 +91,17 @@ async function signedRequest(method, path, body) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+// settlementPrice/priceToBeat came back as objects for at least one real
+// market ("[object Object]" in a real log, confirmed via direct evidence,
+// not assumed) — the same {value, currency}-style wrapper marketSides
+// already uses in some cases. Handles both shapes; returns null (not a
+// guess) if neither matches, so a genuinely new shape fails loudly via
+// the caller's own diagnostic rather than silently comparing wrong.
+export function extractSettlementNum(v) {
+  if (v == null) return null;
+  if (typeof v === "object") return num(v.value ?? v.price ?? v.amount);
+  return num(v);
+}
 const parseArr = v => { try { return typeof v === "string" ? JSON.parse(v) : (Array.isArray(v) ? v : []); } catch { return []; } };
 
 // Amount object from BBO/book: { value: "0.55", currency: "USD" } OR plain number
