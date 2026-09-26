@@ -115,9 +115,9 @@ const RULES = [
   { re: /\bbtc\s*-?\s*15\b.*\b(?:real\s*money|live)\b|\b(?:real\s*money|live)\b.*\bbtc\s*-?\s*15\b/i,
     apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC15_LIVE_TRADING: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_LIVE_TRADING: true } : {}; } },
   { re: /\bbtc\s*-?\s*60\b/i,
-    apply: m => { const text = m.input; return /\b(?:real\s*money|live)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC60_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_ENABLED: true } : {}; } },
+    apply: m => { const text = m.input; return /\b(?:real\s*money|live|stop\s*-?\s*loss)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC60_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_ENABLED: true } : {}; } },
   { re: /\bbtc\s*-?\s*15\b/i,
-    apply: m => { const text = m.input; return /\b(?:real\s*money|live)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC15_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_ENABLED: true } : {}; } },
+    apply: m => { const text = m.input; return /\b(?:real\s*money|live|stop\s*-?\s*loss)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC15_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_ENABLED: true } : {}; } },
 
   // ── crypto paper/live mode — separate from the ENABLED/LIVE_TRADING
   // rules above: this specifically controls whether a bot's OWN orders
@@ -126,6 +126,14 @@ const RULES = [
   { re: /\bbtc\s*-?\s*15\b.*\bpaper\b|\bpaper\b.*\bbtc\s*-?\s*15\b/i, apply: () => ({ BTC15_PAPER_MODE: true }) },
   { re: /\bbtc\s*-?\s*60\b.*\blive\s*mode\b|\blive\s*mode\b.*\bbtc\s*-?\s*60\b/i, apply: () => ({ BTC60_PAPER_MODE: false }) },
   { re: /\bbtc\s*-?\s*15\b.*\blive\s*mode\b|\blive\s*mode\b.*\bbtc\s*-?\s*15\b/i, apply: () => ({ BTC15_PAPER_MODE: false }) },
+
+  // ── stop-loss on/off — added after realizing there was no rule for this
+  // at all, meaning trying to say it would have hit the same "didn't
+  // catch that" wall as the live-trading toggle did before.
+  { re: /\bbtc\s*-?\s*60\b.*\bstop\s*-?\s*loss\b|\bstop\s*-?\s*loss\b.*\bbtc\s*-?\s*60\b/i,
+    apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC60_SL_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_SL_ENABLED: true } : {}; } },
+  { re: /\bbtc\s*-?\s*15\b.*\bstop\s*-?\s*loss\b|\bstop\s*-?\s*loss\b.*\bbtc\s*-?\s*15\b/i,
+    apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC15_SL_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_SL_ENABLED: true } : {}; } },
 ];
 
 /** Split on connectors so multiple instructions in one sentence each get a shot. */
