@@ -101,15 +101,18 @@ h1,h2,h3{font-family:'Sora',system-ui,sans-serif;margin:0}
   background:#1A2338;font-size:13px;cursor:pointer;padding:0;opacity:.4;transition:all .15s}
 .minitoggle.on{opacity:1;background:color-mix(in srgb, var(--up) 15%, transparent);border-color:color-mix(in srgb, var(--up) 40%, transparent)}
 .minitoggle:disabled{cursor:default}
-.cryptopanel{position:relative;border-radius:16px;padding:2px;margin-bottom:14px;
-  background:linear-gradient(135deg,#F7931A,#9945FF,#14F195,#F7931A);background-size:300% 300%;
+.cryptopanel{position:relative;border-radius:16px;margin-bottom:14px;
+  background:var(--panel);border:1px solid var(--line)}
+.cryptopanel.vibrant{padding:2px;border:0;
+  background:linear-gradient(135deg,var(--cyan),var(--amber),var(--up),var(--cyan));background-size:300% 300%;
   animation:cryptoborder 6s ease infinite}
 @keyframes cryptoborder{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-.cryptohead,.cryptogrid{background:#0B1120;border-radius:14px}
+.cryptohead,.cryptogrid{background:var(--panel);border-radius:14px}
 .cryptohead{display:flex;align-items:center;gap:8px;padding:12px 16px 8px}
 .cryptoicon{font-size:16px}
-.cryptotitle{font-size:12px;font-weight:900;letter-spacing:.08em;
-  background:linear-gradient(90deg,#F7931A,#9945FF,#14F195);-webkit-background-clip:text;
+.cryptotitle{font-size:12px;font-weight:900;letter-spacing:.08em;color:var(--text)}
+.vibrant .cryptotitle{
+  background:linear-gradient(90deg,var(--cyan),var(--amber),var(--up));-webkit-background-clip:text;
   background-clip:text;color:transparent}
 .cryptogrid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1px;padding:0 8px 12px}
 .ccell{padding:4px 8px;text-align:center}
@@ -311,7 +314,7 @@ button:active{transform:translateY(1px)}
 </div>
 
 <div class="secdiv crypto"><span class="sectxt">CRYPTO</span><span class="secline"></span></div>
-<div class="cryptopanel" id="cryptoPanel">
+<div class="cryptopanel vibrant" id="cryptoPanel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
     <span class="cryptotitle">BTC60 CRYPTO</span> <span class="livebadge" id="btc60LiveBadge">—</span> <span class="paperbal" id="btc60PaperBal" style="display:none"></span>
@@ -324,7 +327,7 @@ button:active{transform:translateY(1px)}
   </div>
 </div>
 
-<div class="cryptopanel" id="crypto15Panel">
+<div class="cryptopanel vibrant" id="crypto15Panel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
     <span class="cryptotitle">BTC15 CRYPTO</span> <span class="livebadge" id="btc15LiveBadge">—</span> <span class="paperbal" id="btc15PaperBal" style="display:none"></span>
@@ -337,7 +340,7 @@ button:active{transform:translateY(1px)}
   </div>
 </div>
 
-<div class="cryptopanel" id="cryptoResearchPanel">
+<div class="panel" id="cryptoResearchPanel">
   <div class="cryptohead">
     <span class="cryptoicon">🔬</span>
     <span class="cryptotitle">EDGE RESEARCH</span>
@@ -345,7 +348,7 @@ button:active{transform:translateY(1px)}
   <div id="cryptoResearchBody" class="histempty">Loading…</div>
 </div>
 
-<div class="cryptopanel" id="cryptoHistoryPanel">
+<div class="panel" id="cryptoHistoryPanel">
   <div class="cryptohead">
     <span class="cryptoicon">📜</span>
     <span class="cryptotitle">CRYPTO HISTORY</span>
