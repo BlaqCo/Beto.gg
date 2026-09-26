@@ -441,7 +441,13 @@ async function checkNaturalResolution() {
     const apt = closedMatch?.assetPriceTerms;
     // Same fix as the research function above — 0 is a placeholder for
     // "not settled yet", not a real price, and must not pass this check.
-    if (!apt || !(apt.settlementPrice > 0) || !(apt.priceToBeat > 0)) return; // not resolved yet — try again next scan
+    if (!apt || !(apt.settlementPrice > 0) || !(apt.priceToBeat > 0)) {
+      // This was returning silently before — meaning a position that
+      // never resolves gives ZERO evidence of why, for however long it
+      // stays stuck. Logging exactly what was and wasn't found instead.
+      console.log(`  🔍 [BTC60] still unresolved: "${openPosition.slug}" — found in closed list? ${!!closedMatch} | settlementPrice=${apt?.settlementPrice} priceToBeat=${apt?.priceToBeat} | ${closedMarkets.length} closed markets returned`);
+      return; // not resolved yet — try again next scan
+    }
 
     const resolvedUp = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
     won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
