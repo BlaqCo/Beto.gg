@@ -313,11 +313,11 @@ const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
  * with assetPriceTerms logged raw so the real field names are visible for
  * a tighter, schema-based filter next round instead of another guess.
  */
-export async function fetchCryptoMarketsV1() {
+export async function fetchCryptoMarketsV1({ closed = false, limit = 500 } = {}) {
   let data;
   try {
     const res = await axios.get(`${GATEWAY}/v1/markets`, {
-      params: { categories: "crypto", closed: false, limit: 500 },
+      params: { categories: "crypto", closed, limit },
       // 20 came back with no explicit limit — almost certainly a default
       // page size. Docs confirm ~48 fifteen-minute + ~24 hourly Up/Down
       // windows are open at any time, before even counting the other
