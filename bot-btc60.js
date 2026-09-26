@@ -177,8 +177,10 @@ export async function researchBTC60History(limit = 300) {
     // so the old check let unsettled placeholder markets straight through
     // and misclassified every one of them as Down. Checking > 0 instead,
     // since a real BTC settlement price is always a large positive number.
-    if (!apt || !(apt.settlementPrice > 0) || !(apt.priceToBeat > 0)) return { up: null };
-    const up = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
+    const settlePx = pm.extractSettlementNum(apt?.settlementPrice);
+    const beatPx = pm.extractSettlementNum(apt?.priceToBeat);
+    if (settlePx == null || beatPx == null) return { up: null };
+    const up = settlePx >= beatPx;
     return { up, endDate: apt.windowEnd || m.endDate };
   }).filter(r => r.up !== null).sort((a, b) => new Date(a.endDate) - new Date(b.endDate));
 
@@ -423,13 +425,28 @@ async function checkNaturalResolution() {
     won = !!resolution.won;
     pnl = resolution.realizedPnl;
   } else {
+    // Direct per-market lookup — already built and proven for sports,
+    // sidesteps the whole "is it findable in a bulk closed-markets batch"
+    // problem entirely, since it's a targeted, single-slug query instead
+    // of sorting/paginating through hundreds of results.
+    let directSettlement = null;
+    try { directSettlement = await pm.getSettlement(openPosition.slug); } catch {}
+    if (directSettlement != null) {
+      const resolvedUp = directSettlement === 1;
+      won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
+      const shares = openPosition.sizeUsd / openPosition.entryPrice;
+      pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
+      console.log(`  🔁 [BTC60] resolved via direct settlement lookup for "${openPosition.slug}"`);
+    }
+  }
+  if (won === undefined) {
     // FIX: getTradeHistory() reads REAL account activity — a PAPER trade
     // never places a real order, so it can NEVER appear there. That left
     // every paper position stuck forever (confirmed via real logs: a
     // position blocking every new entry for 9+ hours straight). Falling
-    // back to PUBLIC settlement data — the same fields the research
-    // function already uses — works for paper trades, and also clears any
-    // pre-existing stuck position from before this fix, paper or real.
+    // back to the bulk closed-markets search as a last resort — the same
+    // fields the research function already uses — since the direct lookup
+    // above is preferred but not guaranteed to exist for every market.
     let closedMarkets;
     try {
       closedMarkets = await pm.fetchCryptoMarketsV1({ closed: true, limit: 500 });
@@ -441,15 +458,19 @@ async function checkNaturalResolution() {
     const apt = closedMatch?.assetPriceTerms;
     // Same fix as the research function above — 0 is a placeholder for
     // "not settled yet", not a real price, and must not pass this check.
-    if (!apt || !(apt.settlementPrice > 0) || !(apt.priceToBeat > 0)) {
+    const settlePx = pm.extractSettlementNum(apt?.settlementPrice);
+    const beatPx = pm.extractSettlementNum(apt?.priceToBeat);
+    if (settlePx == null || beatPx == null) {
       // This was returning silently before — meaning a position that
-      // never resolves gives ZERO evidence of why, for however long it
-      // stays stuck. Logging exactly what was and wasn't found instead.
-      console.log(`  🔍 [BTC60] still unresolved: "${openPosition.slug}" — found in closed list? ${!!closedMatch} | settlementPrice=${apt?.settlementPrice} priceToBeat=${apt?.priceToBeat} | ${closedMarkets.length} closed markets returned`);
+      // never resolves gives ZERO evidence of why. Logging real, extracted
+      // values now, not the raw field (confirmed via real logs: that raw
+      // field is sometimes an object, not a number — "[object Object]" in
+      // a template string was itself the smoking gun for that bug).
+      console.log(`  🔍 [BTC60] still unresolved: "${openPosition.slug}" — found in closed list? ${!!closedMatch} | settlementPrice=${JSON.stringify(apt?.settlementPrice)} (extracted: ${settlePx}) priceToBeat=${JSON.stringify(apt?.priceToBeat)} (extracted: ${beatPx}) | ${closedMarkets.length} closed markets returned`);
       return; // not resolved yet — try again next scan
     }
 
-    const resolvedUp = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
+    const resolvedUp = settlePx >= beatPx;
     won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
     const shares = openPosition.sizeUsd / openPosition.entryPrice;
     pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
