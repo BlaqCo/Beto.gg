@@ -396,7 +396,7 @@ app.get("/api/crypto-history", async (req, res) => {
       .map(r => ({
         league: r.league, slug: r.slug, question: r.question,
         side: r.side, entry: r.entry, exit: r.exit, size: r.size,
-        won: r.won, pnl: r.pnl, reason: r.reason,
+        won: r.won, pnl: r.pnl, reason: r.reason, isPaper: !!r.isPaper,
         heldMin: r.heldMin, at: r.at, settledAt: r.settledAt,
       }))
       .sort((a, b) => (b.settledAt || "") > (a.settledAt || "") ? 1 : -1)
