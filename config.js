@@ -53,6 +53,12 @@ export const SCHEMA = {
   BTC15_LIVE_TRADING: { v: false, label: "BTC15 real-money trading", group: "Safety", bool: true },
   BTC60_SL_ENABLED: { v: false, label: "BTC60 stop-loss", group: "Manage", bool: true },
   BTC15_SL_ENABLED: { v: false, label: "BTC15 stop-loss", group: "Manage", bool: true },
+  BTC60_PAPER_MODE: { v: null, label: "BTC60 paper mode override", group: "Safety" },
+  BTC15_PAPER_MODE: { v: null, label: "BTC15 paper mode override", group: "Safety" },
+  BTC60_PAPER_START: { v: 200, label: "BTC60 paper starting balance", group: "Manage" },
+  BTC15_PAPER_START: { v: 200, label: "BTC15 paper starting balance", group: "Manage" },
+  BTC60_BET_SIZE: { v: 10, label: "BTC60 bet size ($)", group: "Manage" },
+  BTC15_BET_SIZE: { v: 10, label: "BTC15 bet size ($)", group: "Manage" },
 
   LEAGUE_FOCUS:  { v: [],    label: "Only these sports",    group: "Sports",  list: true },
   LEAGUE_BLOCK:  { v: [],    label: "Never these sports",   group: "Sports",  list: true },
