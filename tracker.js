@@ -159,6 +159,25 @@ function warnIfMemoryOnly() {
   console.error("🛑 a redeploy. Add Upstash Redis in Railway → Variables to make this durable.");
 }
 
+/** Read back currently-open positions from the persistent store — added
+ * so a bot can rehydrate its in-memory openPosition on startup instead of
+ * silently forgetting a real open position across a redeploy/restart,
+ * which would otherwise let it double-enter the same still-open window. */
+export async function getOpenPositions() {
+  try {
+    if (URL && TOKEN) {
+      const raw = await redis(["HGETALL", KEY_OPEN]);
+      const out = [];
+      // HGETALL returns a flat [field, value, field, value, ...] array
+      for (let i = 0; i < (raw || []).length; i += 2) {
+        try { out.push(JSON.parse(raw[i + 1])); } catch {}
+      }
+      return out;
+    }
+    return Array.from(memOpen.values());
+  } catch { return Array.from(memOpen.values()); }
+}
+
 export async function claimMarket(slug) {
   warnIfMemoryOnly();
   const now = Date.now();
