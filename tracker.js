@@ -80,6 +80,7 @@ export async function recordEntry(ctx) {
     question: ctx.question || "",
     league: (ctx.league || "OTHER").toUpperCase(),
     side: ctx.side || null, // "Up"/"Down" for crypto Up/Down markets; null for leagues that don't have this concept (sports)
+    isPaper: !!ctx.isPaper, // was this a simulated (DRY_RUN) trade, not real money — matters once live and paper history start mixing
     entry: +Number(ctx.entry || 0).toFixed(4),
     size: +Number(ctx.size || 0).toFixed(2),
     spread: ctx.spread != null ? +Number(ctx.spread).toFixed(4) : null,
@@ -114,7 +115,7 @@ export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry
     // the context we do have rather than dropping the result entirely.
     entry = {
       slug, question: fallback.question || "", league: (fallback.league || "OTHER").toUpperCase(),
-      side: fallback.side || null,
+      side: fallback.side || null, isPaper: !!fallback.isPaper,
       entry: +Number(fallback.entry || 0).toFixed(4), size: +Number(fallback.size || 0).toFixed(2),
       spread: null, depth: null, discount: null, live: null, minsIn: null,
       fill: "unknown", hour: new Date().getUTCHours(),
