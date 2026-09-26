@@ -118,6 +118,14 @@ const RULES = [
     apply: m => { const text = m.input; return /\b(?:real\s*money|live)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC60_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_ENABLED: true } : {}; } },
   { re: /\bbtc\s*-?\s*15\b/i,
     apply: m => { const text = m.input; return /\b(?:real\s*money|live)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC15_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_ENABLED: true } : {}; } },
+
+  // ── crypto paper/live mode — separate from the ENABLED/LIVE_TRADING
+  // rules above: this specifically controls whether a bot's OWN orders
+  // are simulated or real, independent of the shared global DRY_RUN.
+  { re: /\bbtc\s*-?\s*60\b.*\bpaper\b|\bpaper\b.*\bbtc\s*-?\s*60\b/i, apply: () => ({ BTC60_PAPER_MODE: true }) },
+  { re: /\bbtc\s*-?\s*15\b.*\bpaper\b|\bpaper\b.*\bbtc\s*-?\s*15\b/i, apply: () => ({ BTC15_PAPER_MODE: true }) },
+  { re: /\bbtc\s*-?\s*60\b.*\blive\s*mode\b|\blive\s*mode\b.*\bbtc\s*-?\s*60\b/i, apply: () => ({ BTC60_PAPER_MODE: false }) },
+  { re: /\bbtc\s*-?\s*15\b.*\blive\s*mode\b|\blive\s*mode\b.*\bbtc\s*-?\s*15\b/i, apply: () => ({ BTC15_PAPER_MODE: false }) },
 ];
 
 /** Split on connectors so multiple instructions in one sentence each get a shot. */
