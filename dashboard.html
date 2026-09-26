@@ -129,6 +129,9 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .histrow .hpnl{font-weight:800;font-size:12px;text-align:right}
 .histrow .hpnl.win{color:var(--up)} .histrow .hpnl.loss{color:var(--down)}
 .histrow .hleague{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(61,224,255,.12);color:var(--cyan);font-weight:700}
+.histrow.histpaper{opacity:.72;border-style:dashed}
+.hpapertag{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,182,61,.15);color:var(--amber);font-weight:700}
+.hlivetag{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,78,106,.12);color:var(--down);font-weight:700}
 .paperbal{font-size:8px;font-weight:700;color:var(--muted, #8a94a6);margin-left:4px;vertical-align:middle}
 .hchip.actionable{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
@@ -824,12 +827,13 @@ async function loadCryptoHistory(){
       const pnlStr = (pnlVal>=0?'+$':'-$') + Math.abs(pnlVal).toFixed(2);
       const entryPct = t.entry!=null ? (t.entry*100).toFixed(0)+'¢' : '—';
       const exitPct = t.exit!=null ? (t.exit*100).toFixed(0)+'¢' : '—';
-      return '<div class="histrow">'
+      return '<div class="histrow'+(t.isPaper?' histpaper':'')+'">'
         + '<span class="hside '+sideClass+'">'+(t.side||'—')+'</span>'
         + '<span class="hentry">'+entryPct+' → '+exitPct+'</span>'
         + '<span class="hpnl '+pnlClass+'">'+pnlStr+'</span>'
         + '<div class="hmeta">'
           + '<span class="hleague">'+t.league+'</span>'
+          + (t.isPaper ? '<span class="hpapertag">PAPER</span>' : '<span class="hlivetag">LIVE</span>')
           + '<span>'+(t.won?'WIN':'LOSS')+'</span>'
           + (t.reason ? '<span>'+t.reason+'</span>' : '')
           + (t.heldMin!=null ? '<span>held '+t.heldMin+'m</span>' : '')
