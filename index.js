@@ -380,6 +380,33 @@ app.get("/api/status", (req, res) => {
 // ── /api/crypto-status — exposes what btc60Status()/btc15Status() already
 // compute internally (paper balance, bet size, dry-run state) but had no
 // route to reach the dashboard through at all until now.
+// ── /api/crypto-history — BTC60/BTC15 trade history from tracker.js.
+// Separate from /api/history on purpose: that endpoint is built around
+// state.js (sports' own bet tracker) and Polymarket account activity for
+// sports specifically — architecturally a different data source than
+// where crypto trades actually live (tracker.js's Redis-backed ledger,
+// via recordEntry/recordSettle). Reusing it would have meant bolting
+// crypto onto machinery that doesn't know about it at all.
+app.get("/api/crypto-history", async (req, res) => {
+  try {
+    const { getTrades } = await import("./tracker.js");
+    const rows = await getTrades();
+    const filtered = rows
+      .filter(r => r.league === "BTC60" || r.league === "BTC15")
+      .map(r => ({
+        league: r.league, slug: r.slug, question: r.question,
+        side: r.side, entry: r.entry, exit: r.exit, size: r.size,
+        won: r.won, pnl: r.pnl, reason: r.reason,
+        heldMin: r.heldMin, at: r.at, settledAt: r.settledAt,
+      }))
+      .sort((a, b) => (b.settledAt || "") > (a.settledAt || "") ? 1 : -1)
+      .slice(0, 200);
+    res.json({ trades: filtered });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/crypto-status", (req, res) => {
   try {
     const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
