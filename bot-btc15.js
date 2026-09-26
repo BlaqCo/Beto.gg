@@ -395,10 +395,36 @@ async function checkNaturalResolution15() {
     return;
   }
   const resolution = (history || []).find(a => a._type === "resolution" && a.marketSlug === openPosition.slug);
-  if (!resolution) return; // not resolved yet on Polymarket's side — try again next scan
 
-  const won = !!resolution.won;
-  const pnl = resolution.realizedPnl;
+  let won, pnl;
+  if (resolution) {
+    won = !!resolution.won;
+    pnl = resolution.realizedPnl;
+  } else {
+    // FIX: getTradeHistory() reads REAL account activity — a PAPER trade
+    // never places a real order, so it can NEVER appear there. That left
+    // every paper position stuck forever (confirmed via real logs: a
+    // position blocking every new entry for 9+ hours straight). Falling
+    // back to PUBLIC settlement data — the same fields the research
+    // function already uses — works for paper trades, and also clears any
+    // pre-existing stuck position from before this fix, paper or real.
+    let closedMarkets;
+    try {
+      closedMarkets = await pm.fetchCryptoMarketsV1({ closed: true, limit: 500 });
+    } catch (err) {
+      console.log(`  ❌ [BTC15] Couldn't fetch closed markets for ${openPosition.slug}: ${err.message} — will retry next scan`);
+      return;
+    }
+    const closedMatch = (closedMarkets || []).find(m => m.slug === openPosition.slug);
+    const apt = closedMatch?.assetPriceTerms;
+    if (!apt || apt.settlementPrice == null || apt.priceToBeat == null) return; // not resolved yet — try again next scan
+
+    const resolvedUp = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
+    won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
+    const shares = openPosition.sizeUsd / openPosition.entryPrice;
+    pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
+    console.log(`  🔁 [BTC15] resolved via public settlement data (no real account activity found — paper trade or pre-existing stuck position)`);
+  }
   if (DRY_RUN) paperPnlTotal += pnl; // only counts toward the virtual bankroll while genuinely paper
   console.log(`  ${won ? "✅ WIN" : "❌ LOSS"} | BTC15 | ${(openPosition.question || "").slice(0, 50)} | pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
   try {
