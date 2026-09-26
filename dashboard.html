@@ -132,6 +132,10 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .histrow.histpaper{opacity:.72;border-style:dashed}
 .hpapertag{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,182,61,.15);color:var(--amber);font-weight:700}
 .hlivetag{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,78,106,.12);color:var(--down);font-weight:700}
+.rline{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid var(--line)}
+.rlabel{color:var(--dim)}
+.rval{font-weight:700;color:var(--text)}
+.rnote{font-size:10px;color:var(--amber);padding:6px 0 2px;line-height:1.4}
 .paperbal{font-size:8px;font-weight:700;color:var(--muted, #8a94a6);margin-left:4px;vertical-align:middle}
 .hchip.actionable{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
@@ -321,6 +325,14 @@ button:active{transform:translateY(1px)}
     <div class="ccell"><div class="clabel">P/L</div><div class="cval" id="c15Pnl">—</div></div>
     <div class="ccell"><div class="clabel">ROI</div><div class="cval" id="c15Roi">—</div></div>
   </div>
+</div>
+
+<div class="cryptopanel" id="cryptoResearchPanel">
+  <div class="cryptohead">
+    <span class="cryptoicon">🔬</span>
+    <span class="cryptotitle">EDGE RESEARCH</span>
+  </div>
+  <div id="cryptoResearchBody" class="histempty">Loading…</div>
 </div>
 
 <div class="cryptopanel" id="cryptoHistoryPanel">
@@ -814,6 +826,33 @@ function timeAgo(iso){
   if (s < 86400) return Math.round(s/3600)+'h ago';
   return Math.round(s/86400)+'d ago';
 }
+function renderResearch(el, r, label){
+  if (!r || r.n == null) {
+    return '<div class="rline"><span class="rlabel">'+label+'</span><span class="rval">no data yet</span></div>';
+  }
+  const upPct = r.baseRateUpPct, downPct = (100 - upPct).toFixed(1);
+  const cont = r.continuationPct, rev = r.reversalPct;
+  let signalNote = '';
+  if (cont != null && rev != null && Math.abs(cont - upPct) < 3 && Math.abs(rev - upPct) < 3) {
+    signalNote = '<div class="rnote">No meaningful pattern detected — consistent with an efficient market, not a usable edge yet.</div>';
+  }
+  return '<div class="rline"><span class="rlabel">'+label+' (n='+r.n+')</span>'
+    + '<span class="rval">Up '+upPct+'% / Down '+downPct+'%</span></div>'
+    + '<div class="rline"><span class="rlabel">after Up → next Up</span><span class="rval">'+(cont!=null?cont+'%':'—')+'</span></div>'
+    + '<div class="rline"><span class="rlabel">after Down → next Up</span><span class="rval">'+(rev!=null?rev+'%':'—')+'</span></div>'
+    + signalNote;
+}
+async function loadCryptoResearch(){
+  const el = $('cryptoResearchBody');
+  try{
+    const r = await (await fetch('/api/crypto-status?t='+Date.now())).json();
+    const b60 = r.btc60?.lastResearch, b15 = r.btc15?.lastResearch;
+    if (!b60 && !b15) { el.innerHTML = 'No research computed yet — runs automatically once a bot has scanned enough closed markets.'; return; }
+    el.innerHTML = renderResearch(el, b60, 'BTC60') + '<div style="height:8px"></div>' + renderResearch(el, b15, 'BTC15');
+  }catch(e){
+    el.innerHTML = "Couldn't load research data";
+  }
+}
 async function loadCryptoHistory(){
   const el = $('cryptoHistList');
   try{
@@ -904,7 +943,7 @@ $('clearHist').onclick = async function(){
   }catch(e){ toast(false,'Could not reach the bot'); }
 };
 
-function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); loadBotToggles(); loadCryptoStats(); loadCryptoHistory(); }
+function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); loadBotToggles(); loadCryptoStats(); loadCryptoHistory(); loadCryptoResearch(); }
 loadConfig(); tick(); setInterval(tick, 4000);
 </script>
 </body>
