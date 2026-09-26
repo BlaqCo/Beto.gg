@@ -79,6 +79,7 @@ export async function recordEntry(ctx) {
     slug: ctx.slug,
     question: ctx.question || "",
     league: (ctx.league || "OTHER").toUpperCase(),
+    side: ctx.side || null, // "Up"/"Down" for crypto Up/Down markets; null for leagues that don't have this concept (sports)
     entry: +Number(ctx.entry || 0).toFixed(4),
     size: +Number(ctx.size || 0).toFixed(2),
     spread: ctx.spread != null ? +Number(ctx.spread).toFixed(4) : null,
@@ -113,6 +114,7 @@ export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry
     // the context we do have rather than dropping the result entirely.
     entry = {
       slug, question: fallback.question || "", league: (fallback.league || "OTHER").toUpperCase(),
+      side: fallback.side || null,
       entry: +Number(fallback.entry || 0).toFixed(4), size: +Number(fallback.size || 0).toFixed(2),
       spread: null, depth: null, discount: null, live: null, minsIn: null,
       fill: "unknown", hour: new Date().getUTCHours(),
