@@ -377,6 +377,19 @@ app.get("/api/status", (req, res) => {
   });
 });
 
+// ── /api/crypto-status — exposes what btc60Status()/btc15Status() already
+// compute internally (paper balance, bet size, dry-run state) but had no
+// route to reach the dashboard through at all until now.
+app.get("/api/crypto-status", (req, res) => {
+  try {
+    const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
+    const btc15 = btc15Bot?.btc15Status ? btc15Bot.btc15Status() : null;
+    res.json({ btc60, btc15 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // View switch — DISPLAY ONLY. Both bots keep running regardless.
 app.post("/api/mode", async (req, res) => {
   const { mode } = req.body;
