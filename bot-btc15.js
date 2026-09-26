@@ -88,6 +88,36 @@ let lastRealBBO = null; // { slug, price, ts }
 const BBO_CACHE_MS = 45_000;
 const sidecheckedSlugs = new Set(); // one-time-per-slug Yes-vs-getBBO side verification
 let paperPnlTotal = 0; // running paper P&L, updated at settlement — sync, no async lookup needed for status
+let startupRestoreDone = false;
+
+/** Rebuilds openPosition from the tracker's persisted state on the first
+ * scan after boot. Without this, a redeploy/restart mid-position silently
+ * forgets it exists (confirmed via real logs: the SAME still-open slug
+ * entered twice, ~2 minutes apart, with a restart in between) — in paper
+ * mode that costs nothing, but the same gap in live mode means two real
+ * orders stacked on one market. */
+async function restoreOpenPositionOnStartup() {
+  if (startupRestoreDone) return;
+  startupRestoreDone = true;
+  if (openPosition) return; // already has state, nothing to restore
+  let rows;
+  try { rows = await tracker.getOpenPositions(); } catch { return; }
+  const mine = (rows || []).find(r => r.league === "BTC15" && r.slug && r.slug.includes("-15m-"));
+  if (!mine) return;
+  const m = mine.slug.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})z$/);
+  if (!m) {
+    console.log(`  ⚠️ [BTC15] found a persisted open position ("${mine.slug}") but couldn't parse its window end time from the slug — leaving it untracked rather than guessing`);
+    return;
+  }
+  const [, yyyy, mo, dd, hh, mi] = m;
+  const windowStart = Date.UTC(+yyyy, +mo - 1, +dd, +hh, +mi);
+  const endTime = new Date(windowStart + 15 * 60_000).toISOString();
+  openPosition = {
+    slug: mine.slug, side: mine.entry >= 0.5 ? "Up" : "Down",
+    entryPrice: mine.entry, sizeUsd: mine.size, endTime, question: mine.question,
+  };
+  console.log(`  🔁 [BTC15] restored open position from persisted state after restart: "${mine.slug}" ${openPosition.side} @ ${(mine.entry*100).toFixed(0)}¢, endTime ${endTime}`);
+}
 
 // CONFIRMED from real production data on the CORRECT venue (Polymarket
 // US, /v1/markets?categories=crypto): the hourly market's real question
@@ -458,6 +488,7 @@ function userEntryRule(market) {
 
 export async function runBTC15ScanCycle() {
   try {
+    await restoreOpenPositionOnStartup();
     const c = await getConfig();
     if (c.BTC15_ENABLED != null) BTC15_ENABLED = c.BTC15_ENABLED;
     if (c.BTC15_LIVE_TRADING != null) LIVE_TRADING_ENABLED = c.BTC15_LIVE_TRADING;
