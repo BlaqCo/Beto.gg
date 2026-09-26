@@ -120,6 +120,7 @@ async function restoreOpenPositionOnStartup() {
     // since. Falls back to current DRY_RUN only for a pre-existing record
     // from before this field existed, where there's no better info at all.
     isPaper: mine.isPaper != null ? mine.isPaper : DRY_RUN,
+    minsRemaining: mine.minsRemaining ?? null,
   };
   console.log(`  🔁 [BTC15] restored open position from persisted state after restart: "${mine.slug}" ${openPosition.side} @ ${(mine.entry*100).toFixed(0)}¢, endTime ${endTime}`);
 }
@@ -160,7 +161,13 @@ export async function researchBTC15History(limit = 300) {
 
   const results = matches.map(m => {
     const apt = m.assetPriceTerms;
-    if (!apt || apt.settlementPrice == null || apt.priceToBeat == null) return { up: null };
+    // FIX: settlementPrice/priceToBeat default to 0 for markets that
+    // haven't actually settled yet (confirmed via real data producing an
+    // implausible "100% Down" result) — 0 is falsy but NOT == null in JS,
+    // so the old check let unsettled placeholder markets straight through
+    // and misclassified every one of them as Down. Checking > 0 instead,
+    // since a real BTC settlement price is always a large positive number.
+    if (!apt || !(apt.settlementPrice > 0) || !(apt.priceToBeat > 0)) return { up: null };
     const up = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
     return { up, endDate: apt.windowEnd || m.endDate };
   }).filter(r => r.up !== null).sort((a, b) => new Date(a.endDate) - new Date(b.endDate));
@@ -422,7 +429,9 @@ async function checkNaturalResolution15() {
     }
     const closedMatch = (closedMarkets || []).find(m => m.slug === openPosition.slug);
     const apt = closedMatch?.assetPriceTerms;
-    if (!apt || apt.settlementPrice == null || apt.priceToBeat == null) return; // not resolved yet — try again next scan
+    // Same fix as the research function above — 0 is a placeholder for
+    // "not settled yet", not a real price, and must not pass this check.
+    if (!apt || !(apt.settlementPrice > 0) || !(apt.priceToBeat > 0)) return; // not resolved yet — try again next scan
 
     const resolvedUp = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
     won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
@@ -436,7 +445,7 @@ async function checkNaturalResolution15() {
     await tracker.recordSettle(openPosition.slug, { won, pnl, exitPrice: won ? 1 : 0, reason: "expiry",
       fallback: { slug: openPosition.slug, question: openPosition.question, league: "BTC15",
                   entry: openPosition.entryPrice, size: openPosition.sizeUsd, side: openPosition.side,
-                  isPaper: openPosition.isPaper, at: new Date().toISOString() } });
+                  isPaper: openPosition.isPaper, minsRemaining: openPosition.minsRemaining, at: new Date().toISOString() } });
   } catch {}
   openPosition = null;
 }
@@ -574,7 +583,15 @@ export async function runBTC15ScanCycle() {
 
   // New window, no position yet — this is where DEFAULT_ENTRY_RULE fires.
   const entry = userEntryRule(market);
-  if (!entry) return;
+  if (!entry) {
+    // Direct proof of what's ACTUALLY running, not what the source says —
+    // logs the real band values every time a market gets rejected, so a
+    // rejection at a price that LOOKS like it should qualify is provable
+    // instead of guessed at from source code that might not match what's
+    // actually deployed.
+    console.log(`  🔍 [BTC15] entry rejected — live band is ${ENTRY_EDGE_MIN}-${ENTRY_EDGE_MAX}, yesPrice=${market.outcomePrices?.[0]}, endDate=${market.endDate}, now=${new Date().toISOString()}`);
+    return;
+  }
   console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
 
   try {
@@ -582,11 +599,12 @@ export async function runBTC15ScanCycle() {
       ? { filled: true, fillPrice: entry.price }
       : await pm.buyYesFOK({ slug: market.slug, sizeUsd: BET_SIZE_USD, ask: entry.price, override: true });
     if (res.filled) {
-      openPosition = { slug: market.slug, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question, isPaper: DRY_RUN };
+      const entryMinsRemaining = market.endDate ? +((new Date(market.endDate).getTime() - Date.now()) / 60000).toFixed(1) : null;
+      openPosition = { slug: market.slug, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question, isPaper: DRY_RUN, minsRemaining: entryMinsRemaining };
       console.log(`  ✅ BTC15 ENTRY ${DRY_RUN ? "[DRY]" : ""} ${entry.side} $${BET_SIZE_USD} @ ${(entry.price*100).toFixed(0)}¢`);
       try {
         await tracker.recordEntry({ slug: market.slug, question: market.question, league: "BTC15",
-          entry: entry.price, size: BET_SIZE_USD, live: true, side: entry.side, isPaper: DRY_RUN });
+          entry: entry.price, size: BET_SIZE_USD, live: true, side: entry.side, isPaper: DRY_RUN, minsRemaining: entryMinsRemaining });
       } catch {}
     } else {
       console.log(`  ❌ BTC15 entry did not fill: ${res.error || "unknown"}`);
