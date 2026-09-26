@@ -430,7 +430,7 @@ async function checkNaturalResolution15() {
   try {
     await tracker.recordSettle(openPosition.slug, { won, pnl, exitPrice: won ? 1 : 0, reason: "expiry",
       fallback: { slug: openPosition.slug, question: openPosition.question, league: "BTC15",
-                  entry: openPosition.entryPrice, size: openPosition.sizeUsd, at: new Date().toISOString() } });
+                  entry: openPosition.entryPrice, size: openPosition.sizeUsd, side: openPosition.side, at: new Date().toISOString() } });
   } catch {}
   openPosition = null;
 }
@@ -580,7 +580,7 @@ export async function runBTC15ScanCycle() {
       console.log(`  ✅ BTC15 ENTRY ${DRY_RUN ? "[DRY]" : ""} ${entry.side} $${BET_SIZE_USD} @ ${(entry.price*100).toFixed(0)}¢`);
       try {
         await tracker.recordEntry({ slug: market.slug, question: market.question, league: "BTC15",
-          entry: entry.price, size: BET_SIZE_USD, live: true });
+          entry: entry.price, size: BET_SIZE_USD, live: true, side: entry.side });
       } catch {}
     } else {
       console.log(`  ❌ BTC15 entry did not fill: ${res.error || "unknown"}`);
