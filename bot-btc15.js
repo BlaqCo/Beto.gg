@@ -34,7 +34,13 @@ const GAMMA = "https://gamma-api.polymarket.com";
 // default before a live config value has ever been read.
 let BTC15_ENABLED = process.env.BTC15_ENABLED === "true";
 let LIVE_TRADING_ENABLED = process.env.BTC15_LIVE_TRADING === "true";
-const DRY_RUN = process.env.DRY_RUN !== "false";
+// Per-bot override on top of the GLOBAL DRY_RUN — lets BTC15 run in paper
+// mode independently of sports and the other crypto bot, hot-reloadable
+// via config rather than forcing everyone onto the same shared flag.
+let PAPER_OVERRIDE = null; // null = defer to global DRY_RUN; true/false = force
+let DRY_START = Number(process.env.BTC15_PAPER_START || 200); // virtual bankroll, hot-reloadable
+const GLOBAL_DRY_RUN = process.env.DRY_RUN !== "false";
+let DRY_RUN = GLOBAL_DRY_RUN;
 
 const SCAN_INTERVAL_MS = 20_000;
 const RESEARCH_INTERVAL_MS = 60 * 60_000;
@@ -80,6 +86,8 @@ let openPosition = null; // { slug, side, entryPrice, sizeUsd, endTime }
 // hardcoded default.
 let lastRealBBO = null; // { slug, price, ts }
 const BBO_CACHE_MS = 45_000;
+const sidecheckedSlugs = new Set(); // one-time-per-slug Yes-vs-getBBO side verification
+let paperPnlTotal = 0; // running paper P&L, updated at settlement — sync, no async lookup needed for status
 
 // CONFIRMED from real production data on the CORRECT venue (Polymarket
 // US, /v1/markets?categories=crypto): the hourly market's real question
@@ -232,6 +240,26 @@ async function discoverCurrentBTC15Market() {
       // current for lower-volume markets — getBBO() queries that ONE
       // market's real order book directly, the same proven mechanism
       // already used throughout the sports side.
+      // ONE-TIME cross-check per slug: whenever the bulk listing already
+      // gives a confirmed "Yes" price via marketSides (long:true), also
+      // query getBBO for the SAME market and compare. If getBBO's ask
+      // consistently matches the CONFIRMED Yes price, it's reading the
+      // right side. If it consistently matches the COMPLEMENT (1 - Yes)
+      // instead, getBBO is reading the "No"/Down side, and every price
+      // that came from the BBO fallback alone (when the bulk listing was
+      // null) has likely had its side backwards this whole time.
+      if (docMatch.yesPrice != null && !sidecheckedSlugs.has(docMatch.slug)) {
+        sidecheckedSlugs.add(docMatch.slug);
+        try {
+          const crossBbo = await pm.getBBO(docMatch.slug);
+          if (crossBbo?.bid && crossBbo?.ask) {
+            const bboMid = (crossBbo.bid + crossBbo.ask) / 2;
+            const diffFromYes = Math.abs(bboMid - docMatch.yesPrice);
+            const diffFromComplement = Math.abs(bboMid - (1 - docMatch.yesPrice));
+            console.log(`  🔬 [BTC15] SIDE CHECK "${docMatch.slug}": confirmed Yes price=${docMatch.yesPrice} | getBBO mid=${bboMid.toFixed(3)} | closer to ${diffFromYes < diffFromComplement ? "YES (correct side)" : "COMPLEMENT — getBBO may be reading the WRONG side"}`);
+          }
+        } catch {}
+      }
       let finalYesPrice = docMatch.yesPrice;
       if (finalYesPrice == null) {
         try {
@@ -341,6 +369,7 @@ async function checkNaturalResolution15() {
 
   const won = !!resolution.won;
   const pnl = resolution.realizedPnl;
+  if (DRY_RUN) paperPnlTotal += pnl; // only counts toward the virtual bankroll while genuinely paper
   console.log(`  ${won ? "✅ WIN" : "❌ LOSS"} | BTC15 | ${(openPosition.question || "").slice(0, 50)} | pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
   try {
     await tracker.recordSettle(openPosition.slug, { won, pnl, exitPrice: won ? 1 : 0, reason: "expiry",
@@ -433,6 +462,10 @@ export async function runBTC15ScanCycle() {
     if (c.BTC15_ENABLED != null) BTC15_ENABLED = c.BTC15_ENABLED;
     if (c.BTC15_LIVE_TRADING != null) LIVE_TRADING_ENABLED = c.BTC15_LIVE_TRADING;
     if (c.BTC15_SL_ENABLED != null) SL_ENABLED = c.BTC15_SL_ENABLED;
+    if (c.BTC15_BET_SIZE != null) BET_SIZE_USD = c.BTC15_BET_SIZE;
+    if (c.BTC15_PAPER_START != null) DRY_START = c.BTC15_PAPER_START;
+    if (c.BTC15_PAPER_MODE !== undefined) PAPER_OVERRIDE = c.BTC15_PAPER_MODE;
+    DRY_RUN = PAPER_OVERRIDE != null ? PAPER_OVERRIDE : GLOBAL_DRY_RUN;
   } catch {}
   if (!BTC15_ENABLED) return;
 
@@ -467,7 +500,11 @@ export async function runBTC15ScanCycle() {
     return; // still holding a DIFFERENT (older) window, not yet resolved — don't open a new one on top of it
   }
 
-  if (!LIVE_TRADING_ENABLED) {
+  // LIVE_TRADING_ENABLED guards REAL money specifically — it shouldn't
+  // also block PAPER simulation, since nothing real is at risk there.
+  // Only refuse entirely when we're in real-money mode (DRY_RUN false)
+  // AND that gate is off; paper mode always gets to simulate.
+  if (!DRY_RUN && !LIVE_TRADING_ENABLED) {
     console.log(`  👁 OBSERVE MODE — BTC15_LIVE_TRADING is off. No entries, no exits, logging only.`);
     return;
   }
@@ -497,5 +534,7 @@ export async function runBTC15ScanCycle() {
 }
 
 export function btc15Status() {
-  return { enabled: BTC15_ENABLED, liveTrading: LIVE_TRADING_ENABLED, dryRun: DRY_RUN, tpPct: TP_PCT, slPct: SL_PCT, openPosition, lastResearch: cachedResearch };
+  const exposure = openPosition ? openPosition.sizeUsd : 0;
+  const paperBalance = DRY_RUN ? +(DRY_START + paperPnlTotal - exposure).toFixed(2) : null;
+  return { enabled: BTC15_ENABLED, liveTrading: LIVE_TRADING_ENABLED, dryRun: DRY_RUN, paperBalance, betSize: BET_SIZE_USD, tpPct: TP_PCT, slPct: SL_PCT, openPosition, lastResearch: cachedResearch };
 }
