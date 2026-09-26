@@ -81,6 +81,7 @@ export async function recordEntry(ctx) {
     league: (ctx.league || "OTHER").toUpperCase(),
     side: ctx.side || null, // "Up"/"Down" for crypto Up/Down markets; null for leagues that don't have this concept (sports)
     isPaper: !!ctx.isPaper, // was this a simulated (DRY_RUN) trade, not real money — matters once live and paper history start mixing
+    minsRemaining: ctx.minsRemaining ?? null, // minutes left in the window at entry — needed since there's no timing restriction anymore
     entry: +Number(ctx.entry || 0).toFixed(4),
     size: +Number(ctx.size || 0).toFixed(2),
     spread: ctx.spread != null ? +Number(ctx.spread).toFixed(4) : null,
@@ -115,7 +116,7 @@ export async function recordSettle(slug, { won, pnl, exitPrice, reason = "expiry
     // the context we do have rather than dropping the result entirely.
     entry = {
       slug, question: fallback.question || "", league: (fallback.league || "OTHER").toUpperCase(),
-      side: fallback.side || null, isPaper: !!fallback.isPaper,
+      side: fallback.side || null, isPaper: !!fallback.isPaper, minsRemaining: fallback.minsRemaining ?? null,
       entry: +Number(fallback.entry || 0).toFixed(4), size: +Number(fallback.size || 0).toFixed(2),
       spread: null, depth: null, discount: null, live: null, minsIn: null,
       fill: "unknown", hour: new Date().getUTCHours(),
@@ -390,6 +391,65 @@ export async function clearHistory({ alsoLocks = false } = {}) {
   }
   console.log(`🗑 Cleared ${before} stored trades and hid all bet history before now${alsoLocks ? "; also cleared bet locks" : ""}`);
   return { cleared: before };
+}
+
+/**
+ * cryptoSegments() — win rate/pnl broken down by dimension, for BTC60/
+ * BTC15 specifically. Deliberately simpler than segment() above: that one
+ * assumes sports' maker/taker fee model via breakEven(), which crypto's
+ * actual fee structure was never confirmed to match, so "edge" here is
+ * plainly winRate - avgEntryPrice (the price paid IS the implied
+ * probability you needed to beat) rather than borrowing an unverified
+ * fee assumption. Each bucket needs minN trades before being reported, same
+ * discipline as everywhere else in this project — small buckets don't get
+ * to claim an edge.
+ */
+export async function cryptoSegments({ minN = 8 } = {}) {
+  const rows = (await getTrades()).filter(r =>
+    (r.league === "BTC60" || r.league === "BTC15") && r.won != null && r.pnl != null);
+
+  const bucket = (rows, keyFn, dimension) => {
+    const g = {};
+    for (const r of rows) {
+      const k = keyFn(r);
+      if (k == null) continue;
+      (g[k] ||= { key: String(k), n: 0, w: 0, pnl: 0, entrySum: 0 });
+      g[k].n++; if (r.won) g[k].w++;
+      g[k].pnl += r.pnl; g[k].entrySum += r.entry || 0;
+    }
+    return Object.values(g)
+      .filter(x => x.n >= minN)
+      .map(x => {
+        const winRate = +((x.w / x.n) * 100).toFixed(1);
+        const avgEntry = +((x.entrySum / x.n) * 100).toFixed(1);
+        return { dimension, key: x.key, n: x.n, w: x.w, l: x.n - x.w,
+          winRate, avgEntryPct: avgEntry, edge: +(winRate - avgEntry).toFixed(1),
+          pnl: +x.pnl.toFixed(2) };
+      })
+      .sort((a, b) => b.edge - a.edge);
+  };
+
+  const priceBand = r => {
+    const p = r.entry >= 0.5 ? r.entry : 1 - r.entry; // favorite-side price, matching how entries are actually made
+    if (p < 0.5) return null;
+    const lo = Math.floor(p * 10) * 10;
+    return `${lo}-${lo + 10}%`;
+  };
+  const timingBucket = r => {
+    if (r.minsRemaining == null) return null; // older rows never captured this
+    if (r.minsRemaining > 10) return "early (>10m left)";
+    if (r.minsRemaining > 3) return "mid (3-10m left)";
+    return "late (<3m left)";
+  };
+
+  return {
+    n: rows.length,
+    byLeague: bucket(rows, r => r.league, "league"),
+    byPriceBand: bucket(rows, priceBand, "price band"),
+    bySide: bucket(rows, r => r.side, "side"),
+    byExitReason: bucket(rows, r => r.reason, "exit reason"),
+    byTiming: bucket(rows, timingBucket, "entry timing"),
+  };
 }
 
 export async function analytics({ minN = 5 } = {}) {
