@@ -104,42 +104,36 @@ function isHourlyBtcQuestion(q) {
 }
 
 export async function researchBTC60History(limit = 300) {
+  // REWIRED — this was still hitting gamma-api.polymarket.com (the WRONG
+  // platform, confirmed dead throughout this whole codebase) and parsing
+  // outcomePrices/outcome fields that don't exist in Polymarket US's real
+  // schema at all. Same fix as live discovery: correct venue
+  // (fetchCryptoMarketsV1 with closed:true), and the real, confirmed
+  // settlement rule from the app's own Market Rules screen — Up if
+  // settlementPrice >= priceToBeat, Down otherwise.
   let markets;
   try {
-    const { data } = await axios.get(`${GAMMA}/markets`, {
-      params: { closed: true, order: "endDate", ascending: false, limit }, // tag param removed — confirmed unreliable, question text is what actually filters now
-      timeout: 10_000,
-    });
-    markets = Array.isArray(data) ? data : (data?.markets || []);
+    markets = await pm.fetchCryptoMarketsV1({ closed: true, limit });
   } catch (err) {
-    console.log(`❌ [BTC60 research] Gamma fetch failed: ${err.message}`);
+    console.log(`❌ [BTC60 research] fetch failed: ${err.message}`);
     return null;
   }
 
-  if (!shapeLoggedResearch) {
-    shapeLoggedResearch = true;
-    console.log(`🔬 BTC60 RESEARCH RAW SAMPLE (first result, truncated): ${JSON.stringify(markets[0]).slice(0, 500)}`);
-  }
-
-  const btc60 = markets.filter(m => isHourlyBtcQuestion(m.question || ""));
-  if (!btc60.length) {
-    console.log(`⚠️ [BTC60 research] 0 matching resolved markets found out of ${markets.length} returned — tag/filter assumption may be wrong, check the raw sample above`);
+  const matches = markets.filter(m => isHourlyBtcQuestion(m.question || ""));
+  if (!matches.length) {
+    console.log(`⚠️ [BTC60 research] 0 matching resolved markets found out of ${markets.length} returned`);
     return null;
   }
 
-  const results = btc60.map(m => {
-    let up = null;
-    if (Array.isArray(m.outcomePrices)) {
-      const prices = m.outcomePrices.map(Number);
-      if (prices[0] === 1) up = true;
-      else if (prices[0] === 0) up = false;
-    }
-    if (up === null && typeof m.outcome === "string") up = /up/i.test(m.outcome);
-    return { up, endDate: m.endDate };
+  const results = matches.map(m => {
+    const apt = m.assetPriceTerms;
+    if (!apt || apt.settlementPrice == null || apt.priceToBeat == null) return { up: null };
+    const up = Number(apt.settlementPrice) >= Number(apt.priceToBeat);
+    return { up, endDate: apt.windowEnd || m.endDate };
   }).filter(r => r.up !== null).sort((a, b) => new Date(a.endDate) - new Date(b.endDate));
 
   if (results.length < 10) {
-    console.log(`⚠️ [BTC60 research] Only ${results.length} markets had a parseable outcome — not enough to say anything real yet`);
+    console.log(`⚠️ [BTC60 research] Only ${results.length} markets had a parseable settlement (settlementPrice/priceToBeat) — not enough to say anything real yet`);
     return null;
   }
 
