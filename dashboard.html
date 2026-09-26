@@ -118,6 +118,7 @@ h1,h2,h3{font-family:'Archivo',system-ui,sans-serif;margin:0}
 .livebadge{font-size:8px;font-weight:800;letter-spacing:.05em;padding:2px 6px;border-radius:5px;vertical-align:middle}
 .livebadge.paper{background:rgba(255,182,61,.15);color:var(--amber);border:1px solid rgba(255,182,61,.4)}
 .livebadge.live{background:rgba(255,78,106,.15);color:var(--down);border:1px solid rgba(255,78,106,.4)}
+.paperbal{font-size:8px;font-weight:700;color:var(--muted, #8a94a6);margin-left:4px;vertical-align:middle}
 .hchip.actionable{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .cell{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:10px 9px}
@@ -285,7 +286,7 @@ button:active{transform:translateY(1px)}
 <div class="cryptopanel" id="cryptoPanel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
-    <span class="cryptotitle">BTC60 CRYPTO</span> <span class="livebadge" id="btc60LiveBadge">—</span>
+    <span class="cryptotitle">BTC60 CRYPTO</span> <span class="livebadge" id="btc60LiveBadge">—</span> <span class="paperbal" id="btc60PaperBal" style="display:none"></span>
   </div>
   <div class="cryptogrid">
     <div class="ccell"><div class="clabel">RECORD</div><div class="cval" id="cWl">—</div></div>
@@ -298,7 +299,7 @@ button:active{transform:translateY(1px)}
 <div class="cryptopanel" id="crypto15Panel">
   <div class="cryptohead">
     <span class="cryptoicon">₿</span>
-    <span class="cryptotitle">BTC15 CRYPTO</span> <span class="livebadge" id="btc15LiveBadge">—</span>
+    <span class="cryptotitle">BTC15 CRYPTO</span> <span class="livebadge" id="btc15LiveBadge">—</span> <span class="paperbal" id="btc15PaperBal" style="display:none"></span>
   </div>
   <div class="cryptogrid">
     <div class="ccell"><div class="clabel">RECORD</div><div class="cval" id="c15Wl">—</div></div>
@@ -472,16 +473,39 @@ async function loadBotToggles(){
     $('cryptoToggle').classList.toggle('on', !!cryptoOn);
     $('crypto15Toggle').classList.toggle('on', !!crypto15On);
 
-    // Live-trading status — previously invisible anywhere, only a raw env
-    // var with no dashboard indicator at all. Now sourced from the SAME
-    // config fetch already happening here, no extra request needed.
+    // Badge now sourced from /api/crypto-status's real dryRun field, not
+    // just LIVE_TRADING_ENABLED from config. Those are different things
+    // now that a per-bot PAPER_MODE override exists: LIVE_TRADING can be
+    // on while PAPER_MODE forces paper anyway, and the old badge had no
+    // way to reflect that — it would have shown "LIVE $" while the bot
+    // was genuinely simulating every order.
     const setLiveBadge = (id, isLive) => {
       const el = $(id);
       el.textContent = isLive ? 'LIVE $' : 'PAPER';
       el.className = 'livebadge ' + (isLive ? 'live' : 'paper');
     };
-    setLiveBadge('btc60LiveBadge', !!cc.BTC60_LIVE_TRADING);
-    setLiveBadge('btc15LiveBadge', !!cc.BTC15_LIVE_TRADING);
+    try {
+      const csRes = await (await fetch('/api/crypto-status?t='+Date.now())).json();
+      const b60 = csRes.btc60, b15 = csRes.btc15;
+      setLiveBadge('btc60LiveBadge', b60 ? !b60.dryRun : !!cc.BTC60_LIVE_TRADING);
+      setLiveBadge('btc15LiveBadge', b15 ? !b15.dryRun : !!cc.BTC15_LIVE_TRADING);
+      const setPaperBal = (id, status) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (status && status.dryRun && status.paperBalance != null) {
+          el.textContent = 'Paper bal: $' + status.paperBalance.toFixed(2);
+          el.style.display = '';
+        } else {
+          el.style.display = 'none';
+        }
+      };
+      setPaperBal('btc60PaperBal', b60);
+      setPaperBal('btc15PaperBal', b15);
+    } catch {
+      // fall back to the old, less-accurate signal if the new endpoint fails
+      setLiveBadge('btc60LiveBadge', !!cc.BTC60_LIVE_TRADING);
+      setLiveBadge('btc15LiveBadge', !!cc.BTC15_LIVE_TRADING);
+    }
 
     // Combined status across all three — lists whichever are actually on
     // instead of a binary paused/live that can't represent "two of three".
