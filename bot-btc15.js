@@ -115,6 +115,11 @@ async function restoreOpenPositionOnStartup() {
   openPosition = {
     slug: mine.slug, side: mine.entry >= 0.5 ? "Up" : "Down",
     entryPrice: mine.entry, sizeUsd: mine.size, endTime, question: mine.question,
+    // mine.isPaper is the ORIGINAL, persisted mode from when the trade was
+    // actually placed — not the current DRY_RUN, which may have changed
+    // since. Falls back to current DRY_RUN only for a pre-existing record
+    // from before this field existed, where there's no better info at all.
+    isPaper: mine.isPaper != null ? mine.isPaper : DRY_RUN,
   };
   console.log(`  🔁 [BTC15] restored open position from persisted state after restart: "${mine.slug}" ${openPosition.side} @ ${(mine.entry*100).toFixed(0)}¢, endTime ${endTime}`);
 }
@@ -430,7 +435,8 @@ async function checkNaturalResolution15() {
   try {
     await tracker.recordSettle(openPosition.slug, { won, pnl, exitPrice: won ? 1 : 0, reason: "expiry",
       fallback: { slug: openPosition.slug, question: openPosition.question, league: "BTC15",
-                  entry: openPosition.entryPrice, size: openPosition.sizeUsd, side: openPosition.side, at: new Date().toISOString() } });
+                  entry: openPosition.entryPrice, size: openPosition.sizeUsd, side: openPosition.side,
+                  isPaper: openPosition.isPaper, at: new Date().toISOString() } });
   } catch {}
   openPosition = null;
 }
@@ -576,11 +582,11 @@ export async function runBTC15ScanCycle() {
       ? { filled: true, fillPrice: entry.price }
       : await pm.buyYesFOK({ slug: market.slug, sizeUsd: BET_SIZE_USD, ask: entry.price, override: true });
     if (res.filled) {
-      openPosition = { slug: market.slug, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question };
+      openPosition = { slug: market.slug, side: entry.side, entryPrice: entry.price, sizeUsd: BET_SIZE_USD, endTime: market.endDate, question: market.question, isPaper: DRY_RUN };
       console.log(`  ✅ BTC15 ENTRY ${DRY_RUN ? "[DRY]" : ""} ${entry.side} $${BET_SIZE_USD} @ ${(entry.price*100).toFixed(0)}¢`);
       try {
         await tracker.recordEntry({ slug: market.slug, question: market.question, league: "BTC15",
-          entry: entry.price, size: BET_SIZE_USD, live: true, side: entry.side });
+          entry: entry.price, size: BET_SIZE_USD, live: true, side: entry.side, isPaper: DRY_RUN });
       } catch {}
     } else {
       console.log(`  ❌ BTC15 entry did not fill: ${res.error || "unknown"}`);
