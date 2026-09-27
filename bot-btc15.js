@@ -637,6 +637,23 @@ export async function runBTC15ScanCycle() {
   }
   console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
 
+  // FIX: no equivalent of sports' proactive balance check existed here at
+  // all — in live mode this would have let a real order attempt go
+  // through with insufficient funds and rely on the exchange to reject
+  // it, instead of skipping cleanly with a clear reason like sports does.
+  if (!DRY_RUN) {
+    try {
+      const bp = await pm.getBuyingPower();
+      if (bp.buyingPower < BET_SIZE_USD) {
+        console.log(`  ⏸ [BTC15] skipping entry — buying power $${bp.buyingPower.toFixed(2)} is below the $${BET_SIZE_USD} bet size`);
+        return;
+      }
+    } catch (err) {
+      console.log(`  ⚠️ [BTC15] couldn't verify buying power (${err.message}) — skipping entry to be safe`);
+      return;
+    }
+  }
+
   try {
     const res = DRY_RUN
       ? { filled: true, fillPrice: entry.price }
