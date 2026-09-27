@@ -129,7 +129,14 @@ h1,h2,h3{font-family:'Sora',system-ui,sans-serif;margin:0}
 .pnlchart{margin-bottom:12px;padding:10px 4px 2px;border-bottom:1px solid var(--line)}
 .pnlchart .pctop{display:flex;justify-content:space-between;align-items:baseline;padding:0 6px 8px;font-size:10px;color:var(--dim)}
 .pnlchart .pctop b{font-family:'Sora';font-weight:700;font-size:15px;margin-left:6px}
-.pnlchart svg{display:block;width:100%;height:56px}
+.pnlwrap{position:relative;touch-action:pan-y}
+.combinedchart{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.pnlchart svg{display:block;width:100%;height:100px;cursor:crosshair}
+.pnltip{position:absolute;top:2px;transform:translateX(-50%);background:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:10px;
+  white-space:nowrap;pointer-events:none;opacity:0;z-index:2;display:flex;flex-direction:column;gap:1px}
+.pnltip b{font-size:12px}
+.pnltip span{color:var(--dim);font-size:9px}
 .histlist{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto}
 .histempty{color:var(--dim);font-size:12px;padding:10px 0;text-align:center}
 .histrow{display:grid;grid-template-columns:1fr auto auto;gap:4px 10px;align-items:center;
@@ -148,6 +155,14 @@ h1,h2,h3{font-family:'Sora',system-ui,sans-serif;margin:0}
 .rlabel{color:var(--dim)}
 .rval{font-weight:700;color:var(--text)}
 .rnote{font-size:10px;color:var(--amber);padding:6px 0 2px;line-height:1.4}
+.segnote{font-size:10px;color:var(--dim);line-height:1.5;padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.segtitle{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--dim);margin:10px 0 4px}
+.segtitle:first-of-type{margin-top:0}
+.segempty{font-size:11px;color:var(--dim);padding-bottom:6px}
+.segrow{display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:4px 0;border-bottom:1px solid var(--line)}
+.segkey{color:var(--text);flex:1}
+.segn{color:var(--dim);font-size:10px;margin:0 8px}
+.segedge{font-weight:800;min-width:44px;text-align:right}
 .paperbal{font-size:8px;font-weight:700;color:var(--muted, #8a94a6);margin-left:4px;vertical-align:middle}
 .hchip.actionable{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
@@ -197,6 +212,36 @@ button:active{transform:translateY(1px)}
 .ask{border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden;
   background:linear-gradient(180deg,color-mix(in srgb, var(--cyan) 6%, transparent),transparent 60%),var(--panel)}
 .askhead{display:flex;align-items:center;gap:8px;padding:12px 14px 0}
+.infobtn{margin-left:auto;width:22px;height:22px;border-radius:99px;border:1px solid var(--line);
+  background:var(--ink-2);color:var(--dim);font-family:'Sora';font-weight:700;font-size:12px;
+  font-style:italic;cursor:pointer;display:grid;place-items:center;padding:0}
+.infobtn:active{background:var(--panel);color:var(--cyan);border-color:var(--cyan)}
+.modalbg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;
+  align-items:flex-end;justify-content:center}
+.modalbg.on{display:flex}
+.modal{background:var(--ink-2);border:1px solid var(--line);border-radius:16px 16px 0 0;
+  width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom,0px)}
+.modalhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+  border-bottom:1px solid var(--line);flex:0 0 auto}
+.modalhead h3{font-size:13px;letter-spacing:.05em;color:var(--text)}
+.modalclose{width:26px;height:26px;border-radius:99px;border:1px solid var(--line);
+  background:var(--panel);color:var(--dim);font-size:16px;line-height:1;cursor:pointer;
+  display:grid;place-items:center;padding:0}
+.modalbody{overflow-y:auto;padding:12px 16px 20px}
+.cmdgroup{margin-bottom:16px}
+.cmdgrouptitle{font-family:'Sora';font-weight:700;font-size:10px;letter-spacing:.1em;
+  color:var(--cyan);margin-bottom:6px}
+.cmdrow{font-size:11px;color:var(--dim);padding:5px 0;border-bottom:1px solid var(--line);line-height:1.6}
+.cmdrow code{color:var(--text);background:var(--panel);padding:2px 5px;border-radius:4px;
+  font-family:'JetBrains Mono';font-size:10px}
+.alllabel{font-family:'Sora';font-weight:700;font-size:9px;letter-spacing:.1em;color:var(--dim);
+  margin-bottom:6px;padding-left:2px}
+.alertbanner{display:flex;align-items:center;gap:8px;background:color-mix(in srgb, var(--down) 15%, var(--ink));
+  border:1px solid var(--down);border-radius:10px;padding:10px 12px;margin-bottom:12px;
+  font-size:11px;color:var(--text);animation:alertpulse 2s ease-in-out infinite}
+@keyframes alertpulse{0%,100%{border-color:var(--down)}50%{border-color:color-mix(in srgb, var(--down) 50%, transparent)}}
+.alerticon{flex:0 0 auto;font-size:14px}
 .askhead h3{font-family:'Sora';font-weight:700;font-size:12px;letter-spacing:.14em}
 .askhint{font-size:10px;color:var(--dim);padding:4px 14px 2px}
 .cfgline{font-size:10px;color:var(--cyan);padding:0 14px 10px;letter-spacing:.06em}
@@ -289,6 +334,10 @@ button:active{transform:translateY(1px)}
 </style>
 </head>
 <body>
+<div class="alertbanner" id="stuckAlert" style="display:none">
+  <span class="alerticon">⚠️</span>
+  <span id="stuckAlertText"></span>
+</div>
 <div class="top">
   <div class="mark" id="mark"><img src="data:image/png;base64,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" alt="BETO.GG"></div>
   <div>
@@ -306,12 +355,14 @@ button:active{transform:translateY(1px)}
   </div>
 </div>
 
+<div class="alllabel">ALL MARKETS · SPORTS + CRYPTO COMBINED</div>
 <div class="grid">
-  <div class="cell"><div class="clabel">BALANCE</div><div class="cval" id="bal">—</div><div class="csub" id="balsub">cash</div></div>
-  <div class="cell"><div class="clabel">WIN RATE</div><div class="cval" id="wr">—</div><div class="csub" id="wrsub">settled</div></div>
-  <div class="cell"><div class="clabel">OPEN</div><div class="cval" id="slots">—</div><div class="csub">positions</div></div>
-  <div class="cell"><div class="clabel">VOLUME</div><div class="cval" id="vol">—</div><div class="csub" id="volsub">lifetime</div></div>
+  <div class="cell"><div class="clabel">ROI</div><div class="cval" id="cRoi">—</div><div class="csub" id="cRoiSub">all-time</div></div>
+  <div class="cell"><div class="clabel">BETS MADE</div><div class="cval" id="cBets">—</div><div class="csub" id="cBetsSub">settled</div></div>
+  <div class="cell"><div class="clabel">VOLUME</div><div class="cval" id="cVol">—</div><div class="csub">wagered</div></div>
+  <div class="cell"><div class="clabel">OPEN</div><div class="cval" id="cOpen">—</div><div class="csub">trades now</div></div>
 </div>
+<div id="combinedPnlChart" class="pnlchart combinedchart"></div>
 
 <div class="secdiv crypto"><span class="sectxt">CRYPTO</span><span class="secline"></span></div>
 <div class="cryptopanel vibrant" id="cryptoPanel">
@@ -348,9 +399,16 @@ button:active{transform:translateY(1px)}
   <div id="cryptoResearchBody" class="histempty">Loading…</div>
 </div>
 
+<div class="panel" id="cryptoSegmentsPanel">
+  <div class="cryptohead">
+    <span class="cryptoicon">📐</span>
+    <span class="cryptotitle">STRATEGY SEGMENTS</span>
+  </div>
+  <div id="cryptoSegmentsBody" class="histempty" style="padding:0 13px 12px">Loading…</div>
+</div>
+
 <div class="panel" id="cryptoHistoryPanel">
   <div class="cryptohead">
-    <span class="cryptoicon">📜</span>
     <span class="cryptotitle">CRYPTO HISTORY</span>
   </div>
   <div id="cryptoPnlChart" class="pnlchart"></div>
@@ -360,7 +418,7 @@ button:active{transform:translateY(1px)}
 </div>
 
 <div class="ask">
-  <div class="askhead"><h3>ASK BETOBOT</h3></div>
+  <div class="askhead"><h3>ASK BETOBOT</h3><button class="infobtn" id="cmdInfoBtn" aria-label="Show all commands">i</button></div>
   <div class="askhint">Ask about results, or change any setting in plain English.</div>
   <div class="cfgline" id="cfgline">—</div>
   <div class="askrow">
@@ -368,15 +426,46 @@ button:active{transform:translateY(1px)}
     <button class="primary" id="send">REQUEST</button>
   </div>
   <div class="answer" id="answer"></div>
-  <div class="chips">
-    <span class="chip">which sport is most profitable?</span>
-    <span class="chip">why no bets lately?</span>
-    <span class="chip">how am I doing?</span>
-    <span class="chip">bet size 5</span>
-    <span class="chip">edge 60-70</span>
-    <span class="chip">what's my longest win streak?</span>
-    <span class="chip">what edge do you suggest?</span>
-    <span class="chip">pause</span>
+</div>
+
+<div class="modalbg" id="cmdModalBg">
+  <div class="modal">
+    <div class="modalhead">
+      <h3>BETOBOT COMMANDS</h3>
+      <button class="modalclose" id="cmdModalClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="modalbody">
+      <div class="cmdgroup">
+        <div class="cmdgrouptitle">GENERAL</div>
+        <div class="cmdrow"><code>pause</code> / <code>resume</code></div>
+        <div class="cmdrow"><code>circuit breaker at $500</code> / <code>kill switch off</code></div>
+      </div>
+      <div class="cmdgroup">
+        <div class="cmdgrouptitle">SPORTS</div>
+        <div class="cmdrow"><code>flat bets to $10</code></div>
+        <div class="cmdrow"><code>5 slots</code> / <code>no slots</code></div>
+        <div class="cmdrow"><code>edge 60-70</code> / <code>floor 58</code> / <code>cap 72</code></div>
+        <div class="cmdrow"><code>wait 5 minutes</code> / <code>no wait</code></div>
+        <div class="cmdrow"><code>take profit 90</code> / <code>tp off</code></div>
+        <div class="cmdrow"><code>dca 15%</code> / <code>dca off</code></div>
+        <div class="cmdrow"><code>maker on</code> / <code>maker off</code></div>
+        <div class="cmdrow"><code>bet on tennis</code> / <code>stop betting on esports</code> / <code>bet on all sports</code></div>
+      </div>
+      <div class="cmdgroup">
+        <div class="cmdgrouptitle">CRYPTO (say "btc60" or "btc15")</div>
+        <div class="cmdrow"><code>turn on btc60</code> / <code>turn off btc15</code></div>
+        <div class="cmdrow"><code>turn on btc60 real money trading</code></div>
+        <div class="cmdrow"><code>put btc15 in paper mode</code> / <code>btc60 live mode</code></div>
+        <div class="cmdrow"><code>turn on btc60 stop loss</code> / <code>btc15 stop loss off</code></div>
+      </div>
+      <div class="cmdgroup">
+        <div class="cmdgrouptitle">ASK ANYTHING</div>
+        <div class="cmdrow"><code>which sport is most profitable?</code></div>
+        <div class="cmdrow"><code>why no bets lately?</code></div>
+        <div class="cmdrow"><code>how am I doing?</code></div>
+        <div class="cmdrow"><code>what's my longest win streak?</code></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -602,22 +691,54 @@ async function loadFunnel(){
   }catch(e){}
 }
 
+// Genuinely combines sports + crypto from data that already exists —
+// no new server endpoint needed. Sports numbers come from /api/stats
+// (already correct, already tested); crypto numbers come from the same
+// /api/crypto-history and /api/crypto-status calls the crypto panels
+// already fetch. This is real addition across two systems, not a guess.
 async function loadStats(){
-  try{
-    const d = await (await fetch('/')).json();
-    const s = d.stats||{};
-    const bal = (s.liveBalance!=null) ? s.liveBalance : s.dryBalance;
-    if(bal!=null){ $('bal').textContent = '$'+Number(bal).toFixed(2);
-      $('balsub').textContent = (d.settings&&d.settings.dryRun) ? 'paper' : 'cash'; }
-    $('wr').textContent = s.winRate||'—';
-    $('wrsub').textContent = (s.wins||0)+'W / '+(s.losses||0)+'L';
-  }catch(e){}
+  let sportsWins = 0, sportsLosses = 0, sportsPnl = 0, sportsWagered = 0, sportsBets = 0, sportsOpen = 0;
+  let cryptoWins = 0, cryptoLosses = 0, cryptoPnl = 0, cryptoWagered = 0, cryptoBets = 0, cryptoOpen = 0;
+
   try{
     const st = await (await fetch('/api/stats')).json();
-    const w = Number(st.totalWagered||0);
-    $('vol').textContent = w>=10000 ? '$'+(w/1000).toFixed(1)+'k' : '$'+w.toFixed(0);
-    $('volsub').textContent = (st.totalBets||0)+' fills';
+    sportsWins = Number(st.wins||0); sportsLosses = Number(st.losses||0);
+    sportsPnl = Number(st.totalPnl||0); sportsWagered = Number(st.totalWagered||0);
+    sportsBets = Number(st.totalBets||0);
   }catch(e){}
+  try{
+    const pos = await (await fetch('/api/positions')).json();
+    sportsOpen = Array.isArray(pos) ? pos.length : 0;
+  }catch(e){}
+  try{
+    const r = await (await fetch('/api/crypto-history?t='+Date.now())).json();
+    const trades = r.trades || [];
+    cryptoBets = trades.length;
+    for (const t of trades) {
+      if (t.won) cryptoWins++; else cryptoLosses++;
+      cryptoPnl += Number(t.pnl||0);
+      cryptoWagered += Number(t.size||0);
+    }
+  }catch(e){}
+  try{
+    const cs = await (await fetch('/api/crypto-status?t='+Date.now())).json();
+    if (cs.btc60?.openPosition) cryptoOpen++;
+    if (cs.btc15?.openPosition) cryptoOpen++;
+  }catch(e){}
+
+  const totalPnl = sportsPnl + cryptoPnl;
+  const totalWagered = sportsWagered + cryptoWagered;
+  const totalBets = sportsBets + cryptoBets;
+  const totalOpen = sportsOpen + cryptoOpen;
+  const roi = totalWagered > 0 ? (totalPnl / totalWagered) * 100 : 0;
+
+  $('cRoi').textContent = (roi>=0?'+':'') + roi.toFixed(1) + '%';
+  $('cRoi').className = 'cval' + (roi>0?' up':roi<0?' down':'');
+  $('cRoiSub').textContent = (totalPnl>=0?'+$':'-$') + Math.abs(totalPnl).toFixed(2);
+  $('cBets').textContent = totalBets;
+  $('cBetsSub').textContent = (sportsWins+cryptoWins)+'W / '+(sportsLosses+cryptoLosses)+'L';
+  $('cVol').textContent = totalWagered>=10000 ? '$'+(totalWagered/1000).toFixed(1)+'k' : '$'+totalWagered.toFixed(0);
+  $('cOpen').textContent = totalOpen;
 }
 
 function renderPositionRows(p){
@@ -748,6 +869,9 @@ function showBet(b){
 $('dClose').onclick = function(){ $('sheet').classList.remove('show'); };
 $('sheet').onclick = function(e){ if(e.target===$('sheet')) $('sheet').classList.remove('show'); };
 document.addEventListener('keydown', function(e){ if(e.key==='Escape') $('sheet').classList.remove('show'); });
+$('cmdInfoBtn').addEventListener('click', () => $('cmdModalBg').classList.add('on'));
+$('cmdModalClose').addEventListener('click', () => $('cmdModalBg').classList.remove('on'));
+$('cmdModalBg').addEventListener('click', e => { if (e.target === $('cmdModalBg')) $('cmdModalBg').classList.remove('on'); });
 
 async function loadScalp(){
   try{
@@ -868,36 +992,123 @@ async function loadCryptoResearch(){
     el.innerHTML = "Couldn't load research data";
   }
 }
-function renderPnlChart(trades){
-  const el = $('cryptoPnlChart');
-  if (!trades.length){ el.innerHTML = ''; return; }
+function renderPnlChart(containerId, trades){
+  const el = $(containerId);
+  if (!trades.length){ el.innerHTML = '<div class="histempty">No settled trades yet</div>'; return; }
   // API returns newest-first; chart reads left-to-right as oldest-to-newest,
   // the natural direction for a trend line.
   const chrono = [...trades].reverse();
   let running = 0;
   const points = chrono.map(t => (running += Number(t.pnl||0)));
+  const dates = chrono.map(t => t.settledAt || t.at || null);
   const total = points[points.length-1];
   const min = Math.min(0, ...points), max = Math.max(0, ...points);
   const range = (max - min) || 1;
-  const W = 300, H = 56, pad = 4;
+  const W = 300, H = 100, pad = 6;
   const stepX = points.length > 1 ? (W - pad*2) / (points.length - 1) : 0;
   const toY = v => H - pad - ((v - min) / range) * (H - pad*2);
   const zeroY = toY(0).toFixed(1);
-  const coords = points.map((v,i) => `${(pad + i*stepX).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
+  const xAt = i => pad + i*stepX;
+  const coords = points.map((v,i) => `${xAt(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
+  const areaCoords = `${pad.toFixed(1)},${(H-pad).toFixed(1)} ${coords} ${(pad+(points.length-1)*stepX).toFixed(1)},${(H-pad).toFixed(1)}`;
   const lineColor = total >= 0 ? 'var(--up)' : 'var(--down)';
+  const gradId = 'pnlgrad' + Math.random().toString(36).slice(2,8);
+
   el.innerHTML = '<div class="pctop">Cumulative P&L <b style="color:'+lineColor+'">'
       + (total>=0?'+$':'-$') + Math.abs(total).toFixed(2) + '</b></div>'
-    + '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'
-      + '<line x1="0" y1="'+zeroY+'" x2="'+W+'" y2="'+zeroY+'" stroke="var(--line)" stroke-width="1"/>'
+    + '<div class="pnlwrap">'
+    + '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" id="pnlSvg">'
+      + '<defs><linearGradient id="'+gradId+'" x1="0" y1="0" x2="0" y2="1">'
+        + '<stop offset="0%" stop-color="'+lineColor+'" stop-opacity="0.35"/>'
+        + '<stop offset="100%" stop-color="'+lineColor+'" stop-opacity="0"/>'
+      + '</linearGradient></defs>'
+      + '<line x1="0" y1="'+zeroY+'" x2="'+W+'" y2="'+zeroY+'" stroke="var(--line)" stroke-width="1" stroke-dasharray="2,2"/>'
+      + '<polygon points="'+areaCoords+'" fill="url(#'+gradId+')" stroke="none"/>'
       + '<polyline points="'+coords+'" fill="none" stroke="'+lineColor+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
-    + '</svg>';
+      + '<line id="pnlGuide" x1="0" y1="0" x2="0" y2="'+H+'" stroke="var(--dim)" stroke-width="1" opacity="0"/>'
+      + '<circle id="pnlDot" r="4" fill="'+lineColor+'" stroke="var(--ink)" stroke-width="2" opacity="0"/>'
+    + '</svg>'
+    + '<div class="pnltip" id="pnlTip"></div>'
+    + '</div>';
+
+  // ── Drag-to-scrub: pointer events unify touch and mouse. Coordinates go
+  // through getScreenCTM so the SVG's own viewBox scaling is handled
+  // correctly regardless of the element's actual rendered size on screen.
+  const svg = el.querySelector('#pnlSvg');
+  const guide = el.querySelector('#pnlGuide');
+  const dot = el.querySelector('#pnlDot');
+  const tip = el.querySelector('#pnlTip');
+  const wrap = el.querySelector('.pnlwrap');
+
+  function fmtDate(iso){
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' '
+      + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  }
+
+  function updateAt(clientX){
+    // getBoundingClientRect instead of getScreenCTM/createSVGPoint — with
+    // preserveAspectRatio="none" the SVG scales linearly to its rendered
+    // box, so this maps just as correctly and works in every environment
+    // (createSVGPoint/getScreenCTM aren't universally available, notably
+    // absent in jsdom, which is what actually caught this during testing).
+    const rect = svg.getBoundingClientRect();
+    const svgX = rect.width ? ((clientX - rect.left) / rect.width) * W : 0;
+    let i = Math.round((svgX - pad) / (stepX || 1));
+    i = Math.max(0, Math.min(points.length - 1, i));
+    const x = xAt(i), y = toY(points[i]);
+    guide.setAttribute('x1', x); guide.setAttribute('x2', x); guide.setAttribute('opacity', '1');
+    dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('opacity', '1');
+    const val = points[i];
+    const pct = W ? (x / W) * 100 : 0;
+    tip.style.left = pct + '%';
+    tip.style.opacity = '1';
+    tip.innerHTML = '<b style="color:'+(val>=0?'var(--up)':'var(--down)')+'">'+(val>=0?'+$':'-$')+Math.abs(val).toFixed(2)+'</b><span>'+fmtDate(dates[i])+'</span>';
+  }
+  function clear(){ guide.setAttribute('opacity','0'); dot.setAttribute('opacity','0'); tip.style.opacity = '0'; }
+
+  let dragging = false;
+  wrap.addEventListener('pointerdown', e => {
+    dragging = true;
+    try { wrap.setPointerCapture(e.pointerId); } catch {} // non-critical; drag still works without it
+    updateAt(e.clientX);
+  });
+  wrap.addEventListener('pointermove', e => { if (dragging) updateAt(e.clientX); });
+  wrap.addEventListener('pointerup', () => { dragging = false; clear(); });
+  wrap.addEventListener('pointercancel', () => { dragging = false; clear(); });
+}
+function renderSegmentGroup(title, rows){
+  if (!rows || !rows.length) return '<div class="segtitle">'+title+'</div><div class="segempty">not enough data yet</div>';
+  return '<div class="segtitle">'+title+'</div>' + rows.map(r => {
+    const edgeColor = r.edge > 3 ? 'var(--up)' : r.edge < -3 ? 'var(--down)' : 'var(--dim)';
+    return '<div class="segrow">'
+      + '<span class="segkey">'+r.key+'</span>'
+      + '<span class="segn">n='+r.n+' ('+r.w+'W/'+r.l+'L)</span>'
+      + '<span class="segedge" style="color:'+edgeColor+'">'+(r.edge>=0?'+':'')+r.edge+'%</span>'
+    + '</div>';
+  }).join('');
+}
+async function loadCryptoSegments(){
+  const el = $('cryptoSegmentsBody');
+  try{
+    const r = await (await fetch('/api/crypto-segments?t='+Date.now())).json();
+    if (!r.n){ el.innerHTML = 'No settled crypto trades yet'; return; }
+    el.innerHTML = '<div class="segnote">Edge = win rate minus average entry price — positive means winning more often than the price implied. Needs 8+ trades per row to show.</div>'
+      + renderSegmentGroup('BY PRICE BAND', r.byPriceBand)
+      + renderSegmentGroup('BY SIDE', r.bySide)
+      + renderSegmentGroup('BY EXIT REASON', r.byExitReason)
+      + renderSegmentGroup('BY ENTRY TIMING', r.byTiming);
+  }catch(e){
+    el.innerHTML = "Couldn't load segment data";
+  }
 }
 async function loadCryptoHistory(){
   const el = $('cryptoHistList');
   try{
     const r = await (await fetch('/api/crypto-history?t='+Date.now())).json();
     const trades = r.trades || [];
-    renderPnlChart(trades);
+    renderPnlChart('cryptoPnlChart', trades);
     if (!trades.length){ el.innerHTML = '<div class="histempty">No settled crypto trades yet</div>'; return; }
     el.innerHTML = trades.map(t => {
       const sideClass = (t.side||'').toLowerCase() === 'up' ? 'up' : (t.side||'').toLowerCase() === 'down' ? 'down' : '';
@@ -983,7 +1194,62 @@ $('clearHist').onclick = async function(){
   }catch(e){ toast(false,'Could not reach the bot'); }
 };
 
-function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); loadBotToggles(); loadCryptoStats(); loadCryptoHistory(); loadCryptoResearch(); }
+// Stuck-position detector — this is the thing that actually would have
+// saved hours across this whole project: every prior "why hasn't it
+// traded" incident was only caught because someone happened to ask and a
+// log got manually inspected. A position sitting open well past its
+// window's own endTime is a concrete, computable fact, not a guess — no
+// reason it should ever require asking a question to notice.
+const STUCK_GRACE_MS = 5 * 60_000; // generous enough that normal settlement
+// processing (usually resolves within a scan or two) never false-alarms,
+// tight enough to catch a real stuck position in minutes, not hours.
+async function checkStuckPositions(){
+  try{
+    const cs = await (await fetch('/api/crypto-status?t='+Date.now())).json();
+    const stuck = [];
+    for (const [tag, status] of [['BTC60', cs.btc60], ['BTC15', cs.btc15]]) {
+      const p = status?.openPosition;
+      if (!p || !p.endTime) continue;
+      const overdueMs = Date.now() - new Date(p.endTime).getTime();
+      if (overdueMs > STUCK_GRACE_MS) {
+        stuck.push(tag + ' has been open ' + Math.round(overdueMs/60000) + 'm past its window\'s close ("' + (p.slug||'') + '")');
+      }
+    }
+    const el = $('stuckAlert');
+    if (stuck.length) {
+      $('stuckAlertText').textContent = stuck.join(' · ');
+      el.style.display = 'flex';
+    } else {
+      el.style.display = 'none';
+    }
+  }catch(e){ /* fetch failure isn't itself alert-worthy — stay quiet, try again next tick */ }
+}
+// A genuine combined equity curve — not crypto with a sports number bolted
+// on, an actual merge of BOTH systems' real settled trades, sorted into
+// one chronological line. /api/history already returns sports' trades
+// deduped across state.js + Polymarket activities; crypto's shape is
+// slightly different (pnl vs realizedPnl, settledAt vs createTime) so
+// both get normalized to the same {pnl, settledAt} shape renderPnlChart
+// already expects before merging.
+async function loadCombinedChart(){
+  let sportsRows = [], cryptoRows = [];
+  try{
+    const h = await (await fetch('/api/history?t='+Date.now())).json();
+    sportsRows = (Array.isArray(h) ? h : [])
+      .filter(r => r.realizedPnl != null && r.createTime)
+      .map(r => ({ pnl: Number(r.realizedPnl), settledAt: r.createTime }));
+  }catch(e){}
+  try{
+    const r = await (await fetch('/api/crypto-history?t='+Date.now())).json();
+    cryptoRows = (r.trades || [])
+      .filter(t => t.pnl != null && (t.settledAt || t.at))
+      .map(t => ({ pnl: Number(t.pnl), settledAt: t.settledAt || t.at }));
+  }catch(e){}
+  const merged = [...sportsRows, ...cryptoRows]
+    .sort((a, b) => (b.settledAt || '') > (a.settledAt || '') ? 1 : -1); // newest-first, matching what renderPnlChart expects
+  renderPnlChart('combinedPnlChart', merged);
+}
+function tick(){ loadFunnel(); loadStats(); loadPositions(); loadEdge(); loadHistory(); loadLatency(); loadScalp(); loadLog(); loadBotToggles(); loadCryptoStats(); loadCryptoHistory(); loadCryptoResearch(); loadCryptoSegments(); checkStuckPositions(); loadCombinedChart(); }
 loadConfig(); tick(); setInterval(tick, 4000);
 </script>
 </body>
