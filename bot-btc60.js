@@ -1,5 +1,13 @@
 import axios from "axios";
 import * as pm from "./polymarket-us.js";
+import * as fees from "./fees.js";
+// Real, documented Polymarket US fee schedule (docs.polymarket.us/fees,
+// the same model bot-sports.js uses) — until now, EVERY simulated paper
+// pnl calculation here assumed zero fees. A buy-and-hold-to-resolution or
+// TP/SL sell is a taker trade either way, so this applies where sports'
+// proven expiryPnl pattern does: charged at entry regardless of outcome,
+// and again on an early TP/SL exit since that's a second taker trade.
+const feeFor = (px, sizeUsd) => fees.takerFee(sizeUsd / Math.max(px, 0.01), px);
 import * as tracker from "./tracker.js";
 import { getConfig } from "./config.js";
 
@@ -435,7 +443,11 @@ async function checkNaturalResolution() {
       const resolvedUp = directSettlement === 1;
       won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
       const shares = openPosition.sizeUsd / openPosition.entryPrice;
-      pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
+      // FIX: zero fee modeling — this is a buy-and-hold-to-resolution
+      // trade, same shape as sports' proven expiryPnl, so the same real
+      // fee (charged at entry, applies whether it wins or loses) applies.
+      const fee = feeFor(openPosition.entryPrice, openPosition.sizeUsd);
+      pnl = won ? (shares - openPosition.sizeUsd - fee) : -(openPosition.sizeUsd + fee);
       console.log(`  🔁 [BTC60] resolved via direct settlement lookup for "${openPosition.slug}"`);
     }
   }
@@ -473,7 +485,8 @@ async function checkNaturalResolution() {
     const resolvedUp = settlePx >= beatPx;
     won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
     const shares = openPosition.sizeUsd / openPosition.entryPrice;
-    pnl = won ? (shares - openPosition.sizeUsd) : -openPosition.sizeUsd;
+    const fee = feeFor(openPosition.entryPrice, openPosition.sizeUsd);
+    pnl = won ? (shares - openPosition.sizeUsd - fee) : -(openPosition.sizeUsd + fee);
     console.log(`  🔁 [BTC60] resolved via public settlement data (no real account activity found — paper trade or pre-existing stuck position)`);
   }
   if (DRY_RUN) paperPnlTotal += pnl; // only counts toward the virtual bankroll while genuinely paper
@@ -512,9 +525,12 @@ async function exitPosition(reason, exitPrice) {
   if (!openPosition) return;
   const slug = openPosition.slug;
   const shares = openPosition.sizeUsd / openPosition.entryPrice;
-  // Same exitPnl formula the sports bot uses for an early sell — mark to
-  // market at the actual exit price, not the binary $1/$0 settlement.
-  const pnl = shares * exitPrice - openPosition.sizeUsd;
+  // FIX: this used to assume zero fees on both legs. A TP/SL exit is two
+  // taker trades — the entry and the sell — so both get the real,
+  // documented fee applied, not just marked to market at a bare price.
+  const entryFee = feeFor(openPosition.entryPrice, openPosition.sizeUsd);
+  const exitFee = feeFor(exitPrice, shares * exitPrice);
+  const pnl = (shares * exitPrice - openPosition.sizeUsd) - entryFee - exitFee;
   try {
     const res = DRY_RUN ? { ok: true } : await pm.closePositionLive(slug);
     if (res.ok) {
