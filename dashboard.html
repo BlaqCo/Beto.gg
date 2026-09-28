@@ -155,6 +155,10 @@ h1,h2,h3{font-family:'Sora',system-ui,sans-serif;margin:0}
 .rlabel{color:var(--dim)}
 .rval{font-weight:700;color:var(--text)}
 .rnote{font-size:10px;color:var(--amber);padding:6px 0 2px;line-height:1.4}
+.rnote.flag{color:var(--cyan)}
+.rsub{color:var(--dim);font-size:9px;font-weight:400;margin-left:6px}
+.rsample{font-size:9px;color:var(--dim);padding:2px 0 8px;line-height:1.4}
+.rsample.warn{color:var(--amber)}
 .segnote{font-size:10px;color:var(--dim);line-height:1.5;padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:8px}
 .segtitle{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--dim);margin:10px 0 4px}
 .segtitle:first-of-type{margin-top:0}
@@ -994,21 +998,75 @@ function timeAgo(iso){
   if (s < 86400) return Math.round(s/3600)+'h ago';
   return Math.round(s/86400)+'d ago';
 }
+// Is this research result distinguishable from a fair coin? The old rule
+// was "both conditional rates within 3 points of the base rate", which
+// ignores sample size: at n=226 a 3-point gap is ~0.6 standard errors
+// (noise), yet it was the line between showing a verdict and showing none —
+// so BTC15 (gap of exactly 3.0) got no verdict while BTC60 did, on numbers
+// equally consistent with a coin flip. This uses the real counts instead.
+const RESEARCH_FLAG_Z = 2.5; // a stricter bar than 2: several comparisons are re-run on the same data every hour
+function researchStats(r){
+  const n = r.n;
+  const exact = r.afterUpN != null; // newer bots send the raw counts; older ones only percentages
+  const up = r.upCount != null ? r.upCount : Math.round(r.baseRateUpPct / 100 * n);
+  const nUp = exact ? r.afterUpN : up;                              // older bot: estimate from n and base rate
+  const nDown = exact ? r.afterDownN : Math.max(0, n - 1 - up);
+  const haveSerial = exact || (r.continuationPct != null && r.reversalPct != null);
+  const upUp = r.afterUpUp != null ? r.afterUpUp : Math.round((r.continuationPct || 0) / 100 * nUp);
+  const downUp = r.afterDownUp != null ? r.afterDownUp : Math.round((r.reversalPct || 0) / 100 * nDown);
+
+  const zBias = (up / n - 0.5) / Math.sqrt(0.25 / n);               // Up rate vs a fair coin
+  let zSerial = null, serialDiff = null;                            // P(Up | last was Up) vs P(Up | last was Down)
+  if (haveSerial && nUp > 0 && nDown > 0) {
+    const pooled = (upUp + downUp) / (nUp + nDown);
+    const se = Math.sqrt(pooled * (1 - pooled) * (1 / nUp + 1 / nDown));
+    serialDiff = (upUp / nUp - downUp / nDown) * 100;
+    zSerial = se > 0 ? (serialDiff / 100) / se : 0;
+  }
+  return { n, exact, nUp, nDown, zBias, zSerial, serialDiff, moe: 98 / Math.sqrt(n) };
+}
+function researchVerdict(r){
+  const s = researchStats(r);
+  const flags = [];
+  if (Math.abs(s.zBias) >= RESEARCH_FLAG_Z)
+    flags.push('Up rate ' + r.baseRateUpPct + '% is ' + Math.abs(s.zBias).toFixed(1) + ' standard errors from 50%');
+  if (s.zSerial != null && Math.abs(s.zSerial) >= RESEARCH_FLAG_Z)
+    flags.push('the next window differs by ' + Math.abs(s.serialDiff).toFixed(0) + ' points depending on the last one (' + Math.abs(s.zSerial).toFixed(1) + ' standard errors)');
+  if (flags.length) {
+    return { kind: 'flag', text: 'Possible pattern: ' + flags.join('; ') + '. Unconfirmed — several comparisons are re-checked on the same data every hour, so one can look real by chance. A lead to confirm on fresh data, not an edge.' };
+  }
+  return { kind: 'none', text: 'No pattern detectable at n=' + s.n + '. Only a swing of roughly ±' + s.moe.toFixed(1) + ' points would stand out from a fair coin, so small edges can\'t be ruled out yet.' };
+}
+function researchSampleLine(r){
+  const fmt = iso => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  let html = '';
+  if (r.from && r.to) {
+    const ageH = (Date.now() - new Date(r.to).getTime()) / 3600000;
+    const stale = ageH > 6; // research reruns hourly, so a sample that includes recent windows ends within ~an hour
+    const ago = ageH >= 48 ? Math.round(ageH / 24) + 'd' : Math.round(ageH) + 'h';
+    html += '<div class="rsample' + (stale ? ' warn' : '') + '">closed ' + fmt(r.from) + ' – ' + fmt(r.to)
+      + (stale ? ' · newest window is ' + ago + ' old — this describes past windows, not current conditions' : '') + '</div>';
+  }
+  if (r.offsetIgnored) {
+    html += '<div class="rsample warn">paging didn\'t advance — only the first page of closed markets is reachable, so recent windows may be missing</div>';
+  }
+  return html;
+}
 function renderResearch(el, r, label){
   if (!r || r.n == null) {
     return '<div class="rline"><span class="rlabel">'+label+'</span><span class="rval">no data yet</span></div>';
   }
   const upPct = r.baseRateUpPct, downPct = (100 - upPct).toFixed(1);
   const cont = r.continuationPct, rev = r.reversalPct;
-  let signalNote = '';
-  if (cont != null && rev != null && Math.abs(cont - upPct) < 3 && Math.abs(rev - upPct) < 3) {
-    signalNote = '<div class="rnote">No meaningful pattern detected — consistent with an efficient market, not a usable edge yet.</div>';
-  }
+  const s = researchStats(r);
+  const sub = n => s.exact ? '<span class="rsub">n=' + n + '</span>' : '';
+  const v = researchVerdict(r);
   return '<div class="rline"><span class="rlabel">'+label+' (n='+r.n+')</span>'
     + '<span class="rval">Up '+upPct+'% / Down '+downPct+'%</span></div>'
-    + '<div class="rline"><span class="rlabel">after Up → next Up</span><span class="rval">'+(cont!=null?cont+'%':'—')+'</span></div>'
-    + '<div class="rline"><span class="rlabel">after Down → next Up</span><span class="rval">'+(rev!=null?rev+'%':'—')+'</span></div>'
-    + signalNote;
+    + '<div class="rline"><span class="rlabel">after Up → next Up</span><span class="rval">'+(cont!=null?cont+'%':'—')+sub(r.afterUpN)+'</span></div>'
+    + '<div class="rline"><span class="rlabel">after Down → next Up</span><span class="rval">'+(rev!=null?rev+'%':'—')+sub(r.afterDownN)+'</span></div>'
+    + '<div class="rnote' + (v.kind === 'flag' ? ' flag' : '') + '">' + v.text + '</div>'
+    + researchSampleLine(r);
 }
 async function loadCryptoResearch(){
   const el = $('cryptoResearchBody');
