@@ -691,6 +691,28 @@ async function loadFunnel(){
   }catch(e){}
 }
 
+// One request per tick shared by everything that reads crypto history —
+// loadStats, the crypto chart/list, and the combined chart each used to
+// fire their own identical fetch every 4 seconds. A failed request clears
+// the cache so the next caller retries instead of inheriting the failure.
+let _cryptoHistCache = { ts: 0, p: null };
+function fetchCryptoHistory(){
+  if (_cryptoHistCache.p && Date.now() - _cryptoHistCache.ts < 3000) return _cryptoHistCache.p;
+  const p = fetch('/api/crypto-history?t='+Date.now()).then(r => r.json());
+  _cryptoHistCache = { ts: Date.now(), p };
+  p.catch(() => { _cryptoHistCache = { ts: 0, p: null }; });
+  return p;
+}
+// Chart rows for EVERY stored crypto trade, newest first. `series` covers
+// the whole history; `trades` is capped at 200 for the list, so falling
+// back to it is only for a server that predates `series`.
+function cryptoChartRows(r){
+  if (Array.isArray(r.series)) return r.series.map(([t, p]) => ({ pnl: Number(p), settledAt: t }));
+  return (r.trades || [])
+    .filter(t => t.pnl != null && (t.settledAt || t.at))
+    .map(t => ({ pnl: Number(t.pnl), settledAt: t.settledAt || t.at }));
+}
+
 // Genuinely combines sports + crypto from data that already exists —
 // no new server endpoint needed. Sports numbers come from /api/stats
 // (already correct, already tested); crypto numbers come from the same
@@ -711,13 +733,20 @@ async function loadStats(){
     sportsOpen = Array.isArray(pos) ? pos.length : 0;
   }catch(e){}
   try{
-    const r = await (await fetch('/api/crypto-history?t='+Date.now())).json();
-    const trades = r.trades || [];
-    cryptoBets = trades.length;
-    for (const t of trades) {
-      if (t.won) cryptoWins++; else cryptoLosses++;
-      cryptoPnl += Number(t.pnl||0);
-      cryptoWagered += Number(t.size||0);
+    const r = await fetchCryptoHistory();
+    if (r.totals) {
+      // whole history — the list below is capped at 200 and would
+      // undercount once crypto trades pass that
+      cryptoBets = r.totals.n; cryptoWins = r.totals.wins; cryptoLosses = r.totals.losses;
+      cryptoPnl = r.totals.pnl; cryptoWagered = r.totals.wagered;
+    } else {
+      const trades = r.trades || [];
+      cryptoBets = trades.length;
+      for (const t of trades) {
+        if (t.won) cryptoWins++; else cryptoLosses++;
+        cryptoPnl += Number(t.pnl||0);
+        cryptoWagered += Number(t.size||0);
+      }
     }
   }catch(e){}
   try{
@@ -1114,9 +1143,9 @@ async function loadCryptoSegments(){
 async function loadCryptoHistory(){
   const el = $('cryptoHistList');
   try{
-    const r = await (await fetch('/api/crypto-history?t='+Date.now())).json();
+    const r = await fetchCryptoHistory();
     const trades = r.trades || [];
-    renderPnlChart('cryptoPnlChart', trades);
+    renderPnlChart('cryptoPnlChart', cryptoChartRows(r));
     if (!trades.length){ el.innerHTML = '<div class="histempty">No settled crypto trades yet</div>'; return; }
     el.innerHTML = trades.map(t => {
       const sideClass = (t.side||'').toLowerCase() === 'up' ? 'up' : (t.side||'').toLowerCase() === 'down' ? 'down' : '';
@@ -1248,10 +1277,7 @@ async function loadCombinedChart(){
       .map(r => ({ pnl: Number(r.realizedPnl), settledAt: r.createTime }));
   }catch(e){}
   try{
-    const r = await (await fetch('/api/crypto-history?t='+Date.now())).json();
-    cryptoRows = (r.trades || [])
-      .filter(t => t.pnl != null && (t.settledAt || t.at))
-      .map(t => ({ pnl: Number(t.pnl), settledAt: t.settledAt || t.at }));
+    cryptoRows = cryptoChartRows(await fetchCryptoHistory());
   }catch(e){}
   const merged = [...sportsRows, ...cryptoRows]
     .sort((a, b) => (b.settledAt || '') > (a.settledAt || '') ? 1 : -1); // newest-first, matching what renderPnlChart expects
