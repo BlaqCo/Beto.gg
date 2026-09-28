@@ -155,65 +155,67 @@ function isHourlyBtcQuestion(q) {
   return /\b60\s*-?\s*min|\b1\s*-?\s*hour|\b1h\b/i.test(q);
 }
 
-export async function researchBTC60History(limit = 300) {
-  // REWIRED — this was still hitting gamma-api.polymarket.com (the WRONG
-  // platform, confirmed dead throughout this whole codebase) and parsing
-  // outcomePrices/outcome fields that don't exist in Polymarket US's real
-  // schema at all. Same fix as live discovery: correct venue
-  // (fetchCryptoMarketsV1 with closed:true), and the real, confirmed
-  // settlement rule from the app's own Market Rules screen — Up if
-  // settlementPrice >= priceToBeat, Down otherwise.
-  let markets;
+export async function researchBTC60History(maxWindows = 300) {
+  // Pages through ALL closed crypto markets, then keeps the newest
+  // `maxWindows` BTC60 windows by their own close time. Before this it read
+  // one un-sorted page of 300, which appears to be the oldest batch — the
+  // sample never moved (226/69 for days) so the panel described early
+  // history, not current conditions. Sample dates are now recorded so that
+  // can be seen directly instead of inferred.
+  let fetched;
   try {
-    markets = await pm.fetchCryptoMarketsV1({ closed: true, limit });
+    fetched = await pm.fetchClosedCryptoAll();
   } catch (err) {
     console.log(`❌ [BTC60 research] fetch failed: ${err.message}`);
     return null;
   }
+  const { markets, pages, offsetIgnored } = fetched;
 
-  const matches = markets.filter(m => isHourlyBtcQuestion(m.question || ""));
-  if (!matches.length) {
-    console.log(`⚠️ [BTC60 research] 0 matching resolved markets found out of ${markets.length} returned`);
-    return null;
-  }
-
-  const results = matches.map(m => {
-    const apt = m.assetPriceTerms;
-    // FIX: settlementPrice/priceToBeat default to 0 for markets that
-    // haven't actually settled yet (confirmed via real data producing an
-    // implausible "100% Down" result) — 0 is falsy but NOT == null in JS,
-    // so the old check let unsettled placeholder markets straight through
-    // and misclassified every one of them as Down. Checking > 0 instead,
-    // since a real BTC settlement price is always a large positive number.
-    const settlePx = pm.extractSettlementNum(apt?.settlementPrice);
-    const beatPx = pm.extractSettlementNum(apt?.priceToBeat);
-    if (settlePx == null || beatPx == null) return { up: null };
-    const up = settlePx >= beatPx;
-    return { up, endDate: apt.windowEnd || m.endDate };
-  }).filter(r => r.up !== null).sort((a, b) => new Date(a.endDate) - new Date(b.endDate));
+  const results = markets
+    .filter(m => isHourlyBtcQuestion(m.question || ""))
+    .map(m => {
+      const apt = m.assetPriceTerms;
+      const settlePx = pm.extractSettlementNum(apt?.settlementPrice);
+      const beatPx = pm.extractSettlementNum(apt?.priceToBeat);
+      if (settlePx == null || beatPx == null) return null;
+      return { up: settlePx >= beatPx, endMs: new Date(apt?.windowEnd || m.endDate).getTime() };
+    })
+    .filter(r => r && Number.isFinite(r.endMs))
+    .sort((a, b) => a.endMs - b.endMs)
+    .slice(-maxWindows);
 
   if (results.length < 10) {
-    console.log(`⚠️ [BTC60 research] Only ${results.length} markets had a parseable settlement (settlementPrice/priceToBeat) — not enough to say anything real yet`);
+    console.log(`⚠️ [BTC60 research] Only ${results.length} settled windows found among ${markets.length} closed markets — not enough to say anything real yet`);
     return null;
   }
 
-  const upCount = results.filter(r => r.up).length;
-  let afterUp = 0, afterUpThenUp = 0, afterDown = 0, afterDownThenUp = 0;
+  // "Next window" must mean the window that actually followed. The old
+  // version paired each result with whatever came next in the list, so any
+  // missing window in the sample quietly turned into a non-consecutive pair.
+  const DUR_MS = 60 * 60_000, TOL_MS = 90_000;
+  let upCount = 0, afterUpN = 0, afterUpUp = 0, afterDownN = 0, afterDownUp = 0, gaps = 0;
+  for (const r of results) if (r.up) upCount++;
   for (let i = 1; i < results.length; i++) {
-    if (results[i - 1].up) { afterUp++; if (results[i].up) afterUpThenUp++; }
-    else { afterDown++; if (results[i].up) afterDownThenUp++; }
+    if (Math.abs((results[i].endMs - results[i - 1].endMs) - DUR_MS) > TOL_MS) { gaps++; continue; }
+    if (results[i - 1].up) { afterUpN++; if (results[i].up) afterUpUp++; }
+    else { afterDownN++; if (results[i].up) afterDownUp++; }
   }
-  const baseRateUpPct = +((upCount / results.length) * 100).toFixed(1);
-  const continuationPct = afterUp ? +((afterUpThenUp / afterUp) * 100).toFixed(1) : null;
-  const reversalPct = afterDown ? +((afterDownThenUp / afterDown) * 100).toFixed(1) : null;
+  const n = results.length;
+  const baseRateUpPct = +((upCount / n) * 100).toFixed(1);
+  const continuationPct = afterUpN ? +((afterUpUp / afterUpN) * 100).toFixed(1) : null;
+  const reversalPct = afterDownN ? +((afterDownUp / afterDownN) * 100).toFixed(1) : null;
+  const from = new Date(results[0].endMs - DUR_MS).toISOString();
+  const to = new Date(results[n - 1].endMs).toISOString();
 
-  console.log(`📊 BTC60 RESEARCH: n=${results.length} | base rate Up=${baseRateUpPct}% Down=${(100 - baseRateUpPct).toFixed(1)}%`);
-  console.log(`📊 BTC60 RESEARCH: after an Up window → next Up ${continuationPct}% (n=${afterUp}) | after a Down window → next Up ${reversalPct}% (n=${afterDown})`);
-  if (continuationPct != null && Math.abs(continuationPct - baseRateUpPct) < 3 && Math.abs(reversalPct - baseRateUpPct) < 3) {
-    console.log(`📊 BTC60 RESEARCH: no meaningful serial correlation detected — consistent with an efficient market, NOT evidence of a usable signal yet`);
-  }
+  console.log(`📊 BTC60 RESEARCH: n=${n} | base rate Up=${baseRateUpPct}% Down=${(100 - baseRateUpPct).toFixed(1)}% | closed ${from} → ${to}`);
+  console.log(`📊 BTC60 RESEARCH: after an Up window → next Up ${continuationPct}% (n=${afterUpN}) | after a Down window → next Up ${reversalPct}% (n=${afterDownN}) | ${gaps} non-consecutive pair(s) skipped`);
 
-  cachedResearch = { n: results.length, baseRateUpPct, continuationPct, reversalPct, ts: Date.now() };
+  cachedResearch = {
+    n, upCount, baseRateUpPct,
+    afterUpN, afterUpUp, afterDownN, afterDownUp,
+    continuationPct, reversalPct, gaps, from, to, pages, offsetIgnored,
+    ts: Date.now(),
+  };
   return cachedResearch;
 }
 
