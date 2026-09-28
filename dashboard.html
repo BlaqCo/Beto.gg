@@ -1092,15 +1092,23 @@ function renderSegmentGroup(title, rows){
 async function loadCryptoSegments(){
   const el = $('cryptoSegmentsBody');
   try{
-    const r = await (await fetch('/api/crypto-segments?t='+Date.now())).json();
-    if (!r.n){ el.innerHTML = 'No settled crypto trades yet'; return; }
+    const res = await fetch('/api/crypto-segments?t='+Date.now());
+    // A specific, diagnosable message instead of one generic catch-all —
+    // a 404 means the route itself isn't deployed (most likely: index.js
+    // wasn't part of the latest deploy even if other files were), which
+    // is a completely different fix than a genuine server error.
+    if (res.status === 404) { el.innerHTML = "Endpoint not found (404) — index.js may need redeploying"; return; }
+    const r = await res.json().catch(() => null);
+    if (!res.ok) { el.innerHTML = "Server error (" + res.status + "): " + (r?.error || "unknown"); return; }
+    if (r?.error) { el.innerHTML = "Server error: " + r.error; return; }
+    if (!r?.n){ el.innerHTML = 'No settled crypto trades yet'; return; }
     el.innerHTML = '<div class="segnote">Edge = win rate minus average entry price — positive means winning more often than the price implied. Needs 8+ trades per row to show.</div>'
       + renderSegmentGroup('BY PRICE BAND', r.byPriceBand)
       + renderSegmentGroup('BY SIDE', r.bySide)
       + renderSegmentGroup('BY EXIT REASON', r.byExitReason)
       + renderSegmentGroup('BY ENTRY TIMING', r.byTiming);
   }catch(e){
-    el.innerHTML = "Couldn't load segment data";
+    el.innerHTML = "Couldn't reach the server (network error): " + e.message;
   }
 }
 async function loadCryptoHistory(){
