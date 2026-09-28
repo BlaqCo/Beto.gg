@@ -391,7 +391,7 @@ app.get("/api/crypto-history", async (req, res) => {
   try {
     const { getTrades } = await import("./tracker.js");
     const rows = await getTrades();
-    const filtered = rows
+    const all = rows
       .filter(r => r.league === "BTC60" || r.league === "BTC15")
       .map(r => ({
         league: r.league, slug: r.slug, question: r.question,
@@ -399,9 +399,39 @@ app.get("/api/crypto-history", async (req, res) => {
         won: r.won, pnl: r.pnl, reason: r.reason, isPaper: !!r.isPaper,
         heldMin: r.heldMin, at: r.at, settledAt: r.settledAt,
       }))
-      .sort((a, b) => (b.settledAt || "") > (a.settledAt || "") ? 1 : -1)
-      .slice(0, 200);
-    res.json({ trades: filtered });
+      .sort((a, b) => (b.settledAt || "") > (a.settledAt || "") ? 1 : -1);
+
+    // `trades` stays capped at the newest 200 — it feeds the visible list,
+    // where more rows just means more DOM. But this endpoint also used to
+    // feed the combined ROI/bets/volume and both P&L charts, and a cap
+    // there silently drops the oldest trades once history passes 200, so
+    // those numbers stop matching the BTC60/BTC15 panels. The tracker keeps
+    // up to 5000 trades; totals and series cover every one of them.
+    const settled = all.filter(r => r.pnl != null);
+    const totals = {
+      n: settled.length,
+      wins: settled.filter(r => r.won).length,
+      losses: settled.filter(r => !r.won).length,
+      pnl: +settled.reduce((t, r) => t + Number(r.pnl), 0).toFixed(2),
+      wagered: +settled.reduce((t, r) => t + Number(r.size || 0), 0).toFixed(2),
+    };
+    const series = settled
+      .filter(r => r.settledAt || r.at)
+      .map(r => [r.settledAt || r.at, r.pnl]); // compact [time, pnl] pairs, newest first
+    res.json({ trades: all.slice(0, 200), totals, series });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── /api/crypto-segments — win rate broken down by price band, side, exit
+// reason, and entry timing. Built specifically so strategy decisions can
+// be made from real segmented data instead of one aggregate number, and
+// so this data is queryable/shareable rather than locked in Railway logs.
+app.get("/api/crypto-segments", async (req, res) => {
+  try {
+    const { cryptoSegments } = await import("./tracker.js");
+    res.json(await cryptoSegments());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
