@@ -380,6 +380,52 @@ export async function fetchCryptoMarketsV1({ closed = false, limit = 500 } = {})
   }));
 }
 
+/**
+ * fetchClosedCryptoAll() — pages through closed crypto markets instead of
+ * trusting one page. The closed-markets endpoint has no documented sort, and
+ * the single page fetchCryptoMarketsV1({closed:true}) returns appears to be
+ * the OLDEST batch: the research panel's sample size stayed at exactly
+ * 226/69 across days while hundreds of new windows closed, and 226 + 69 is
+ * 295 of the 300 markets requested — both bots filtering one fixed batch.
+ *
+ * Page 0 uses the exact request shape already proven to work. Pages after
+ * that add `offset`, which isn't in the docs, so nothing here assumes it
+ * works: if a page comes back with nothing new, `offsetIgnored` is set and
+ * paging stops rather than looping or double-counting. Callers get the
+ * evidence (pages, offsetIgnored) to show, not a silent guess.
+ */
+export async function fetchClosedCryptoAll({ pageSize = 500, maxPages = 8 } = {}) {
+  const seen = new Set();
+  const markets = [];
+  let pages = 0, offset = 0, offsetIgnored = false;
+  for (let page = 0; page < maxPages; page++) {
+    const params = { categories: "crypto", closed: true, limit: pageSize };
+    if (page > 0) params.offset = offset;
+    let batch;
+    try {
+      const res = await axios.get(`${GATEWAY}/v1/markets`, { params, timeout: 12_000 });
+      batch = Array.isArray(res.data) ? res.data : (res.data?.markets || []);
+    } catch (err) {
+      console.log(`  ❌ [fetchClosedCryptoAll] page ${page + 1} failed: ${err.message}` +
+        (markets.length ? ` — keeping the ${markets.length} markets from earlier pages` : ""));
+      break;
+    }
+    if (!batch.length) break;
+    pages++;
+    let added = 0;
+    for (const m of batch) {
+      const key = m.slug ?? m.id;
+      if (key == null || seen.has(key)) continue;
+      seen.add(key); markets.push(m); added++;
+    }
+    if (page > 0 && added === 0) { offsetIgnored = true; break; }
+    offset += batch.length;
+  }
+  console.log(`  🌐 [fetchClosedCryptoAll] ${markets.length} closed crypto markets over ${pages} page(s)` +
+    (offsetIgnored ? " — paging did NOT advance (offset ignored), only the first page is reachable" : ""));
+  return { markets, pages, offsetIgnored };
+}
+
 export async function findCurrentBtcWindowBySlug(windowMinutes) {
   const stepMs = windowMinutes * 60_000;
   const windowStartMs = Math.floor(Date.now() / stepMs) * stepMs;
