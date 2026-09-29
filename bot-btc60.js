@@ -350,10 +350,24 @@ async function discoverCurrentBTC60Market() {
           console.log(`  🔁 [BTC60] using cached real price ${(finalYesPrice*100).toFixed(0)}¢ from ${Math.round((Date.now()-lastRealBBO.ts)/1000)}s ago (this scan's lookup failed) for "${docMatch.slug}"`);
         }
       }
+      // FIX (root cause): this used to silently fall back to 0.5 when
+      // every real price source came up empty — meaning a genuine "no
+      // data available" scan was indistinguishable from a real 50/50
+      // market, and the entry rule happily acted on a fabricated
+      // coin-flip as if it were real information. Confirmed directly via
+      // a real log: yesPrice was null, the BBO fallback 429'd, no cache
+      // was available, and the bot still entered a real $10 position on
+      // the resulting fake "50¢". Returning null here instead — the
+      // caller already treats a null market as "skip this scan", the
+      // same safe path used when discovery finds nothing at all.
+      if (finalYesPrice == null) {
+        console.log(`  ⏭ [BTC60] skipping — no real price available for "${docMatch.slug}" this scan (not defaulting to a fake 50¢)`);
+        return null;
+      }
       return { ...docMatch,
         startDate: realStart != null ? new Date(realStart).toISOString() : docMatch.startDate,
         endDate: realEnd != null ? new Date(realEnd).toISOString() : docMatch.endDate,
-        outcomePrices: [String(finalYesPrice ?? 0.5), String(1 - (finalYesPrice ?? 0.5))] };
+        outcomePrices: [String(finalYesPrice), String(1 - finalYesPrice)] };
     }
   } catch (err) {
     console.log(`  ❌ [BTC60] fetchCryptoMarketsV1 path threw: ${err.message}`);
@@ -405,9 +419,12 @@ async function discoverCurrentBTC60Market() {
     console.log(`⚠️ [BTC60] No open hourly BTC up/down market found among ${markets.length} results from the correct venue — check the raw sample above`);
     return null;
   }
-  // Normalize to the shape the rest of this file expects (outcomePrices
-  // array), computed from fetchCryptoMarkets' already-extracted yesPrice.
-  return { ...current, outcomePrices: [String(current.yesPrice ?? 0.5), String(1 - (current.yesPrice ?? 0.5))] };
+  // Same fix as the primary path — no fabricated 50c fallback here either.
+  if (current.yesPrice == null) {
+    console.log(`  ⏭ [BTC60] skipping (fallback sweep) — no real price for "${current.slug}"`);
+    return null;
+  }
+  return { ...current, outcomePrices: [String(current.yesPrice), String(1 - current.yesPrice)] };
 }
 
 /** Fires when the window has ended and TP/SL never triggered — the
@@ -585,8 +602,19 @@ async function exitPosition(reason, exitPrice) {
 // closes. This is a real, specific, stated strategy — not a placeholder —
 // but it has NOT been backtested against researchBTC60History's data yet,
 // which is worth doing once enough real trades exist under this rule.
-const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.45);
-const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 1.0);
+// Was 0.45 — mathematically meaningless (the favorite side is always
+// >= 50% by construction, so a floor below 50% can never reject
+// anything; confirmed earlier this let literal 50/50 coin flips
+// through). Now 0.55, and more importantly grounded in the actual
+// shrinkage-adjusted edge analysis: 50-60% and 60-70% bands showed a
+// real, statistically confirmed edge (z=4.3, z=3.0) on real trade
+// history; 80%+ showed a real, confirmed NEGATIVE edge (z=-4.9).
+const ENTRY_EDGE_MIN = Number(process.env.BTC60_ENTRY_EDGE_MIN || 0.55);
+// Was 1.0 — no ceiling at all. 0.75 now: covers the confirmed 60-70%
+// band plus part of the borderline 70-80% band (z=1.96, right at the
+// confidence line, not fully confirmed either way), while staying well
+// clear of the confirmed-negative 80%+ range.
+const ENTRY_EDGE_MAX = Number(process.env.BTC60_ENTRY_EDGE_MAX || 0.75);
 const ENTRY_WINDOW_MS = Number(process.env.BTC60_ENTRY_WINDOW_MIN || 15) * 60_000;
 
 function userEntryRule(market) {
