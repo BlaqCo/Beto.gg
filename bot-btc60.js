@@ -445,7 +445,15 @@ async function checkNaturalResolution() {
     // problem entirely, since it's a targeted, single-slug query instead
     // of sorting/paginating through hundreds of results.
     let directSettlement = null;
-    try { directSettlement = await pm.getSettlement(openPosition.slug); } catch {}
+    try {
+      directSettlement = await pm.getSettlement(openPosition.slug);
+      // Previously silent either way — a null here (not yet settled) and
+      // a thrown error looked identical from the outside, with zero
+      // evidence to tell them apart. Logging both explicitly now.
+      if (directSettlement == null) console.log(`  🔍 [BTC60] direct settlement lookup for "${openPosition.slug}" returned nothing yet`);
+    } catch (err) {
+      console.log(`  ❌ [BTC60] direct settlement lookup for "${openPosition.slug}" threw: ${err.message}`);
+    }
     if (directSettlement != null) {
       const resolvedUp = directSettlement === 1;
       won = openPosition.side === "Up" ? resolvedUp : !resolvedUp;
