@@ -446,6 +446,12 @@ export async function cryptoSegments({ minN = 8 } = {}) {
     n: rows.length,
     byLeague: bucket(rows, r => r.league, "league"),
     byPriceBand: bucket(rows, priceBand, "price band"),
+    // Split by league too — the combined byPriceBand above can't tell you
+    // whether a pattern belongs to one bot or genuinely spans both, and
+    // BTC15 has far more volume than BTC60, so a combined table could
+    // easily just be describing BTC15 wearing a shared label.
+    byPriceBandBTC60: bucket(rows.filter(r => r.league === "BTC60"), priceBand, "price band (BTC60)"),
+    byPriceBandBTC15: bucket(rows.filter(r => r.league === "BTC15"), priceBand, "price band (BTC15)"),
     bySide: bucket(rows, r => r.side, "side"),
     byExitReason: bucket(rows, r => r.reason, "exit reason"),
     byTiming: bucket(rows, timingBucket, "entry timing"),
