@@ -428,6 +428,20 @@ app.get("/api/crypto-history", async (req, res) => {
 // reason, and entry timing. Built specifically so strategy decisions can
 // be made from real segmented data instead of one aggregate number, and
 // so this data is queryable/shareable rather than locked in Railway logs.
+// ── /api/crypto-entry-recommendation — shrinkage-adjusted per-band edge,
+// with confidence tested against each band's own entry price (not a
+// same-data-reused guess). Separate from crypto-segments since this
+// answers "what should the entry band actually be", not just "what does
+// each segment look like".
+app.get("/api/crypto-entry-recommendation", async (req, res) => {
+  try {
+    const { cryptoEntryRecommendation } = await import("./tracker.js");
+    res.json(await cryptoEntryRecommendation());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/crypto-segments", async (req, res) => {
   try {
     const { cryptoSegments } = await import("./tracker.js");
