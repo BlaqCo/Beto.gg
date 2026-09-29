@@ -73,6 +73,11 @@ let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 0.20);
 const TP_PCT = Number(process.env.BTC15_TP_PCT || 0.15);
 const SL_PCT = Number(process.env.BTC15_SL_PCT || 0.10);
 let SL_ENABLED = process.env.BTC15_SL_ENABLED === "true"; // OFF by default per direct request — set BTC15_SL_ENABLED=true to bring it back
+// Hard stop — a RELATIVE loss on position value ("down 40% from entry"),
+// distinct from SL_PCT above (an absolute price move). Defaults on: this
+// is meant as a always-there backstop, not an opt-in extra.
+let HARD_STOP_ENABLED = process.env.BTC15_HARD_STOP_ENABLED !== "false";
+let HARD_STOP_PCT = Number(process.env.BTC15_HARD_STOP_PCT || 0.40);
 
 let shapeLoggedDiscovery = false;
 let shapeLoggedResearch = false;
@@ -504,6 +509,19 @@ async function checkTakeProfitStopLoss15(market) {
   const currentPrice = openPosition.side === "Up" ? yesPrice : (1 - yesPrice);
   const moveFromEntry = currentPrice - openPosition.entryPrice;
 
+  // Hard stop — a RELATIVE loss on the position's value, not an absolute
+  // price move like the regular stop-loss below. At a 70c entry, -40%
+  // here means the price dropping to 42c (70 * 0.6), not 30c (70 - 40).
+  // Checked first, unconditionally — not gated by SL_ENABLED, since this
+  // is meant to fire "regardless", including if the regular stop-loss is
+  // ever turned off.
+  const relativeMove = (currentPrice - openPosition.entryPrice) / openPosition.entryPrice;
+  if (HARD_STOP_ENABLED && relativeMove <= -HARD_STOP_PCT) {
+    console.log(`  🛑 [BTC15] HARD STOP hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (${(relativeMove*100).toFixed(0)}% of position value) — cashing out`);
+    await exitPosition("hard_stop", currentPrice);
+    return;
+  }
+
   if (moveFromEntry >= TP_PCT) {
     console.log(`  🎯 TP hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (+${(moveFromEntry*100).toFixed(0)}¢) — closing`);
     await exitPosition("take_profit", currentPrice);
@@ -530,7 +548,8 @@ async function exitPosition(reason, exitPrice) {
       try {
         await tracker.recordSettle(slug, { won: pnl > 0, pnl, exitPrice, reason,
           fallback: { slug, question: openPosition.question, league: "BTC15",
-                      entry: openPosition.entryPrice, size: openPosition.sizeUsd, at: new Date().toISOString() } });
+                      entry: openPosition.entryPrice, size: openPosition.sizeUsd, side: openPosition.side,
+                      isPaper: openPosition.isPaper, minsRemaining: openPosition.minsRemaining, at: new Date().toISOString() } });
       } catch {}
     } else {
       console.log(`  ❌ BTC15 exit (${reason}) failed for ${slug}: ${res.error} — will retry next scan, or it resolves naturally at window end regardless`);
@@ -579,6 +598,8 @@ export async function runBTC15ScanCycle() {
     if (c.BTC15_ENABLED != null) BTC15_ENABLED = c.BTC15_ENABLED;
     if (c.BTC15_LIVE_TRADING != null) LIVE_TRADING_ENABLED = c.BTC15_LIVE_TRADING;
     if (c.BTC15_SL_ENABLED != null) SL_ENABLED = c.BTC15_SL_ENABLED;
+    if (c.BTC15_HARD_STOP_ENABLED != null) HARD_STOP_ENABLED = c.BTC15_HARD_STOP_ENABLED;
+    if (c.BTC15_HARD_STOP_PCT != null) HARD_STOP_PCT = c.BTC15_HARD_STOP_PCT;
     if (c.BTC15_BET_SIZE != null) BET_SIZE_USD = c.BTC15_BET_SIZE;
     if (c.BTC15_PAPER_START != null) DRY_START = c.BTC15_PAPER_START;
     if (c.BTC15_PAPER_MODE !== undefined) PAPER_OVERRIDE = c.BTC15_PAPER_MODE;
