@@ -404,6 +404,90 @@ export async function clearHistory({ alsoLocks = false } = {}) {
  * discipline as everywhere else in this project — small buckets don't get
  * to claim an edge.
  */
+/**
+ * cryptoEntryRecommendation() — a real statistical technique applied
+ * honestly, not a formula fit to look confident. Empirical-Bayes shrinkage:
+ * each price band's win rate gets pulled toward the OVERALL win rate,
+ * weighted by how much data that band actually has. A band with 9 trades
+ * gets pulled hard toward the mean (9 trades proves almost nothing); a
+ * band with 300 barely moves. This is the standard fix for "a small
+ * sample's raw number looks more confident than it deserves to be" — the
+ * same problem the research panel's z-score check already guards against,
+ * applied here to segments instead of the base rate.
+ *
+ * k (shrinkage strength) = how many "phantom average trades" get mixed
+ * into every band. k=25 means a 25-trade band is already half its own
+ * signal, half the global mean — deliberately conservative given how
+ * cheap it is to find a spurious pattern across 5 bands on ~400 trades.
+ *
+ * A band gets RECOMMENDED only if its shrunk edge is positive AND still
+ * clears a real confidence bar (not just "happens to be above zero") —
+ * same z-score discipline as the base-rate check, applied per band.
+ */
+export async function cryptoEntryRecommendation({ minN = 8, k = 25, flagZ = 2.0 } = {}) {
+  const rows = (await getTrades()).filter(r =>
+    (r.league === "BTC60" || r.league === "BTC15") && r.won != null && r.pnl != null && r.entry != null);
+
+  const priceBand = r => {
+    const p = r.entry >= 0.5 ? r.entry : 1 - r.entry;
+    if (p < 0.5) return null;
+    const lo = Math.floor(p * 10) * 10;
+    return `${lo}-${lo + 10}%`;
+  };
+
+  const totalN = rows.length;
+  const totalW = rows.filter(r => r.won).length;
+  const globalRate = totalN ? totalW / totalN : 0.5; // the shrinkage target
+
+  const g = {};
+  for (const r of rows) {
+    const band = priceBand(r);
+    if (band == null) continue;
+    (g[band] ||= { n: 0, w: 0, entrySum: 0 });
+    g[band].n++; if (r.won) g[band].w++;
+    g[band].entrySum += r.entry;
+  }
+
+  const bands = Object.entries(g)
+    .filter(([, x]) => x.n >= minN)
+    .map(([band, x]) => {
+      const rawRate = x.w / x.n;
+      const avgEntry = x.entrySum / x.n;
+      const shrunkRate = (x.n * rawRate + k * globalRate) / (x.n + k);
+      const shrunkEdge = (shrunkRate - avgEntry) * 100;
+      // FIX (second pass): testing against the global win rate was the
+      // wrong null hypothesis entirely — different bands SHOULD have
+      // different win rates even with zero edge (a 55% entry "should" win
+      // ~55% of the time, a 95% entry ~95%, if the market prices it
+      // fairly). The real question is whether THIS band's own win rate
+      // differs from what ITS OWN entry price implies — a market-
+      // efficiency test, not a some-bands-differ-from-others test. Uses
+      // the band's real n only, same fix as before for that part.
+      const seRaw = Math.sqrt(avgEntry * (1 - avgEntry) / x.n);
+      const z = seRaw > 0 ? (rawRate - avgEntry) / seRaw : 0;
+      return {
+        band, n: x.n,
+        rawWinRatePct: +(rawRate * 100).toFixed(1),
+        shrunkWinRatePct: +(shrunkRate * 100).toFixed(1),
+        avgEntryPct: +(avgEntry * 100).toFixed(1),
+        rawEdge: +((rawRate * 100) - (avgEntry * 100)).toFixed(1),
+        shrunkEdge: +shrunkEdge.toFixed(1),
+        z: +z.toFixed(2),
+        recommended: shrunkEdge > 0 && Math.abs(z) >= flagZ,
+      };
+    })
+    .sort((a, b) => b.shrunkEdge - a.shrunkEdge);
+
+  const recommendedBands = bands.filter(b => b.recommended).map(b => b.band);
+  return {
+    n: totalN, globalWinRatePct: +(globalRate * 100).toFixed(1), k, flagZ,
+    bands, recommendedBands,
+    note: recommendedBands.length
+      ? null
+      : "No price band currently clears the confidence bar after shrinkage — the raw per-band differences seen elsewhere may be sample noise, not a real edge yet.",
+  };
+}
+
 export async function cryptoSegments({ minN = 8 } = {}) {
   const rows = (await getTrades()).filter(r =>
     (r.league === "BTC60" || r.league === "BTC15") && r.won != null && r.pnl != null);
