@@ -1191,6 +1191,8 @@ async function loadCryptoSegments(){
     if (!r?.n){ el.innerHTML = 'No settled crypto trades yet'; return; }
     el.innerHTML = '<div class="segnote">Edge = win rate minus average entry price — positive means winning more often than the price implied. Needs 8+ trades per row to show.</div>'
       + renderSegmentGroup('BY PRICE BAND', r.byPriceBand)
+      + renderSegmentGroup('BY PRICE BAND · BTC60 ONLY', r.byPriceBandBTC60)
+      + renderSegmentGroup('BY PRICE BAND · BTC15 ONLY', r.byPriceBandBTC15)
       + renderSegmentGroup('BY SIDE', r.bySide)
       + renderSegmentGroup('BY EXIT REASON', r.byExitReason)
       + renderSegmentGroup('BY ENTRY TIMING', r.byTiming);
