@@ -80,7 +80,13 @@ let BET_SIZE_USD = Number(process.env.BTC60_BET_SIZE || 0.20);
 // treat them as a first guess to refine once real trades happen, the same
 // way every sports threshold in this project started as a guess and got
 // corrected by real logs.
-const TP_PCT = Number(process.env.BTC60_TP_PCT || 0.15);
+// Was 0.15 — real data showed this made take-profit wins too small
+// relative to hard-stop losses: hard_stop is a fixed 40% of stake ($4 on
+// a $10 bet, always), while a 15pt TP nets only ~$2.00-2.73 depending on
+// entry price — hard-stop losses were running ~1.7x the size of TP wins.
+// 0.22 narrows that to ~1.16x, matching the actual observed win rate
+// (~58-60%, mostly from take_profit) instead of fighting it.
+const TP_PCT = Number(process.env.BTC60_TP_PCT || 0.22);
 const SL_PCT = Number(process.env.BTC60_SL_PCT || 0.10);
 let SL_ENABLED = process.env.BTC60_SL_ENABLED === "true"; // OFF by default per direct request — set BTC60_SL_ENABLED=true to bring it back
 // Hard stop — a RELATIVE loss on position value ("down 40% from entry"),
@@ -542,7 +548,11 @@ async function checkTakeProfitStopLoss(market) {
   if (yesPrice == null) return;
 
   const currentPrice = openPosition.side === "Up" ? yesPrice : (1 - yesPrice);
-  const moveFromEntry = currentPrice - openPosition.entryPrice;
+  // Rounded to 4dp before any threshold comparison — 0.87 - 0.65 is
+  // 0.21999999999999997 in raw JS float math, which sits JUST below a
+  // 0.22 threshold despite being a genuine, real 22-point move. Caught
+  // directly by testing at the exact boundary, not a hypothetical.
+  const moveFromEntry = +(currentPrice - openPosition.entryPrice).toFixed(4);
 
   // Hard stop — a RELATIVE loss on the position's value, not an absolute
   // price move like the regular stop-loss below. At a 70c entry, -40%
@@ -550,7 +560,7 @@ async function checkTakeProfitStopLoss(market) {
   // Checked first, unconditionally — not gated by SL_ENABLED, since this
   // is meant to fire "regardless", including if the regular stop-loss is
   // ever turned off.
-  const relativeMove = (currentPrice - openPosition.entryPrice) / openPosition.entryPrice;
+  const relativeMove = +((currentPrice - openPosition.entryPrice) / openPosition.entryPrice).toFixed(4);
   if (HARD_STOP_ENABLED && relativeMove <= -HARD_STOP_PCT) {
     console.log(`  🛑 [BTC60] HARD STOP hit: entered ${openPosition.side} @ ${(openPosition.entryPrice*100).toFixed(0)}¢, now ${(currentPrice*100).toFixed(0)}¢ (${(relativeMove*100).toFixed(0)}% of position value) — cashing out`);
     await exitPosition("hard_stop", currentPrice);
