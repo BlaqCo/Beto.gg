@@ -52,7 +52,7 @@ let DRY_RUN = GLOBAL_DRY_RUN;
 
 const SCAN_INTERVAL_MS = 20_000;
 const RESEARCH_INTERVAL_MS = 60 * 60_000;
-let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 0.20);
+let BET_SIZE_USD = Number(process.env.BTC15_BET_SIZE || 20);
 // Deliberately below the shared $6.50 order-size tripwire in
 // polymarket-us.js — that floor exists for the sports side and is left
 // completely untouched; BTC15 bypasses it explicitly (override: true on
@@ -84,7 +84,7 @@ let SL_ENABLED = process.env.BTC15_SL_ENABLED === "true"; // OFF by default per 
 // distinct from SL_PCT above (an absolute price move). Defaults on: this
 // is meant as a always-there backstop, not an opt-in extra.
 let HARD_STOP_ENABLED = process.env.BTC15_HARD_STOP_ENABLED !== "false";
-let HARD_STOP_PCT = Number(process.env.BTC15_HARD_STOP_PCT || 0.40);
+let HARD_STOP_PCT = Number(process.env.BTC15_HARD_STOP_PCT || 0.60);
 
 let shapeLoggedDiscovery = false;
 let shapeLoggedResearch = false;
@@ -618,7 +618,7 @@ const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.55);
 // own — most of these trades ride to natural expiry instead, sidestepping
 // the TP-vs-hard-stop dollar-size race that's been the main problem so
 // far, rather than trying to win that race with a better threshold.
-const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 2 * 60_000);
+const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 3 * 60_000);
 // Was 1.0 — no ceiling at all. 0.75 now: covers the confirmed 60-70%
 // band plus part of the borderline 70-80% band (z=1.96, right at the
 // confidence line, not fully confirmed either way), while staying well
