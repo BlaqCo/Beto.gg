@@ -611,23 +611,28 @@ async function exitPosition(reason, exitPrice) {
 // real, statistically confirmed edge (z=4.3, z=3.0) on real trade
 // history; 80%+ showed a real, confirmed NEGATIVE edge (z=-4.9).
 const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.55);
+// Entry restricted to the final stretch of the window — was removed
+// entirely earlier (any time), now scoped back in specifically at 2
+// minutes. Reasoning: at this point TP (15pt) and the hard stop (~22-30pt
+// relative) rarely have time to fire before the window resolves on its
+// own — most of these trades ride to natural expiry instead, sidestepping
+// the TP-vs-hard-stop dollar-size race that's been the main problem so
+// far, rather than trying to win that race with a better threshold.
+const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 2 * 60_000);
 // Was 1.0 — no ceiling at all. 0.75 now: covers the confirmed 60-70%
 // band plus part of the borderline 70-80% band (z=1.96, right at the
 // confidence line, not fully confirmed either way), while staying well
 // clear of the confirmed-negative 80%+ range.
 const ENTRY_EDGE_MAX = Number(process.env.BTC15_ENTRY_EDGE_MAX || 0.75);
-const ENTRY_WINDOW_MS = Number(process.env.BTC15_ENTRY_WINDOW_MIN || 3) * 60_000;
 
 function userEntryRule(market) {
   const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
   if (yesPrice == null) return null;
 
-  // Timing restriction removed entirely — enters at ANY point in the
-  // window's life, not just the final stretch. Still requires the window
-  // to genuinely be open (endsInMs > 0), just no longer requires being
-  // close to close.
+  // Scoped back to the final stretch — only entering when close to
+  // resolution, not any point in the window's life.
   const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
-  if (endsInMs == null || endsInMs < 0) return null;
+  if (endsInMs == null || endsInMs < 0 || endsInMs > ENTRY_LATE_WINDOW_MS) return null;
 
   // Widened from 63-74% to 45-100% — essentially "bet the favorite,
   // whenever," not a tight edge band anymore.
@@ -705,7 +710,7 @@ export async function runBTC15ScanCycle() {
     console.log(`  🔍 [BTC15] entry rejected — live band is ${ENTRY_EDGE_MIN}-${ENTRY_EDGE_MAX}, yesPrice=${market.outcomePrices?.[0]}, endDate=${market.endDate}, now=${new Date().toISOString()}`);
     return;
   }
-  console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
+  console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_LATE_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
 
   // FIX: no equivalent of sports' proactive balance check existed here at
   // all — in live mode this would have let a real order attempt go
