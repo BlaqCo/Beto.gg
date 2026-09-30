@@ -80,13 +80,14 @@ let BET_SIZE_USD = Number(process.env.BTC60_BET_SIZE || 0.20);
 // treat them as a first guess to refine once real trades happen, the same
 // way every sports threshold in this project started as a guess and got
 // corrected by real logs.
-// Was 0.15 — real data showed this made take-profit wins too small
-// relative to hard-stop losses: hard_stop is a fixed 40% of stake ($4 on
-// a $10 bet, always), while a 15pt TP nets only ~$2.00-2.73 depending on
-// entry price — hard-stop losses were running ~1.7x the size of TP wins.
-// 0.22 narrows that to ~1.16x, matching the actual observed win rate
-// (~58-60%, mostly from take_profit) instead of fighting it.
-const TP_PCT = Number(process.env.BTC60_TP_PCT || 0.22);
+// REVERTED — 0.22 made things measurably worse, confirmed by real
+// subsequent data: hard_stop count grew 4x faster than take_profit count
+// after the change (21->29 vs 28->30), and win rate fell across the
+// board. The static "make each win bigger" math ignored that widening
+// the TP target also makes it harder to REACH at all before a reversal
+// — more time for a position to fall into the hard stop instead of
+// escaping early. Back to 0.15 while a better fix gets worked out.
+const TP_PCT = Number(process.env.BTC60_TP_PCT || 0.15);
 const SL_PCT = Number(process.env.BTC60_SL_PCT || 0.10);
 let SL_ENABLED = process.env.BTC60_SL_ENABLED === "true"; // OFF by default per direct request — set BTC60_SL_ENABLED=true to bring it back
 // Hard stop — a RELATIVE loss on position value ("down 40% from entry"),
