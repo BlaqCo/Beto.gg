@@ -85,6 +85,13 @@ let SL_ENABLED = process.env.BTC15_SL_ENABLED === "true"; // OFF by default per 
 // is meant as a always-there backstop, not an opt-in extra.
 let HARD_STOP_ENABLED = process.env.BTC15_HARD_STOP_ENABLED !== "false";
 let HARD_STOP_PCT = Number(process.env.BTC15_HARD_STOP_PCT || 0.60);
+// Experiment toggle, OFF by default — when on, TP and the hard stop both
+// skip entirely and every position rides to natural settlement. Every
+// price-band/side number measured so far has been contaminated by early
+// exits cutting positions short, so the TRUE value of the entry itself —
+// separate from exit-timing noise — has never actually been isolated.
+// This measures that directly, nothing more.
+let HOLD_TO_EXPIRY = process.env.BTC15_HOLD_TO_EXPIRY === "true";
 
 let shapeLoggedDiscovery = false;
 let shapeLoggedResearch = false;
@@ -535,6 +542,7 @@ async function checkNaturalResolution15() {
  * valid, unforced outcome for a binary market — this only fires early. */
 async function checkTakeProfitStopLoss15(market) {
   if (!openPosition) return;
+  if (HOLD_TO_EXPIRY) return; // every exit check skipped — checkNaturalResolution15 is the only way out
   const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
   if (yesPrice == null) return;
 
@@ -643,6 +651,54 @@ function userEntryRule(market) {
   return { side, price };
 }
 
+// ── Independent price-divergence check (research only, NOT wired into
+// trading decisions yet) ─────────────────────────────────────────────
+// Every approach tried so far has mined the SAME data — our own past
+// trades, sliced by price band, side, timing, exit reason. That's one
+// data source re-examined many ways, and the price-band "edge" has been
+// wildly unstable across samples (+22%, then -0.7%, then +7%) — the
+// signature of noise, not a real effect, especially alongside the
+// research panel's own repeated "no pattern detectable" finding on the
+// base rate itself.
+// This checks something genuinely independent instead: the window's
+// strike price (assetPriceTerms.priceToBeat) against BTC's actual
+// current price from a source Polymarket doesn't control. If Polymarket's
+// own yesPrice ever meaningfully lags or disagrees with where BTC
+// genuinely is relative to the strike, that's a structural, checkable
+// gap — not a guess about which price band "feels" better. Logging only
+// for now; nothing here changes what gets traded until there's real
+// evidence to act on.
+let _lastLivePrice = { ts: 0, price: null };
+const LIVE_PRICE_CACHE_MS = 15_000; // CoinGecko's free tier is rate-limited; scans run ~every 20s
+async function fetchLiveBtcPrice() {
+  if (_lastLivePrice.price != null && Date.now() - _lastLivePrice.ts < LIVE_PRICE_CACHE_MS) {
+    return _lastLivePrice.price;
+  }
+  const { data } = await axios.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", { timeout: 5000 });
+  const price = data?.bitcoin?.usd;
+  if (typeof price !== "number") throw new Error("unexpected CoinGecko response shape");
+  _lastLivePrice = { ts: Date.now(), price };
+  return price;
+}
+async function logPriceDivergence(market, yesPrice) {
+  try {
+    const strike = market.assetPriceTerms?.priceToBeat;
+    if (strike == null || yesPrice == null) return;
+    const live = await fetchLiveBtcPrice();
+    const liveImpliesUp = live > strike;
+    const marketImpliesUp = yesPrice > 0.5;
+    const agree = liveImpliesUp === marketImpliesUp;
+    const liveDistancePct = ((live - strike) / strike * 100);
+    if (!agree) {
+      console.log(`  🔬 [BTC15 divergence] DISAGREE — live BTC $${live.toFixed(0)} is ${liveDistancePct >= 0 ? "+" : ""}${liveDistancePct.toFixed(3)}% vs strike $${strike.toFixed(0)} (implies ${liveImpliesUp ? "Up" : "Down"}), but Polymarket price ${(yesPrice*100).toFixed(0)}¢ implies ${marketImpliesUp ? "Up" : "Down"}`);
+    } else {
+      console.log(`  🔬 [BTC15 divergence] agree (live ${liveDistancePct >= 0 ? "+" : ""}${liveDistancePct.toFixed(3)}% vs strike, market ${(yesPrice*100).toFixed(0)}¢)`);
+    }
+  } catch (err) {
+    console.log(`  ⚠️ [BTC15 divergence] check failed: ${err.message}`);
+  }
+}
+
 export async function runBTC15ScanCycle() {
   try {
     await restoreOpenPositionOnStartup();
@@ -652,6 +708,7 @@ export async function runBTC15ScanCycle() {
     if (c.BTC15_SL_ENABLED != null) SL_ENABLED = c.BTC15_SL_ENABLED;
     if (c.BTC15_HARD_STOP_ENABLED != null) HARD_STOP_ENABLED = c.BTC15_HARD_STOP_ENABLED;
     if (c.BTC15_HARD_STOP_PCT != null) HARD_STOP_PCT = c.BTC15_HARD_STOP_PCT;
+    if (c.BTC15_HOLD_TO_EXPIRY != null) HOLD_TO_EXPIRY = c.BTC15_HOLD_TO_EXPIRY;
     if (c.BTC15_BET_SIZE != null) BET_SIZE_USD = c.BTC15_BET_SIZE;
     if (c.BTC15_PAPER_START != null) DRY_START = c.BTC15_PAPER_START;
     if (c.BTC15_PAPER_MODE !== undefined) PAPER_OVERRIDE = c.BTC15_PAPER_MODE;
@@ -677,6 +734,9 @@ export async function runBTC15ScanCycle() {
   const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
   const endsInSec = endsInMs != null ? Math.round(endsInMs / 1000) : "?";
   console.log(`₿ BTC15 window: "${(market.question || "").slice(0, 50)}" | slug=${market.slug||market.id||"?"} | Up price ${yesPrice != null ? (yesPrice * 100).toFixed(0) + "¢" : "?"} | ends in ${endsInSec}s`);
+
+  // Research-only — logs a comparison, never affects entries/exits below.
+  logPriceDivergence(market, yesPrice).catch(() => {});
 
   // If we're already holding a position in THIS window, check TP/SL —
   // this runs regardless of the live-trading flag, since it only manages
