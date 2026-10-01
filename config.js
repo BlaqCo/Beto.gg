@@ -57,6 +57,7 @@ export const SCHEMA = {
   BTC15_HARD_STOP_ENABLED: { v: true, label: "BTC15 hard stop (-40% cash out)", group: "Manage", bool: true },
   BTC60_HARD_STOP_PCT: { v: 0.40, label: "BTC60 hard stop threshold", group: "Manage" },
   BTC15_HARD_STOP_PCT: { v: 0.60, label: "BTC15 hard stop threshold", group: "Manage" },
+  BTC15_HOLD_TO_EXPIRY: { v: false, label: "BTC15 hold to expiry (ignore TP/hard stop)", group: "Manage", bool: true },
   BTC60_PAPER_MODE: { v: null, label: "BTC60 paper mode override", group: "Safety" },
   BTC15_PAPER_MODE: { v: null, label: "BTC15 paper mode override", group: "Safety" },
   BTC60_PAPER_START: { v: 200, label: "BTC60 paper starting balance", group: "Manage" },
