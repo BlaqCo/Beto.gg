@@ -648,6 +648,45 @@ function userEntryRule(market) {
   return { side, price };
 }
 
+// ── Independent price-divergence check (research only, NOT wired into
+// trading decisions yet) — same hypothesis as BTC15: check BTC's actual
+// current price against the window's strike, independent of Polymarket's
+// own quote, rather than re-mining the same trade history again.
+let _lastLivePrice60 = { ts: 0, price: null };
+const LIVE_PRICE_CACHE_MS_60 = 15_000;
+async function fetchLiveBtcPrice60() {
+  if (_lastLivePrice60.price != null && Date.now() - _lastLivePrice60.ts < LIVE_PRICE_CACHE_MS_60) {
+    return _lastLivePrice60.price;
+  }
+  const { data } = await axios.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", { timeout: 5000 });
+  const price = data?.bitcoin?.usd;
+  if (typeof price !== "number") throw new Error("unexpected CoinGecko response shape");
+  _lastLivePrice60 = { ts: Date.now(), price };
+  return price;
+}
+async function logPriceDivergence60(market, yesPrice) {
+  try {
+    // FIX: read raw like every other usage here — reusing the extractor
+    // already built for exactly this field coming through as a string or
+    // wrapped object instead of a plain number (confirmed directly: real
+    // logs threw "strike.toFixed is not a function" in production).
+    const strike = pm.extractSettlementNum(market.assetPriceTerms?.priceToBeat);
+    if (strike == null || yesPrice == null) return;
+    const live = await fetchLiveBtcPrice60();
+    const liveImpliesUp = live > strike;
+    const marketImpliesUp = yesPrice > 0.5;
+    const agree = liveImpliesUp === marketImpliesUp;
+    const liveDistancePct = ((live - strike) / strike * 100);
+    if (!agree) {
+      console.log(`  🔬 [BTC60 divergence] DISAGREE — live BTC $${live.toFixed(0)} is ${liveDistancePct >= 0 ? "+" : ""}${liveDistancePct.toFixed(3)}% vs strike $${strike.toFixed(0)} (implies ${liveImpliesUp ? "Up" : "Down"}), but Polymarket price ${(yesPrice*100).toFixed(0)}¢ implies ${marketImpliesUp ? "Up" : "Down"}`);
+    } else {
+      console.log(`  🔬 [BTC60 divergence] agree (live ${liveDistancePct >= 0 ? "+" : ""}${liveDistancePct.toFixed(3)}% vs strike, market ${(yesPrice*100).toFixed(0)}¢)`);
+    }
+  } catch (err) {
+    console.log(`  ⚠️ [BTC60 divergence] check failed: ${err.message}`);
+  }
+}
+
 export async function runBTC60ScanCycle() {
   try {
     await restoreOpenPositionOnStartup();
@@ -682,6 +721,9 @@ export async function runBTC60ScanCycle() {
   const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
   const endsInSec = endsInMs != null ? Math.round(endsInMs / 1000) : "?";
   console.log(`₿ BTC60 window: "${(market.question || "").slice(0, 50)}" | slug=${market.slug||market.id||"?"} | Up price ${yesPrice != null ? (yesPrice * 100).toFixed(0) + "¢" : "?"} | ends in ${endsInSec}s`);
+
+  // Research-only — logs a comparison, never affects entries/exits below.
+  logPriceDivergence60(market, yesPrice).catch(() => {});
 
   // If we're already holding a position in THIS window, check TP/SL —
   // this runs regardless of the live-trading flag, since it only manages
