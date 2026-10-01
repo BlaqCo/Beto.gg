@@ -115,9 +115,9 @@ const RULES = [
   { re: /\bbtc\s*-?\s*15\b.*\b(?:real\s*money|live)\b|\b(?:real\s*money|live)\b.*\bbtc\s*-?\s*15\b/i,
     apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC15_LIVE_TRADING: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_LIVE_TRADING: true } : {}; } },
   { re: /\bbtc\s*-?\s*60\b/i,
-    apply: m => { const text = m.input; return /\b(?:real\s*money|live|stop\s*-?\s*loss|hard\s*stop)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC60_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_ENABLED: true } : {}; } },
+    apply: m => { const text = m.input; return /\b(?:real\s*money|live|stop\s*-?\s*loss|hard\s*stop|hold\s*to\s*expiry)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC60_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC60_ENABLED: true } : {}; } },
   { re: /\bbtc\s*-?\s*15\b/i,
-    apply: m => { const text = m.input; return /\b(?:real\s*money|live|stop\s*-?\s*loss|hard\s*stop)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC15_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_ENABLED: true } : {}; } },
+    apply: m => { const text = m.input; return /\b(?:real\s*money|live|stop\s*-?\s*loss|hard\s*stop|hold\s*to\s*expiry)\b/i.test(text) ? {} : /\b(off|disable)\b/i.test(text) ? { BTC15_ENABLED: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_ENABLED: true } : {}; } },
 
   // ── crypto paper/live mode — separate from the ENABLED/LIVE_TRADING
   // rules above: this specifically controls whether a bot's OWN orders
@@ -149,6 +149,11 @@ const RULES = [
     apply: m => ({ BTC60_HARD_STOP_PCT: toNum(m[1]) / 100 }) },
   { re: /\bbtc\s*-?\s*15\b.*\bhard\s*stop\b[^0-9]{0,12}(\d{1,3})/i,
     apply: m => ({ BTC15_HARD_STOP_PCT: toNum(m[1]) / 100 }) },
+
+  // "hold to expiry" experiment — ignores TP/hard-stop entirely, lets
+  // every position ride to natural settlement.
+  { re: /\bbtc\s*-?\s*15\b.*\bhold\s*to\s*expiry\b|\bhold\s*to\s*expiry\b.*\bbtc\s*-?\s*15\b/i,
+    apply: m => { const text = m.input; return /\b(off|disable)\b/i.test(text) ? { BTC15_HOLD_TO_EXPIRY: false } : /\b(on|enable)\b/i.test(text) ? { BTC15_HOLD_TO_EXPIRY: true } : {}; } },
 ];
 
 /** Split on connectors so multiple instructions in one sentence each get a shot. */
