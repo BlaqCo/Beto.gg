@@ -682,7 +682,11 @@ async function fetchLiveBtcPrice() {
 }
 async function logPriceDivergence(market, yesPrice) {
   try {
-    const strike = market.assetPriceTerms?.priceToBeat;
+    // FIX: read raw like every other usage here — reusing the extractor
+    // already built for exactly this field coming through as a string or
+    // wrapped object instead of a plain number (confirmed directly: real
+    // logs threw "strike.toFixed is not a function" in production).
+    const strike = pm.extractSettlementNum(market.assetPriceTerms?.priceToBeat);
     if (strike == null || yesPrice == null) return;
     const live = await fetchLiveBtcPrice();
     const liveImpliesUp = live > strike;
@@ -762,12 +766,16 @@ export async function runBTC15ScanCycle() {
   // New window, no position yet — this is where DEFAULT_ENTRY_RULE fires.
   const entry = userEntryRule(market);
   if (!entry) {
-    // Direct proof of what's ACTUALLY running, not what the source says —
-    // logs the real band values every time a market gets rejected, so a
-    // rejection at a price that LOOKS like it should qualify is provable
-    // instead of guessed at from source code that might not match what's
-    // actually deployed.
-    console.log(`  🔍 [BTC15] entry rejected — live band is ${ENTRY_EDGE_MIN}-${ENTRY_EDGE_MAX}, yesPrice=${market.outcomePrices?.[0]}, endDate=${market.endDate}, now=${new Date().toISOString()}`);
+    // FIX: this used to always say "live band is X-Y" regardless of why
+    // userEntryRule actually rejected — confirmed directly from a real
+    // log where a 66c price (well inside 55-75%) got blamed on the band
+    // when the real reason was timing (12+ min remaining, outside the
+    // 3-min window). Reports the real reason now instead of guessing.
+    const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
+    const reason = (endsInMs == null || endsInMs < 0 || endsInMs > ENTRY_LATE_WINDOW_MS)
+      ? `outside the ${(ENTRY_LATE_WINDOW_MS/60000)}min entry window (${endsInMs != null ? Math.round(endsInMs/60000) : "?"}min remaining)`
+      : `price outside live band ${ENTRY_EDGE_MIN}-${ENTRY_EDGE_MAX}`;
+    console.log(`  🔍 [BTC15] entry rejected — ${reason}, yesPrice=${market.outcomePrices?.[0]}, endDate=${market.endDate}, now=${new Date().toISOString()}`);
     return;
   }
   console.log(`  🎯 Entry rule fired: ${entry.side} @ ${(entry.price*100).toFixed(0)}¢, within last ${(ENTRY_LATE_WINDOW_MS/60000)}min of close — betting $${BET_SIZE_USD}`);
