@@ -83,7 +83,10 @@ let SL_ENABLED = process.env.BTC15_SL_ENABLED === "true"; // OFF by default per 
 // Hard stop — a RELATIVE loss on position value ("down 40% from entry"),
 // distinct from SL_PCT above (an absolute price move). Defaults on: this
 // is meant as a always-there backstop, not an opt-in extra.
-let HARD_STOP_ENABLED = process.env.BTC15_HARD_STOP_ENABLED !== "false";
+// Off by default now, per direct request — no stop-loss mechanism of
+// any kind. Losing positions ride to natural expiry instead, no early
+// exit. Set BTC15_HARD_STOP_ENABLED=true to bring it back.
+let HARD_STOP_ENABLED = process.env.BTC15_HARD_STOP_ENABLED === "true";
 let HARD_STOP_PCT = Number(process.env.BTC15_HARD_STOP_PCT || 0.60);
 // Experiment toggle, OFF by default — when on, TP and the hard stop both
 // skip entirely and every position rides to natural settlement. Every
@@ -632,7 +635,7 @@ const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.50);
 // own — most of these trades ride to natural expiry instead, sidestepping
 // the TP-vs-hard-stop dollar-size race that's been the main problem so
 // far, rather than trying to win that race with a better threshold.
-const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 2.5 * 60_000);
+const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 3 * 60_000);
 // Ceiling removed too, per the same "no matter what edge" request —
 // back to 1.0, no price-band restriction on either side anymore.
 const ENTRY_EDGE_MAX = Number(process.env.BTC15_ENTRY_EDGE_MAX || 1.0);
