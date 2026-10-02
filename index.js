@@ -9,6 +9,7 @@
  * which board/markets/stats are shown, but never starts or stops trading.
  */
 
+import crypto from "crypto";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -28,6 +29,23 @@ const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
 app.use(express.json());
+
+// ── Write lock ─────────────────────────────────────────────────
+// Every POST/PUT/PATCH/DELETE changes money settings, places or sells
+// positions, or wipes history. Require ADMIN_TOKEN on all of them.
+// Fails closed: with no ADMIN_TOKEN set, the dashboard is read-only.
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+if (!ADMIN_TOKEN) console.log("🔒 ADMIN_TOKEN not set — all write endpoints are disabled (read-only dashboard).");
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+app.use((req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  const given = req.get("x-admin-token") || "";
+  if (ADMIN_TOKEN && given && safeEqual(given, ADMIN_TOKEN)) return next();
+  return res.status(401).json({ ok: false, error: "unauthorized", message: "Admin token required for changes." });
+});
 // BetoBot: settings + questions. Loaded dynamically so a problem in the
 // config/command modules can never stop the bot from starting.
 const betoOpts = {

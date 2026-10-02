@@ -549,6 +549,23 @@ button:active{transform:translateY(1px)}
 <div id="toast"><div class="tt" id="toastTitle"></div><div id="toastMsg"></div></div>
 
 <script>
+// Admin token for write actions (stored only in this browser).
+(function(){
+  const orig = window.fetch.bind(window);
+  window.fetch = async function(url, opts){
+    opts = opts || {};
+    const m = (opts.method || 'GET').toUpperCase();
+    if (m === 'GET' || m === 'HEAD') return orig(url, opts);
+    let tok = localStorage.getItem('betoAdminToken') || '';
+    if (!tok) { tok = prompt('Admin token (ADMIN_TOKEN) to make changes:') || ''; if (tok) localStorage.setItem('betoAdminToken', tok); }
+    opts.headers = Object.assign({}, opts.headers, {'x-admin-token': tok});
+    const r = await orig(url, opts);
+    if (r.status === 401) localStorage.removeItem('betoAdminToken');
+    return r;
+  };
+})();
+</script>
+<script>
 const $ = id => document.getElementById(id);
 const money = n => (Number(n)>=0?'+':'−')+'$'+Math.abs(Number(n)||0).toFixed(2);
 const cls = n => Number(n)>0?'up':Number(n)<0?'down':'';
