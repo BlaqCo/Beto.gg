@@ -618,7 +618,13 @@ async function exitPosition(reason, exitPrice) {
 // shrinkage-adjusted edge analysis: 50-60% and 60-70% bands showed a
 // real, statistically confirmed edge (z=4.3, z=3.0) on real trade
 // history; 80%+ showed a real, confirmed NEGATIVE edge (z=-4.9).
-const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.55);
+// Price-band filter removed per direct request — "favorite side no
+// matter what edge" means any price above 50% qualifies now, not just
+// 55-75%. Safe to use a literal 0.50 floor now specifically because of
+// the earlier fix where a failed price extraction fell back to a fake
+// 50c default — discovery returns null instead now, so a genuine 0.50
+// reading here is always a real market price, never a fabricated one.
+const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.50);
 // Entry restricted to the final stretch of the window — was removed
 // entirely earlier (any time), now scoped back in specifically at 2
 // minutes. Reasoning: at this point TP (15pt) and the hard stop (~22-30pt
@@ -626,12 +632,10 @@ const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.55);
 // own — most of these trades ride to natural expiry instead, sidestepping
 // the TP-vs-hard-stop dollar-size race that's been the main problem so
 // far, rather than trying to win that race with a better threshold.
-const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 3 * 60_000);
-// Was 1.0 — no ceiling at all. 0.75 now: covers the confirmed 60-70%
-// band plus part of the borderline 70-80% band (z=1.96, right at the
-// confidence line, not fully confirmed either way), while staying well
-// clear of the confirmed-negative 80%+ range.
-const ENTRY_EDGE_MAX = Number(process.env.BTC15_ENTRY_EDGE_MAX || 0.75);
+const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 2.5 * 60_000);
+// Ceiling removed too, per the same "no matter what edge" request —
+// back to 1.0, no price-band restriction on either side anymore.
+const ENTRY_EDGE_MAX = Number(process.env.BTC15_ENTRY_EDGE_MAX || 1.0);
 
 function userEntryRule(market) {
   const yesPrice = market.outcomePrices ? Number(market.outcomePrices[0]) : null;
