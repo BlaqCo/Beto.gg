@@ -754,6 +754,43 @@ app.get("/api/scalp", async (req, res) => {
   }
 });
 
+// ── Strategy arena (read-only) ─────────────────────────────────
+// Leaderboard of every strategy in arena/strategies replayed against the
+// recorded BTC15/BTC60 tape. Nothing here places orders.
+let _arenaCache = { data: null, ts: 0, busy: null };
+app.get("/api/arena/status", async (req, res) => {
+  try { const r = await import("./arena/recorder.js"); res.json(r.recorderStatus()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/arena/leaderboard", async (req, res) => {
+  try {
+    const fresh = Date.now() - _arenaCache.ts < 5 * 60_000;
+    if (!(_arenaCache.data && fresh)) {
+      _arenaCache.busy ??= (async () => {
+        const [{ loadStrategies }, { scoreAll }, tape] = await Promise.all([
+          import("./arena/strategies/index.js"), import("./arena/sim.js"), import("./arena/tape.js")]);
+        const { strategies, errors } = await loadStrategies();
+        const windows = (await Promise.all(tape.FAMILIES.map(f => tape.loadWindows(f)))).flat();
+        const out = windows.length ? scoreAll(strategies, windows) : { rows: [], windows: {}, strategies: strategies.length };
+        _arenaCache = { data: { ...out, loadErrors: errors }, ts: Date.now(), busy: null };
+      })().catch(e => { _arenaCache.busy = null; throw e; });
+      await _arenaCache.busy;
+    }
+    res.json({ ..._arenaCache.data, ageMs: Date.now() - _arenaCache.ts });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/arena/tape", async (req, res) => {
+  try {
+    const tape = await import("./arena/tape.js");
+    const family = tape.FAMILIES.includes(req.query.family) ? req.query.family : "btc15";
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 3000);
+    const rows = await tape.loadWindows(family, { limit });
+    res.set("Content-Type", "application/x-ndjson");
+    res.set("Content-Disposition", `attachment; filename="${family}-tape.jsonl"`);
+    res.send(rows.map(r => JSON.stringify(r)).join("\n") + "\n");
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
 
 app.use(express.static("public")); // after routes so JSON endpoints win
@@ -971,6 +1008,14 @@ async function loadBots() {
     feed.startWsFeed();
   } catch (err) {
     console.log("📡 WS feed not loaded:", err.message);
+  }
+
+  // Strategy arena recorder — read-only price tape, off unless ARENA_RECORD=true
+  try {
+    const arena = await import("./arena/recorder.js");
+    arena.startArenaRecorder();
+  } catch (err) {
+    console.log("🎞 Arena recorder not loaded:", err.message);
   }
 
   // Latency lab — measurement only, off unless LATENCY_LAB=true
