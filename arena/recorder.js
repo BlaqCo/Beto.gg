@@ -27,7 +27,7 @@ let listing = { ts: 0, markets: [] };
 let closedCache = { ts: 0, rows: [] };
 let spot = { ts: 0, price: null };
 let timer = null;
-let stats = { started: 0, ticks: 0, windowsSaved: 0, bboErrors: 0, rateLimited: 0, lastError: null, savedTo: null };
+let stats = { started: 0, lastTickAt: 0, enabled: false, ticks: 0, windowsSaved: 0, bboErrors: 0, rateLimited: 0, lastError: null, savedTo: null };
 let warnedNoMarkets = false;
 
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -79,6 +79,7 @@ async function getSpot(now) {
 async function tick() {
   const now = Date.now();
   stats.ticks++;
+  stats.lastTickAt = now;
   const fresh = await refreshListing(now);
 
   // Which windows are live right now?
@@ -161,6 +162,7 @@ export function startArenaRecorder() {
   if (process.env.ARENA_RECORD !== "true") { console.log("🎞 Arena recorder off (set ARENA_RECORD=true to record BTC Up/Down prices)"); return; }
   if (timer) return;
   stats.started = Date.now();
+  stats.enabled = true;
   let busy = false;
   timer = setInterval(async () => {
     if (busy) return;           // never overlap ticks

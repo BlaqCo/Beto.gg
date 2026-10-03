@@ -758,27 +758,95 @@ app.get("/api/scalp", async (req, res) => {
 // Leaderboard of every strategy in arena/strategies replayed against the
 // recorded BTC15/BTC60 tape. Nothing here places orders.
 let _arenaCache = { data: null, ts: 0, busy: null };
+async function getArenaLeaderboard() {
+  if (_arenaCache.data && Date.now() - _arenaCache.ts < 5 * 60_000) return _arenaCache.data;
+  _arenaCache.busy ??= (async () => {
+    const [{ loadStrategies }, { scoreAll }, tape] = await Promise.all([
+      import("./arena/strategies/index.js"), import("./arena/sim.js"), import("./arena/tape.js")]);
+    const { strategies, errors } = await loadStrategies();
+    const windows = (await Promise.all(tape.FAMILIES.map(f => tape.loadWindows(f)))).flat();
+    const out = windows.length ? scoreAll(strategies, windows) : { rows: [], windows: {}, strategies: strategies.length };
+    _arenaCache = { data: { ...out, loadErrors: errors }, ts: Date.now(), busy: null };
+  })().catch(e => { _arenaCache.busy = null; throw e; });
+  await _arenaCache.busy;
+  return _arenaCache.data;
+}
 app.get("/api/arena/status", async (req, res) => {
   try { const r = await import("./arena/recorder.js"); res.json(r.recorderStatus()); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/arena/leaderboard", async (req, res) => {
-  try {
-    const fresh = Date.now() - _arenaCache.ts < 5 * 60_000;
-    if (!(_arenaCache.data && fresh)) {
-      _arenaCache.busy ??= (async () => {
-        const [{ loadStrategies }, { scoreAll }, tape] = await Promise.all([
-          import("./arena/strategies/index.js"), import("./arena/sim.js"), import("./arena/tape.js")]);
-        const { strategies, errors } = await loadStrategies();
-        const windows = (await Promise.all(tape.FAMILIES.map(f => tape.loadWindows(f)))).flat();
-        const out = windows.length ? scoreAll(strategies, windows) : { rows: [], windows: {}, strategies: strategies.length };
-        _arenaCache = { data: { ...out, loadErrors: errors }, ts: Date.now(), busy: null };
-      })().catch(e => { _arenaCache.busy = null; throw e; });
-      await _arenaCache.busy;
-    }
-    res.json({ ..._arenaCache.data, ageMs: Date.now() - _arenaCache.ts });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  try { const d = await getArenaLeaderboard(); res.json({ ...d, ageMs: Date.now() - _arenaCache.ts }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Colony: one read-only snapshot for the /colony station page ──
+// Maps each "agent" on the page to a real part of the system and runs the
+// Supervisor's checks server-side, so the page shows facts, not animation.
+const COLONY_LOG_RE = /\[arena\]|\[BTC15|\[BTC60|BTC15 window|BTC60 window|Entry rule fired|TP hit|SL hit|HARD STOP|resolved via|config updated|settled|WON|LOST|PAPER|🎯|🛑|🎞/;
+app.get("/api/colony", async (req, res) => {
+  const out = { now: Date.now(), checks: [] };
+  const check = (agent, ok, msg, level) => out.checks.push({ agent, ok, level: level || (ok ? "ok" : "warn"), msg });
+  try {
+    let cfg = {};
+    try { cfg = await (await import("./config.js")).getConfig(); } catch {}
+    let rec = null;
+    try { rec = (await import("./arena/recorder.js")).recorderStatus(); } catch (e) { rec = { error: e.message }; }
+    out.recorder = rec;
+    let lb = null;
+    try { lb = await getArenaLeaderboard(); } catch (e) { lb = { error: e.message, rows: [] }; }
+    out.arena = lb && {
+      windows: lb.windows || {}, strategies: lb.strategies || 0, from: lb.from || null, to: lb.to || null,
+      loadErrors: lb.loadErrors || [], ageMs: Date.now() - _arenaCache.ts,
+      rows: (lb.rows || []).map(r => ({ id: r.id, name: r.name, family: r.family, author: r.author, created: r.created,
+        n: r.all?.n || 0, mean: r.all?.mean ?? null, lcb: r.all?.lcb ?? null, ucb: r.all?.ucb ?? null,
+        fwdN: r.forward?.n || 0, fwdMean: r.forward?.mean ?? null, verdict: r.verdict?.label || "", why: r.verdict?.why || "" })),
+    };
+    const btc15 = btc15Bot?.btc15Status ? btc15Bot.btc15Status() : null;
+    const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
+    out.gambler = { btc15, btc60 };
+    let stats = null;
+    try { stats = await fullStats(null); } catch {}
+    out.sports = { loaded: !!sportsBot?.runScanCycle, paused: cfg.PAUSED ?? null, dryRun: DRY_RUN, stats: stats?.sports || null,
+                   activeBets: (state.getAllActiveBets?.() || []).slice(0, 8).map(b => ({ q: b.marketQuestion || b.market || b.id, side: b.side ?? null, px: b.entryPrice ?? null, size: b.betSize ?? null, placedAt: b.placedAt ?? null })) };
+    out.votes = [];
+    try { out.votes = await (await import("./arena/votes.js")).recentVotes(10); } catch {}
+    out.log = uiLog.filter(l => COLONY_LOG_RE.test(l.msg)).slice(0, 40);
+
+    // ── Supervisor checks ──
+    const age = rec?.lastTickAt ? Date.now() - rec.lastTickAt : null;
+    if (!rec?.enabled) { check("scout15", false, "recorder is off: set ARENA_RECORD=true"); check("scout60", false, "recorder is off: set ARENA_RECORD=true"); }
+    else {
+      const stale = age == null || age > 30_000;
+      for (const fam of ["btc15", "btc60"]) {
+        const lw = (rec.liveWindows || []).find(w => w.family === fam);
+        check(fam === "btc15" ? "scout15" : "scout60", !stale && !!lw,
+          stale ? `no tick for ${age == null ? "ever" : Math.round(age / 1000) + "s"}` : lw ? `recording ${lw.slug} · ${lw.ticks} ticks` : `no live ${fam} window found`);
+      }
+      if (rec.rateLimited > 20) check("scout15", false, `${rec.rateLimited} rate-limited price requests since boot`, "warn");
+    }
+    const strategies = lb?.strategies || 0;
+    check("lab", !(lb?.loadErrors || []).length, (lb?.loadErrors || []).length ? `${lb.loadErrors.length} strategy file(s) failed to load` : `${strategies} strategies loaded`);
+    check("council", out.votes.length > 0, out.votes.length ? `${out.votes.length} recent votes` : "no voting agents connected yet", "info");
+    check("sports", out.sports.loaded, out.sports.loaded ? (cfg.PAUSED ? "sports bot loaded, paused" : "sports bot running") : `sports bot not loaded: ${sportsLoadError || "unknown"}`);
+    for (const [fam, st] of [["btc15", btc15], ["btc60", btc60]]) {
+      if (!st) { check("ace", false, `${fam} bot not loaded`); continue; }
+      const live = st.enabled && st.liveTrading && st.dryRun === false;
+      const row = (lb?.rows || []).find(r => r.name === `baseline-${fam}` && r.family === fam);
+      if (live && row?.verdict?.label !== "ready for review")
+        check("ace", false, `${fam.toUpperCase()} is betting REAL money with a strategy the arena rates "${row?.verdict?.label || "untested"}"`, "alert");
+      else check("ace", true, `${fam.toUpperCase()}: ${!st.enabled ? "off" : live ? "live, strategy passed review" : "paper only"}`);
+    }
+    check("warden", !!process.env.ADMIN_TOKEN, process.env.ADMIN_TOKEN ? "write endpoints locked with ADMIN_TOKEN" : "ADMIN_TOKEN not set: settings can be changed by anyone", process.env.ADMIN_TOKEN ? "ok" : "alert");
+    res.set("Cache-Control", "no-store");
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message, ...out }); }
+});
+app.get("/colony", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.sendFile(path.join(__dirname, "colony.html"));
+});
+
 app.get("/api/arena/tape", async (req, res) => {
   try {
     const tape = await import("./arena/tape.js");
