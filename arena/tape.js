@@ -22,10 +22,10 @@ const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.REDIS_RE
 const KEY = fam => `arena:tape:${fam}`;
 // About 31 days of each family (96 fifteen-minute and 24 hourly windows a day),
 // roughly 25 MB per family in Redis. Raise with ARENA_KEEP_BTC15 / ARENA_KEEP_BTC60.
-const KEEP = { btc15: Number(process.env.ARENA_KEEP_BTC15 || 3000), btc60: Number(process.env.ARENA_KEEP_BTC60 || 750) };
+const KEEP = { btc15: Number(process.env.ARENA_KEEP_BTC15 || 3000), btc60: Number(process.env.ARENA_KEEP_BTC60 || 750), sports: Number(process.env.ARENA_KEEP_SPORTS || 2000) };
 const FILE_DIR = process.env.ARENA_TAPE_DIR || path.join(process.cwd(), "data", "tape");
 
-export const FAMILIES = ["btc15", "btc60"];
+export const FAMILIES = ["btc15", "btc60", "sports"];
 
 async function redis(cmd) {
   if (!REDIS_URL || !REDIS_TOKEN) return undefined;

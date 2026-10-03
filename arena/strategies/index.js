@@ -5,16 +5,26 @@ import { fileURLToPath, pathToFileURL } from "url";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 
-export async function loadStrategies() {
+export async function loadStrategies(opts = {}) {
   const out = [], errors = [];
   for (const f of fs.readdirSync(DIR).sort()) {
     if (!f.endsWith(".js") || f === "index.js") continue;
     try {
       const mod = await import(pathToFileURL(path.join(DIR, f)).href);
       const s = mod.default;
-      if (!s?.name || typeof s.decide !== "function" || !["btc15", "btc60", "both"].includes(s.family)) throw new Error("needs name, family (btc15|btc60|both) and decide()");
+      if (!s?.name || typeof s.decide !== "function" || !["btc15", "btc60", "sports", "both"].includes(s.family)) throw new Error("needs name, family (btc15|btc60|sports|both) and decide()");
       out.push(s);
     } catch (err) { errors.push({ file: f, error: err.message }); }
+  }
+  // Plus the AI agents' recipes (data, never code), unless told to skip them.
+  if (!opts.filesOnly) {
+    try {
+      const { loadSpecStrategies } = await import("../specs-store.js");
+      const r = await loadSpecStrategies();
+      const names = new Set(out.map(s => s.name));
+      for (const s of r.strategies) if (!names.has(s.name)) out.push(s);
+      errors.push(...r.errors);
+    } catch (err) { errors.push({ file: "specs", error: err.message }); }
   }
   return { strategies: out, errors };
 }
