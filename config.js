@@ -17,7 +17,7 @@ const KEY = "beto:config:sports";
 // ── Defaults ─────────────────────────────────────────────────────
 // Each entry: value, label, group, and the input hint the dashboard uses.
 export const SCHEMA = {
-  BET_SIZE:      { v: 8,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
+  BET_SIZE:      { v: 2,     label: "Bet size",            group: "Stake",   unit: "$",  step: 0.5,  min: 0.5, max: 100 },
   MAX_CONC:      { v: 5,  label: "Max open positions",  group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
   ENTRIES_SCAN:  { v: 3,  label: "Max entries per scan",group: "Stake",   unit: "",   step: 1,    min: 1,   max: 9999 },
 
@@ -62,8 +62,8 @@ export const SCHEMA = {
   BTC15_PAPER_MODE: { v: null, label: "BTC15 paper mode override", group: "Safety" },
   BTC60_PAPER_START: { v: 200, label: "BTC60 paper starting balance", group: "Manage", min: 0, max: 100000 },
   BTC15_PAPER_START: { v: 200, label: "BTC15 paper starting balance", group: "Manage", min: 0, max: 100000 },
-  BTC60_BET_SIZE: { v: 10, label: "BTC60 bet size ($)", group: "Manage", min: 0.1, max: 50 },
-  BTC15_BET_SIZE: { v: 20, label: "BTC15 bet size ($)", group: "Manage", min: 0.1, max: 50 },
+  BTC60_BET_SIZE: { v: 2, label: "BTC60 bet size ($)", group: "Manage", min: 0.1, max: 50 },
+  BTC15_BET_SIZE: { v: 2, label: "BTC15 bet size ($)", group: "Manage", min: 0.1, max: 50 },
 
   LEAGUE_FOCUS:  { v: [],    label: "Only these sports",    group: "Sports",  list: true },
   LEAGUE_BLOCK:  { v: [],    label: "Never these sports",   group: "Sports",  list: true },
