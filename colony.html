@@ -179,6 +179,10 @@ td.r,th.r{text-align:right}
         <p class="rule">Every strategy replayed on the recorded prices, after spread and taker fees. Ranked by the low end of the 95% range of profit per trade. Forward = trades after the strategy was written.</p>
         <div style="overflow-x:auto"><table><thead><tr><th>STRATEGY</th><th class="r">TRADES</th><th class="r">FWD $/TRADE</th><th>VERDICT</th></tr></thead><tbody id="lb"></tbody></table></div>
         <p class="why" id="lbMeta"></p>
+        <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn" type="button" id="runAgents">RUN AGENTS NOW</button>
+          <span class="why" id="runAgentsOut">FORGE, VECTOR and DUGOUT propose strategies, PRISM retires losers, the Council votes. Needs your admin token.</span>
+        </div>
       </div>
       <div class="pane" id="p-vote" role="tabpanel" hidden>
         <p class="rule">Agents vote on which strategy gets the next forward-test slot. Votes never decide what's profitable or turn on real money.</p>
@@ -515,6 +519,17 @@ document.querySelector(".foot").addEventListener("click", e => { const x = e.tar
 cv.addEventListener("click", e => { const r = cv.getBoundingClientRect(), x = (e.clientX-r.left)*W/r.width, y = (e.clientY-r.top)*H/r.height;
   let best=null, bd=9; for (const a of AGENTS){ const d=Math.hypot(a.x-x,a.y-2-y); if (d<bd){bd=d;best=a;} } if (best) return selectAgent(best.id);
   for (const [k,rm] of Object.entries(ROOMS)) if (x>=rm.x&&x<=rm.x+rm.w&&y>=rm.y&&y<=rm.y+rm.h) return selectRoom(k); });
+$("runAgents").addEventListener("click", async () => {
+  const b = $("runAgents"), out = $("runAgentsOut");
+  b.disabled = true; out.textContent = "Agents working… this takes up to a minute.";
+  try {
+    const d = await adminPost("/api/arena/agents/run", {});
+    if (d?.error === "unauthorized") out.textContent = "Wrong or missing admin token. Try again.";
+    else if (!d.ok) out.textContent = d.error || "The agents couldn't run.";
+    else { const x = d.result || {}; out.textContent = `Done: ${x.built || 0} new, ${x.retired || 0} retired, ${x.ballots || 0} ballots.`; for (const l of (x.lines || [])) addLog(guessAgent("[agents] " + l), l); poll(); }
+  } catch { out.textContent = "Couldn't reach the server."; }
+  b.disabled = false;
+});
 document.querySelector(".tabs").addEventListener("click", e => { const x = e.target.closest("button"); if (!x) return;
   document.querySelectorAll(".tabs button").forEach(y => y.setAttribute("aria-selected", y === x)); ["strat","vote","bets","ask"].forEach(p => $("p-"+p).hidden = p !== x.dataset.pane); });
 function clock(){ const ms = Math.ceil(Date.now()/900000)*900000 - Date.now(); $("kClock").textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms%60000/1000)).padStart(2,"0")}`; }

@@ -874,6 +874,16 @@ app.get("/api/arena/specs", async (req, res) => {
   try { res.json(await (await import("./arena/specs-store.js")).listSpecs()); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Run the AI agents' round now. POST, so the ADMIN_TOKEN write lock applies.
+app.post("/api/arena/agents/run", async (req, res) => {
+  try {
+    const agents = await import("./arena/agents.js");
+    if (!agents.agentsStatus().enabled) return res.status(409).json({ ok: false, error: "AI agents are off (AGENTS_ENABLED is not true)" });
+    const result = await agents.runCycle();
+    _arenaCache.ts = 0; _arenaCache.data = null;
+    res.json({ ok: true, result });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 app.get("/api/arena/agents", async (req, res) => {
   try { res.json((await import("./arena/agents.js")).agentsStatus()); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -1112,11 +1122,11 @@ async function loadBots() {
   // Strategy arena recorder — read-only price tape, off unless ARENA_RECORD=true
   try {
     const arena = await import("./arena/recorder.js");
-    arena.startArenaRecorder();
+    await arena.startArenaRecorder();
   } catch (err) {
     console.log("🎞 Arena recorder not loaded:", err.message);
   }
-  try { (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
+  try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
   // AI agents: add strategy recipes and vote. Off unless AGENTS_ENABLED=true.
   try {

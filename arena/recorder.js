@@ -14,6 +14,10 @@
 import axios from "axios";
 import * as pm from "../polymarket-us.js";
 import { appendWindow } from "./tape.js";
+import { saveJSON, loadJSON } from "./state.js";
+
+const STATE_KEY = "arena:state:btc";
+const SAVE_EVERY_MS = 60_000;
 
 const GATEWAY = "https://gateway.polymarket.us";
 const TICK_MS = Math.max(2000, Number(process.env.ARENA_TICK_MS || 5000));
@@ -183,16 +187,50 @@ async function settlePending(now) {
   }
 }
 
-export function startArenaRecorder() {
+/** In-progress windows as plain data (for saving across restarts). */
+export function snapshotState() {
+  return { savedAt: Date.now(), live: [...live.values()], pending: [...pending.values()].map(p => ({ rec: p.rec, since: p.since })) };
+}
+
+/** Put saved windows back. Live windows that already ended go to the settlement queue. */
+export function restoreState(saved, now = Date.now()) {
+  let restoredLive = 0, restoredPending = 0;
+  for (const rec of saved?.live || []) {
+    if (!rec?.slug || !Array.isArray(rec.ticks) || live.has(rec.slug) || pending.has(rec.slug)) continue;
+    if (now >= rec.end) { pending.set(rec.slug, { rec, since: rec.end, lastTry: 0 }); restoredPending++; }
+    else { live.set(rec.slug, rec); restoredLive++; }
+  }
+  for (const p of saved?.pending || []) {
+    if (!p?.rec?.slug || pending.has(p.rec.slug)) continue;
+    pending.set(p.rec.slug, { rec: p.rec, since: p.since || p.rec.end, lastTry: 0 }); restoredPending++;
+  }
+  return { restoredLive, restoredPending };
+}
+
+async function persist() {
+  if (await saveJSON(STATE_KEY, snapshotState())) stats.lastSavedAt = Date.now();
+}
+
+export async function startArenaRecorder() {
   if (process.env.ARENA_RECORD !== "true") { console.log("🎞 Arena recorder off (set ARENA_RECORD=true to record BTC Up/Down prices)"); return; }
   if (timer) return;
   stats.started = Date.now();
   stats.enabled = true;
-  let busy = false;
+  const saved = await loadJSON(STATE_KEY);
+  if (saved) {
+    const r = restoreState(saved);
+    stats.restored = r;
+    console.log(`🎞 Arena recorder restored ${r.restoredLive} in-progress and ${r.restoredPending} unsettled window(s) from before the restart`);
+  }
+  let busy = false, lastSave = Date.now(), pendingCount = pending.size;
   timer = setInterval(async () => {
     if (busy) return;           // never overlap ticks
     busy = true;
-    try { await tick(); } catch (err) { stats.lastError = err.message; }
+    try {
+      await tick();
+      // Save every minute, and straight away when a window moves to settlement.
+      if (Date.now() - lastSave >= SAVE_EVERY_MS || pending.size !== pendingCount) { lastSave = Date.now(); pendingCount = pending.size; await persist(); }
+    } catch (err) { stats.lastError = err.message; }
     finally { busy = false; }
   }, TICK_MS);
   console.log(`🎞 Arena recorder on — BTC15 + BTC60 quotes every ${TICK_MS / 1000}s (read-only, places no orders)`);

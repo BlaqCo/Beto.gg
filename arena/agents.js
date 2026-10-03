@@ -163,7 +163,7 @@ export async function runCycle() {
   } catch (err) {
     status.lastError = err.message; log("WARDEN", `agent cycle failed: ${err.message}`);
   } finally {
-    status.running = false; status.runs++; status.lastRunAt = Date.now(); status.nextRunAt = Date.now() + EVERY_MIN * 60_000; status.lastResult = result;
+    status.running = false; status.runs++; status.lastRunAt = Date.now(); status.lastResult = result;
   }
   return result;
 }
@@ -175,7 +175,8 @@ export function startAgents(opts) {
   status.enabled = true;
   status.nextRunAt = Date.now() + 3 * 60_000;
   setTimeout(() => runCycle().catch(() => {}), 3 * 60_000);
-  setInterval(() => runCycle().catch(() => {}), EVERY_MIN * 60_000);
+  setTimeout(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; }, 3 * 60_000 + 1000);
+  setInterval(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; runCycle().catch(() => {}); }, EVERY_MIN * 60_000);
   console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, PRISM and the Council run every ${EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
 }
 
