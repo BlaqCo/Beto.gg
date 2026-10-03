@@ -87,3 +87,12 @@ test("recorder only picks BTC Up/Down windows by real duration", async () => {
   assert.equal(familyOf(m("Ethereum Up or Down", 15)), null);
   assert.equal(familyOf({ question: "Bitcoin Up or Down" }), null);
 });
+
+test("listing sides give a YES bid/ask", async () => {
+  const { quoteFromListing } = await import("../recorder.js");
+  const m = { marketSides: [{ long: true, price: "0.1300" }, { long: false, price: "0.88" }] };
+  assert.deepEqual(quoteFromListing(m), { bid: 0.12, ask: 0.13 });
+  assert.deepEqual(quoteFromListing({ marketSides: [{ long: true, price: "0.62" }, { long: false, price: "0.40" }] }), { bid: 0.6, ask: 0.62 });
+  assert.deepEqual(quoteFromListing({ marketSides: [{ long: true, price: "0.5" }] }), { bid: null, ask: null });
+  assert.deepEqual(quoteFromListing({ marketSides: [{ long: true, price: "0.9" }, { long: false, price: "0.6" }] }), { bid: null, ask: null });
+});

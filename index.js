@@ -384,8 +384,8 @@ app.get("/octopus.png", (req, res) => res.sendFile(path.join(__dirname, "octopus
 app.get("/logo.png", (req, res) => res.sendFile(path.join(__dirname, "logo.png")));
 app.get("/logo.svg", (req, res) => res.sendFile(path.join(__dirname, "logo.svg")));
 
-app.get("/api/status", (req, res) => {
-  const s = fullStats();
+app.get("/api/status", async (req, res) => {
+  const s = await fullStats();
   res.json({
     mode: currentMode, dryRun: DRY_RUN,
     balance: s.dryBalance, activeBets: s.activeBets,
@@ -823,7 +823,8 @@ app.get("/api/colony", async (req, res) => {
         check(fam === "btc15" ? "scout15" : "scout60", !stale && !!lw,
           stale ? `no tick for ${age == null ? "ever" : Math.round(age / 1000) + "s"}` : lw ? `recording ${lw.slug} · ${lw.ticks} ticks` : `no live ${fam} window found`);
       }
-      if (rec.rateLimited > 20) check("scout15", false, `${rec.rateLimited} rate-limited price requests since boot`, "warn");
+      const q = rec.quotes || {}, total = (q.L || 0) + (q.B || 0) + (q.none || 0);
+      if (total >= 20 && (q.none || 0) / total > 0.2) check("scout15", false, `${Math.round((q.none || 0) / total * 100)}% of price snapshots have no quote`, "warn");
     }
     const strategies = lb?.strategies || 0;
     check("lab", !(lb?.loadErrors || []).length, (lb?.loadErrors || []).length ? `${lb.loadErrors.length} strategy file(s) failed to load` : `${strategies} strategies loaded`);
