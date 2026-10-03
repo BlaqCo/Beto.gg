@@ -21,7 +21,8 @@ import { describeSpec } from "./spec.js";
 
 const EVERY_MIN = Math.max(30, Number(process.env.AGENTS_EVERY_MIN || 180));
 const MODEL = process.env.AGENTS_MODEL || "claude-sonnet-4-6";
-const MAX_ACTIVE = Number(process.env.AGENTS_MAX_ACTIVE || 40);
+// Kept small on purpose: every extra strategy raises the odds that one looks good by luck.
+const MAX_ACTIVE = Number(process.env.AGENTS_MAX_ACTIVE || 15);
 
 const status = { enabled: false, model: MODEL, everyMin: EVERY_MIN, runs: 0, lastRunAt: 0, nextRunAt: 0, running: false,
                  calls: 0, lastResult: null, lastError: null };

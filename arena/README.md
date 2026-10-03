@@ -73,12 +73,27 @@ Rules for every author, human or agent:
 `npm test` checks the fill model, fees, settlement, look-ahead and that the
 coin-flip control loses money on synthetic fair markets.
 
+## Reality check (`reality.js`)
+
+Before trusting any arena result with real money, check that the arena's fill
+model matches what actually happens. Every BTC15/BTC60 trade the bots record
+(paper or real) whose window is on the tape is replayed through the arena: same
+window, same side, entering and selling when the bot did. The bot's P&L and the
+arena's are compared per $10 trade.
+
+`GET /api/arena/reality` lists every matched trade; `/colony` shows the verdict
+on PRISM. After 20 matched trades it reads **matches**, **unclear**,
+**arena too strict**, or **arena too optimistic**. The last one means the arena
+overstates profit: don't go live on an arena result until that is explained.
+
 ## AI agents (`agents.js`, on when `AGENTS_ENABLED=true`)
 
 Every `AGENTS_EVERY_MIN` minutes (default 180), using `ANTHROPIC_API_KEY`:
 
 - **FORGE** and **VECTOR** each propose one BTC recipe, **DUGOUT** one sports
   recipe (once the sports recorder has data).
+- At most `AGENTS_MAX_ACTIVE` (default 15) recipes are active at once: every
+  extra strategy raises the odds that one looks good by luck.
 - **PRISM** retires recipes with 60+ trades whose best-case estimate still loses.
 - **The Council** (FORGE, VECTOR, PRISM, DUGOUT, WARDEN) votes on which
   strategy with 30+ trades gets the next forward-test focus.
