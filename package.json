@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test arena/test/*.test.js",
+    "arena": "node arena/run.js"
   },
   "dependencies": {
     "express": "^4.21.0",

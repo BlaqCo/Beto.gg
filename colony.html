@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Beto Colony</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a CRT "station OS". Top status bar, agent roster left, pixel station map center,
+   strategy/vote/bets console right, event log under the map. Single dark theme on purpose: it's a terminal. */
+:root{
+  --void:#05080a;        /* page ground */
+  --panel:#081210;       /* console panels */
+  --phos:#38f27a;        /* phosphor green: frame + primary UI */
+  --phos-dim:#1f7a45;
+  --phos-faint:#0f2c1c;
+  --text:#c9f5d6;        /* body text */
+  --muted:#6fa985;
+  --amber:#ffb547;       /* money, votes */
+  --red:#ff5d5d;         /* risk, gambler */
+  --cyan:#5fd4ff;        /* data */
+  --violet:#b48cff;      /* supervisor */
+  --f-pix:"Silkscreen", "Courier New", monospace;
+  --f-mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--void);color:var(--text)}
+body{font-family:var(--f-mono);font-size:13px;line-height:1.45;padding-inline:16px;padding-block:16px 32px}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.os{max-width:1400px;margin:0 auto;border:2px solid var(--phos);border-radius:14px;background:var(--panel);
+  box-shadow:0 0 0 1px var(--phos-faint),0 0 28px rgba(56,242,122,.18),inset 0 0 40px rgba(56,242,122,.05);overflow:hidden;position:relative}
+.os::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px);mix-blend-mode:multiply}
+
+/* top bar */
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;padding:10px 14px;border-bottom:2px solid var(--phos)}
+.logo{font-family:var(--f-pix);font-weight:700;font-size:18px;color:var(--amber);letter-spacing:.04em;text-shadow:0 0 8px rgba(255,181,71,.45)}
+.logo span{color:var(--phos)}
+.sample{font-family:var(--f-pix);font-size:10px;color:var(--void);background:var(--amber);padding:2px 6px;border-radius:3px;letter-spacing:.06em}
+.kpis{display:flex;flex-wrap:wrap;gap:6px 16px;margin-left:auto}
+.kpi{display:flex;gap:6px;align-items:baseline;white-space:nowrap}
+.kpi b{font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.06em}
+.kpi i{font-style:normal;font-variant-numeric:tabular-nums;color:var(--text)}
+.kpi i.pos{color:var(--phos)} .kpi i.neg{color:var(--red)} .kpi i.amber{color:var(--amber)}
+.live-off{font-family:var(--f-pix);font-size:10px;color:var(--red);border:1px solid var(--red);padding:1px 6px;border-radius:3px}
+
+/* main grid */
+.grid{display:grid;grid-template-columns:270px minmax(0,1fr) 320px;min-height:0}
+@media (max-width:1150px){.grid{grid-template-columns:240px minmax(0,1fr)}.console{grid-column:1/-1;border-left:0;border-top:2px solid var(--phos)}}
+@media (max-width:760px){.grid{grid-template-columns:minmax(0,1fr)}.roster{border-right:0;border-bottom:2px solid var(--phos);max-height:300px}}
+.roster{border-right:2px solid var(--phos);display:flex;flex-direction:column;min-width:0;max-height:720px}
+.ph{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--phos-dim);font-family:var(--f-pix);font-size:11px;letter-spacing:.06em;color:var(--phos)}
+.ph em{font-style:normal;color:var(--muted)}
+.agents{list-style:none;margin:0;padding:6px;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+.agent{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 8px;padding:6px 8px;border:1px solid var(--phos-faint);border-radius:6px;cursor:pointer;background:transparent;text-align:left;width:100%}
+.agent:hover,.agent[aria-pressed="true"]{border-color:var(--phos-dim);background:rgba(56,242,122,.05)}
+.agent .sw{width:10px;height:10px;margin-top:4px;image-rendering:pixelated}
+.agent .nm{font-family:var(--f-pix);font-size:11px;letter-spacing:.04em;color:var(--text)}
+.agent .tag{font-family:var(--f-pix);font-size:9px;letter-spacing:.06em;padding:0 5px;border-radius:3px;border:1px solid currentColor;align-self:start;margin-top:2px}
+.agent .st{grid-column:2/4;color:var(--muted);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.center{display:flex;flex-direction:column;min-width:0}
+.mapwrap{position:relative;background:#020504;border-bottom:2px solid var(--phos)}
+.mapwrap canvas{display:block;width:100%;height:auto;aspect-ratio:400/250;image-rendering:pixelated;image-rendering:crisp-edges;cursor:pointer}
+.mapnote{position:absolute;left:10px;bottom:8px;font-size:11px;color:var(--muted);background:rgba(2,5,4,.75);padding:2px 6px;border-radius:4px}
+.log{list-style:none;margin:0;padding:8px 12px;height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;font-size:12px}
+.log li{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:8px;animation:in .3s ease-out}
+.log time{color:var(--phos-dim);font-variant-numeric:tabular-nums}
+.log .who{font-family:var(--f-pix);font-size:10px;letter-spacing:.04em;padding-top:1px}
+.log .msg{overflow-wrap:anywhere}
+@keyframes in{from{opacity:.2;transform:translateX(-4px)}to{opacity:1;transform:none}}
+
+.console{border-left:2px solid var(--phos);display:flex;flex-direction:column;min-width:0}
+.tabs{display:flex;border-bottom:1px solid var(--phos-dim)}
+.tabs button{flex:1;background:transparent;border:0;border-right:1px solid var(--phos-faint);padding:8px 4px;font-family:var(--f-pix);font-size:10px;letter-spacing:.06em;color:var(--muted);cursor:pointer}
+.tabs button:last-child{border-right:0}
+.tabs button[aria-selected="true"]{color:var(--void);background:var(--phos)}
+.pane{padding:10px 12px;overflow-y:auto;max-height:660px;display:flex;flex-direction:column;gap:10px}
+.rule{font-size:11.5px;color:var(--muted);border-left:2px solid var(--amber);padding-left:8px;margin:0}
+table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums}
+th{font-family:var(--f-pix);font-weight:400;font-size:9px;letter-spacing:.06em;color:var(--muted);text-align:left;padding:4px 4px;border-bottom:1px solid var(--phos-dim)}
+td{padding:5px 4px;border-bottom:1px solid var(--phos-faint);vertical-align:top}
+td.r,th.r{text-align:right}
+.verdict{font-family:var(--f-pix);font-size:9px;letter-spacing:.04em;padding:0 4px;border-radius:3px;border:1px solid currentColor;white-space:nowrap}
+.v-early{color:var(--muted)} .v-losing{color:var(--red)} .v-unproven{color:var(--cyan)} .v-promising{color:var(--amber)} .v-ready{color:var(--phos)} .v-control{color:var(--violet)}
+.pos{color:var(--phos)} .neg{color:var(--red)}
+.sname{color:var(--text)} .sfam{color:var(--muted);font-size:10.5px}
+.ballot{border:1px solid var(--phos-dim);border-radius:8px;padding:10px;display:grid;gap:8px}
+.ballot h3{margin:0;font-family:var(--f-pix);font-weight:400;font-size:12px;color:var(--amber);letter-spacing:.04em}
+.cand{display:grid;gap:3px}
+.cand .top{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.meter{height:8px;background:var(--phos-faint);border-radius:2px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--amber);transition:width .4s}
+.cand.win .meter i{background:var(--phos)}
+.voters{display:flex;flex-wrap:wrap;gap:4px;min-height:14px}
+.voters span{font-family:var(--f-pix);font-size:9px;padding:0 4px;border-radius:2px;background:var(--phos-faint);color:var(--text)}
+.history{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:12px}
+.history li{border-bottom:1px solid var(--phos-faint);padding-bottom:6px}
+.gate{border:1px dashed var(--red);border-radius:8px;padding:10px;display:grid;gap:6px}
+.gate h3{margin:0;font-family:var(--f-pix);font-weight:400;font-size:12px;color:var(--red)}
+.gate p{margin:0;font-size:12px}
+.check{display:flex;gap:6px;font-size:12px}
+.check b{font-weight:400;width:14px;flex:none}
+.btn{border:1px solid var(--phos-dim);background:transparent;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:var(--f-pix);font-size:10px;letter-spacing:.06em}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.foot{display:flex;flex-wrap:wrap;gap:0;border-top:2px solid var(--phos)}
+.foot button{flex:1;min-width:110px;background:transparent;border:0;border-right:1px solid var(--phos-dim);padding:9px;font-family:var(--f-pix);font-size:10px;letter-spacing:.08em;color:var(--phos);cursor:pointer}
+.foot button:last-child{border-right:0}
+.foot button:hover{background:rgba(56,242,122,.07)}
+.under{max-width:1400px;margin:12px auto 0;color:var(--muted);font-size:12px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+</head>
+<body>
+<style>
+.sample.live{background:var(--phos)}
+.sample.down{background:var(--red);color:var(--void)}
+.agent.off .nm,.agent.off .st{opacity:.5}
+.agent .tag.off{color:var(--muted)}
+.agent.alert{border-color:var(--red)}
+.agent.alert .st{color:var(--red)}
+.live-on{font-family:var(--f-pix);font-size:10px;color:var(--void);background:var(--red);padding:1px 6px;border-radius:3px;animation:blink 1.2s steps(2) infinite}
+@keyframes blink{50%{opacity:.4}}
+.why{color:var(--muted);font-size:10.5px}
+.pos-card{border:1px solid var(--phos-dim);border-radius:8px;padding:8px 10px;display:grid;gap:2px;font-size:12px}
+.pos-card b{font-family:var(--f-pix);font-weight:400;font-size:10px;letter-spacing:.06em;color:var(--amber)}
+.empty{color:var(--muted);font-size:12px}
+</style>
+<div class="os" role="application" aria-label="Beto Colony station">
+  <header class="bar">
+    <div class="logo">BETO<span>//</span>COLONY</div>
+    <span class="sample" id="conn">CONNECTING</span>
+    <div class="kpis">
+      <div class="kpi"><b>WINDOWS TAPED</b><i id="kWin">—</i></div>
+      <div class="kpi"><b>STRATEGIES</b><i id="kStrat">—</i></div>
+      <div class="kpi"><b>BEST FWD/TRADE</b><i id="kBest">—</i></div>
+      <div class="kpi"><b>PAPER BAL</b><i id="kPaper">—</i></div>
+      <div class="kpi"><b>BTC15 CLOSES</b><i id="kClock" class="amber">--:--</i></div>
+      <span class="live-off" id="liveChip">LIVE BETS OFF</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <aside class="roster" aria-label="Agents">
+      <div class="ph">AGENT ROSTER <em id="rCount"></em></div>
+      <ul class="agents" id="roster"></ul>
+    </aside>
+
+    <section class="center">
+      <div class="mapwrap">
+        <canvas id="map" width="400" height="250" aria-label="Station map: click a room or an agent"></canvas>
+        <div class="mapnote" id="mapNote">Click a room or an agent</div>
+      </div>
+      <div class="ph">STATION LOG <em>from the server, newest first</em></div>
+      <ol class="log" id="log"></ol>
+    </section>
+
+    <aside class="console" aria-label="Console">
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-pane="strat">STRATEGIES</button>
+        <button role="tab" aria-selected="false" data-pane="vote">VOTE</button>
+        <button role="tab" aria-selected="false" data-pane="bets">BETS</button>
+      </div>
+      <div class="pane" id="p-strat" role="tabpanel">
+        <p class="rule">Every strategy replayed on the recorded prices, after spread and taker fees. Ranked by the low end of the 95% range of profit per trade. Forward = trades after the strategy was written.</p>
+        <div style="overflow-x:auto"><table><thead><tr><th>STRATEGY</th><th class="r">TRADES</th><th class="r">FWD $/TRADE</th><th>VERDICT</th></tr></thead><tbody id="lb"></tbody></table></div>
+        <p class="why" id="lbMeta"></p>
+      </div>
+      <div class="pane" id="p-vote" role="tabpanel" hidden>
+        <p class="rule">Agents vote on which strategy gets the next forward-test slot. Votes never decide what's profitable or turn on real money.</p>
+        <div id="votes"></div>
+      </div>
+      <div class="pane" id="p-bets" role="tabpanel" hidden>
+        <div class="gate">
+          <h3 id="gateH">LIVE BETTING</h3>
+          <p id="gateP"></p>
+          <div id="gateChecks"></div>
+        </div>
+        <div id="positions"></div>
+      </div>
+    </aside>
+  </div>
+
+  <nav class="foot" aria-label="Rooms">
+    <button type="button" data-room="data">DATA BAY</button>
+    <button type="button" data-room="lab">STRATEGY LAB</button>
+    <button type="button" data-room="council">COUNCIL</button>
+    <button type="button" data-room="sports">SPORTS ROOM</button>
+    <button type="button" data-room="bridge">BRIDGE</button>
+    <button type="button" data-room="den">GAMBLER'S DEN</button>
+  </nav>
+</div>
+<p class="under" id="under">Live from this server's arena, recorder and bots. Read-only: nothing on this page can place, change or cancel a bet.</p>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const W = 400, H = 250, POLL_MS = 5000;
+const C = {phos:"#38f27a",amber:"#ffb547",red:"#ff5d5d",cyan:"#5fd4ff",violet:"#b48cff",muted:"#6fa985",grey:"#3d5546"};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = (v, d=2) => v == null ? "—" : (v < 0 ? "−$" : "+$") + Math.abs(v).toFixed(d);
+const cash = v => v == null ? "—" : "$" + Number(v).toFixed(2);
+
+/* ---------- Rooms + corridors ---------- */
+const ROOMS = {
+  data:    {name:"DATA BAY",      x:12,  y:14,  w:104, h:78, col:C.cyan,   job:"The recorder: BTC15 and BTC60 prices every 5 seconds, plus how each window settles."},
+  lab:     {name:"STRATEGY LAB",  x:150, y:14,  w:100, h:66, col:C.phos,   job:"Strategies replayed against the recorded prices, after spread and fees."},
+  council: {name:"COUNCIL",       x:284, y:14,  w:104, h:78, col:C.amber,  job:"Votes on which strategy gets the next forward-test slot."},
+  sports:  {name:"SPORTS ROOM",   x:12,  y:146, w:116, h:90, col:"#4fd18b",job:"The sports bot. A sports recorder and arena come next."},
+  bridge:  {name:"BRIDGE",        x:150, y:162, w:100, h:74, col:C.violet, job:"The Supervisor's checks on every part of the system."},
+  den:     {name:"GAMBLER'S DEN", x:272, y:146, w:116, h:90, col:C.red,    job:"The BTC15 and BTC60 bots that actually place bets."}
+};
+const N = {hub:{x:200,y:118},hubW:{x:132,y:118},hubE:{x:268,y:118},dataD:{x:64,y:96},labD:{x:200,y:84},councilD:{x:336,y:96},sportsD:{x:70,y:142},bridgeD:{x:200,y:158},denD:{x:330,y:142}};
+for (const [k,r] of Object.entries(ROOMS)) N[k] = {x:r.x + r.w/2, y:r.y + r.h/2 + 4};
+const EDGES = [["hub","hubW"],["hub","hubE"],["hub","labD"],["hub","bridgeD"],["hubW","dataD"],["hubW","sportsD"],["hubE","councilD"],["hubE","denD"],["dataD","data"],["labD","lab"],["councilD","council"],["sportsD","sports"],["bridgeD","bridge"],["denD","den"]];
+const ADJ = {}; for (const k in N) ADJ[k] = []; for (const [a,b] of EDGES){ ADJ[a].push(b); ADJ[b].push(a); }
+function route(a,b){ if (a===b) return []; const prev={[a]:null}, q=[a]; while(q.length){const n=q.shift(); if(n===b)break; for(const m of ADJ[n]) if(!(m in prev)){prev[m]=n;q.push(m);}} const p=[]; let c=b; while(c&&c!==a){p.unshift(c);c=prev[c];} return p; }
+
+/* ---------- Agents: each one is a real part of the system ---------- */
+const TEAMS = {data:{label:"DATA",col:C.cyan},build:{label:"BUILD",col:C.phos},vote:{label:"COUNCIL",col:C.amber},sports:{label:"SPORTS",col:"#4fd18b"},super:{label:"SUPER",col:C.violet},gamble:{label:"BETS",col:C.red}};
+const AGENTS = [
+  {id:"scout15",name:"SCOUT-15",team:"data",  home:"data",   role:"The recorder, on BTC 15-minute windows"},
+  {id:"scout60",name:"SCOUT-60",team:"data",  home:"data",   role:"The recorder, on BTC hourly windows"},
+  {id:"forge",  name:"FORGE",   team:"build", home:"lab",    role:"AI strategy writer (joins when the scheduled agents are set up)", future:true},
+  {id:"vector", name:"VECTOR",  team:"build", home:"lab",    role:"AI strategy writer (joins when the scheduled agents are set up)", future:true},
+  {id:"prism",  name:"PRISM",   team:"build", home:"lab",    role:"The arena: replays and scores every strategy"},
+  {id:"oracle", name:"ORACLE",  team:"vote",  home:"council",role:"Counts the Council's ballots"},
+  {id:"pitch",  name:"PITCH",   team:"sports",home:"sports", role:"The sports bot"},
+  {id:"dugout", name:"DUGOUT",  team:"sports",home:"sports", role:"Sports strategy tester (needs a sports recorder first)", future:true},
+  {id:"warden", name:"WARDEN",  team:"super", home:"bridge", role:"Supervisor: runs health and safety checks on everything"},
+  {id:"ace",    name:"ACE",     team:"gamble",home:"den",    role:"The Gambler: the BTC15 and BTC60 betting bots"}
+];
+for (const a of AGENTS){ const r = ROOMS[a.home]; Object.assign(a,{at:a.home,path:[],x:r.x+12+Math.random()*(r.w-24),y:r.y+20+Math.random()*(r.h-30),tx:null,pause:Math.random()*2,status:a.future?"not connected yet":"waiting for the server…",dir:1,phase:Math.random()*6,offline:!!a.future,alert:false}); }
+const byId = Object.fromEntries(AGENTS.map(a => [a.id,a]));
+
+/* ---------- Movement + packets ---------- */
+function goTo(a, room, then){ const from = a.path.length ? a.path[0] : a.at; a.path = (a.path.length ? [a.path[0]] : []).concat(route(from, room)); a.tx = null; a.arrived = then || null; }
+function step(a, dt){
+  a.moving = false;
+  if (a.path.length){ const n = N[a.path[0]], dx=n.x-a.x, dy=n.y-a.y, d=Math.hypot(dx,dy), sp=38; a.moving = true; if (Math.abs(dx)>.5) a.dir = dx>0?1:-1;
+    if (d < sp*dt+.5){ a.x=n.x; a.y=n.y; a.at=a.path.shift(); if (!a.path.length){ a.pause=.4; const f=a.arrived; a.arrived=null; f && f(); } } else { a.x+=dx/d*sp*dt; a.y+=dy/d*sp*dt; } return; }
+  if (a.offline) return;
+  const r = ROOMS[a.at]; if (!r) return;
+  if (a.pause > 0){ a.pause -= dt; return; }
+  if (a.tx == null){ a.tx = r.x+10+Math.random()*(r.w-20); a.ty = r.y+18+Math.random()*(r.h-26); }
+  const dx=a.tx-a.x, dy=a.ty-a.y, d=Math.hypot(dx,dy);
+  if (d < 1){ a.tx=null; a.pause=1.5+Math.random()*3; return; }
+  a.moving = true; if (Math.abs(dx)>.3) a.dir = dx>0?1:-1; a.x+=dx/d*12*dt; a.y+=dy/d*12*dt;
+}
+const packets = [];
+function sendPacket(from, to, col){ const p=[from,...route(from,to)]; packets.push({pts:p.map(k=>N[k]),i:0,t:0,col}); }
+function stepPackets(dt){ for (const p of packets){ if (p.i>=p.pts.length-1){p.done=true;continue;} const a=p.pts[p.i],b=p.pts[p.i+1],d=Math.hypot(b.x-a.x,b.y-a.y)||1; p.t+=dt*70/d; if(p.t>=1){p.t=0;p.i++;} } for (let i=packets.length-1;i>=0;i--) if (packets[i].done) packets.splice(i,1); }
+
+/* ---------- Server snapshot ---------- */
+let D = null, prev = null, failures = 0, lastOk = 0;
+const seenLog = new Set();
+async function poll(){
+  try {
+    const r = await fetch("/api/colony", {cache:"no-store"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    prev = D; D = await r.json(); failures = 0; lastOk = Date.now();
+    apply();
+  } catch (e) {
+    failures++;
+    const c = $("conn"); c.textContent = failures > 1 ? "SERVER UNREACHABLE" : "RETRYING"; c.className = "sample down";
+  }
+}
+function checksFor(id){ return (D?.checks || []).filter(c => c.agent === id); }
+function setStatus(a, s, alert){ a.status = s; a.alert = !!alert; const row = document.querySelector(`[data-agent="${a.id}"]`); if (!row) return;
+  row.querySelector(".st").textContent = s; row.classList.toggle("alert", !!alert); row.classList.toggle("off", !!a.offline); }
+
+function apply(){
+  const c = $("conn"); c.textContent = "LIVE"; c.className = "sample live";
+  const rec = D.recorder || {}, arena = D.arena || {rows:[]}, g = D.gambler || {}, sp = D.sports || {};
+  // Scouts
+  for (const [id, fam] of [["scout15","btc15"],["scout60","btc60"]]){
+    const ch = checksFor(id)[0]; const a = byId[id];
+    a.offline = !rec.enabled;
+    setStatus(a, ch ? ch.msg : "no data", ch && !ch.ok);
+  }
+  if (prev && (D.recorder?.windowsSaved || 0) > (prev.recorder?.windowsSaved || 0)) sendPacket("data","lab",C.cyan);
+  if (prev && (D.recorder?.ticks || 0) > (prev.recorder?.ticks || 0) && Math.random() < .5) sendPacket("data","hubW",C.cyan);
+  // Builders
+  for (const id of ["forge","vector"]){
+    const mine = arena.rows.filter(r => (r.author || "").toUpperCase() === byId[id].name);
+    byId[id].offline = !mine.length;
+    setStatus(byId[id], mine.length ? `${mine.length} strategy result(s) on the board` : "not connected yet: joins with the scheduled AI agents");
+  }
+  const labCheck = checksFor("lab")[0];
+  const tapeN = Object.values(arena.windows || {}).reduce((a,b)=>a+b,0);
+  setStatus(byId.prism, arena.error ? `arena error: ${arena.error}` : tapeN ? `scored ${arena.strategies} strategies on ${tapeN.toLocaleString()} windows · ${Math.round((arena.ageMs||0)/60000)}m ago` : (labCheck?.msg || "") + " · waiting for recorded windows", !!arena.error || (labCheck && !labCheck.ok));
+  // Council
+  setStatus(byId.oracle, D.votes?.length ? `${D.votes.length} recent ballots` : "no voting agents connected yet");
+  byId.oracle.offline = !D.votes?.length;
+  // Sports
+  const sc = checksFor("sports")[0];
+  const sst = sp.stats ? ` · ${sp.stats.totalBets ?? 0} bets, ${money(sp.stats.pnl ?? 0)}` : "";
+  setStatus(byId.pitch, (sc ? sc.msg : "unknown") + sst, sc && !sc.ok);
+  byId.pitch.offline = !sp.loaded;
+  setStatus(byId.dugout, "needs a sports recorder before it can test anything");
+  // Gambler
+  const aceChecks = checksFor("ace"), alert = aceChecks.find(c => c.level === "alert");
+  const open = [g.btc15?.openPosition && ["btc15", g.btc15.openPosition], g.btc60?.openPosition && ["btc60", g.btc60.openPosition]].filter(Boolean);
+  setStatus(byId.ace, alert ? alert.msg : open.length ? open.map(([f,p]) => `${f} ${p.side} @ ${Math.round(p.entryPrice*100)}¢ ${cash(p.sizeUsd)}`).join(" · ") : aceChecks.map(c => c.msg).join(" · "), !!alert);
+  // Warden
+  const bad = (D.checks || []).filter(c => !c.ok && c.level !== "info");
+  setStatus(byId.warden, bad.length ? `${bad.length} issue(s): ${bad[0].msg}` : "all checks passing", bad.some(c => c.level === "alert"));
+  // Log (server lines)
+  for (const l of [...(D.log || [])].reverse()){
+    const key = l.ts + l.msg; if (seenLog.has(key)) continue; seenLog.add(key);
+    addLog(guessAgent(l.msg), l.msg, l.ts);
+  }
+  if (!prev) for (const ch of D.checks || []) if (!ch.ok && ch.level !== "info") addLog("warden", ch.agent === "warden" ? ch.msg : `${byId[ch.agent]?.name || ch.agent}: ${ch.msg}`);
+  renderAll();
+}
+function guessAgent(msg){
+  if (/\[arena\]|🎞/.test(msg)) return /btc60/.test(msg) ? "scout60" : "scout15";
+  if (/BTC60/.test(msg)) return "ace";
+  if (/BTC15|₿/.test(msg)) return "ace";
+  if (/config updated/.test(msg)) return "warden";
+  return "pitch";
+}
+function addLog(agentId, msg, ts){
+  const a = byId[agentId] || byId.warden; const li = document.createElement("li");
+  const t = ts ? new Date(ts) : new Date();
+  li.innerHTML = `<time>${t.toTimeString().slice(0,8)}</time><span class="who" style="color:${TEAMS[a.team].col}">${a.name}</span><span class="msg">${esc(msg)}</span>`;
+  const el = $("log"); el.prepend(li); while (el.children.length > 100) el.lastChild.remove();
+}
+
+/* ---------- Panels ---------- */
+const VCLS = {"too early":"v-early",losing:"v-losing",unproven:"v-unproven",promising:"v-promising","ready for review":"v-ready",control:"v-control"};
+function renderRoster(){
+  $("roster").innerHTML = AGENTS.map(a => `<li><button class="agent" type="button" data-agent="${a.id}" aria-pressed="false">
+    <span class="sw" style="background:${TEAMS[a.team].col}"></span><span class="nm">${a.name}</span>
+    <span class="tag" style="color:${TEAMS[a.team].col}">${TEAMS[a.team].label}</span><span class="st"></span></button></li>`).join("");
+  for (const a of AGENTS) setStatus(a, a.status);
+}
+function renderAll(){
+  const arena = D.arena || {rows:[]}, g = D.gambler || {};
+  const online = AGENTS.filter(a => !a.offline).length; $("rCount").textContent = `${online}/${AGENTS.length} ONLINE`;
+  const tapeN = Object.values(arena.windows || {}).reduce((a,b)=>a+b,0);
+  $("kWin").textContent = tapeN.toLocaleString(); $("kStrat").textContent = arena.strategies ?? "—";
+  const best = arena.rows.filter(r => r.fwdN >= 30 && r.verdict !== "control").sort((x,y) => y.fwdMean - x.fwdMean)[0];
+  $("kBest").textContent = best ? `${money(best.fwdMean)} ${best.name}` : "not enough trades"; $("kBest").className = best ? (best.fwdMean >= 0 ? "pos" : "neg") : "";
+  const bal = [g.btc15, g.btc60].filter(st => st?.enabled && st.paperBalance != null).map(st => st.paperBalance);
+  $("kPaper").textContent = bal.length ? cash(bal.reduce((a,b)=>a+b,0)) : "bots off";
+  const liveFams = ["btc15","btc60"].filter(f => g[f]?.enabled && g[f]?.liveTrading && g[f]?.dryRun === false);
+  const chip = $("liveChip"); chip.className = liveFams.length ? "live-on" : "live-off"; chip.textContent = liveFams.length ? `LIVE: ${liveFams.join(" + ").toUpperCase()}` : "LIVE BETS OFF";
+  // leaderboard
+  $("lb").innerHTML = arena.rows.length ? arena.rows.map(r => `<tr title="${esc(r.why)}"><td><div class="sname">${esc(r.name)}</div><div class="sfam">${esc(r.family)} · by ${esc(r.author)}</div></td>
+    <td class="r">${r.n}</td><td class="r ${r.fwdMean == null ? "" : r.fwdMean >= 0 ? "pos" : "neg"}">${r.fwdN ? money(r.fwdMean) : "—"}<div class="sfam">${r.fwdN} fwd</div></td>
+    <td><span class="verdict ${VCLS[r.verdict] || "v-early"}">${esc(r.verdict)}</span></td></tr>`).join("")
+    : `<tr><td colspan="4" class="empty">${arena.error ? "Arena error: " + esc(arena.error) : "No recorded windows yet. The leaderboard fills in once the recorder has saved its first windows."}</td></tr>`;
+  $("lbMeta").textContent = arena.from ? `Tape: ${new Date(arena.from).toLocaleString()} → ${new Date(arena.to).toLocaleString()} · ${JSON.stringify(arena.windows)}` : "";
+  // votes
+  const V = D.votes || [];
+  if (!V.length) $("votes").innerHTML = `<p class="empty">No votes yet. The Council fills up when the scheduled AI agents are connected. Each one reads this leaderboard, proposes strategies and casts a ballot.</p>`;
+  else {
+    const rounds = {}; for (const v of V) (rounds[v.round] ||= []).push(v);
+    $("votes").innerHTML = Object.entries(rounds).map(([round, vs]) => {
+      const tally = {}; for (const v of vs) (tally[v.strategy] ||= []).push(v);
+      const max = Math.max(...Object.values(tally).map(x => x.length));
+      return `<div class="ballot"><h3>ROUND ${esc(round)}</h3>` + Object.entries(tally).sort((a,b)=>b[1].length-a[1].length).map(([s, vv]) =>
+        `<div class="cand${vv.length === max ? " win" : ""}"><div class="top"><span>${esc(s)}</span><span>${vv.length}</span></div><div class="meter"><i style="width:${vv.length/vs.length*100}%"></i></div>
+        <div class="voters">${vv.map(v => `<span title="${esc(v.reason)}">${esc(v.voter)}</span>`).join("")}</div></div>`).join("") + `</div>`;
+    }).join("");
+  }
+  // gate + positions
+  const cand = arena.rows.filter(r => r.verdict !== "control").sort((x,y) => (y.lcb ?? -9) - (x.lcb ?? -9))[0];
+  $("gateH").textContent = liveFams.length ? `LIVE BETTING ON: ${liveFams.join(" + ").toUpperCase()}` : "LIVE BETTING: OFF";
+  $("gateH").style.color = liveFams.length ? "var(--red)" : "var(--phos)";
+  $("gateP").textContent = cand ? `Best candidate: ${cand.name} (${cand.family}). A strategy should only go live after all of these:` : "No strategy has results yet. A strategy should only go live after all of these:";
+  const checks = cand ? [[cand.fwdN >= 200, `200+ forward trades (${cand.fwdN})`],[cand.lcb > 0, "profitable with 95% confidence"],[cand.verdict === "ready for review", "arena verdict: ready for review"],[false, "Anthony's sign-off (made in the bot settings, not here)"]]
+                     : [[false,"200+ forward trades"],[false,"profitable with 95% confidence"],[false,"arena verdict: ready for review"],[false,"Anthony's sign-off"]];
+  $("gateChecks").innerHTML = checks.map(([ok,t]) => `<div class="check"><b class="${ok?"pos":"neg"}">${ok?"✓":"✗"}</b><span>${esc(t)}</span></div>`).join("") +
+    (D.checks || []).filter(c => c.agent === "ace").map(c => `<div class="check"><b class="${c.ok?"pos":"neg"}">${c.ok?"✓":"!"}</b><span>${esc(c.msg)}</span></div>`).join("");
+  const cards = [];
+  for (const f of ["btc15","btc60"]){ const st = g[f]; if (!st) { cards.push(`<div class="pos-card"><b>${f.toUpperCase()}</b><span class="empty">bot not loaded</span></div>`); continue; }
+    const p = st.openPosition;
+    cards.push(`<div class="pos-card"><b>${f.toUpperCase()} · ${!st.enabled ? "OFF" : st.dryRun === false ? (st.liveTrading ? "LIVE MONEY" : "OBSERVE") : "PAPER"}</b>
+      <span>${p ? `${esc(p.side)} @ ${Math.round(p.entryPrice*100)}¢ · ${cash(p.sizeUsd)} · ${esc(p.slug || "")}` : "no open position"}</span>
+      <span class="sfam">bet size ${cash(st.betSize)}${st.paperBalance != null ? ` · paper balance ${cash(st.paperBalance)}` : ""}</span></div>`); }
+  const sb = D.sports?.activeBets || [];
+  cards.push(`<div class="pos-card"><b>SPORTS · ${D.sports?.dryRun ? "PAPER" : "LIVE"}${D.sports?.paused ? " · PAUSED" : ""}</b>${sb.length ? sb.map(b => `<span>${esc(b.side || "")} ${b.px != null ? Math.round(b.px*100)+"¢" : ""} ${b.size != null ? cash(b.size) : ""} · ${esc(String(b.q).slice(0,60))}</span>`).join("") : `<span class="empty">no open sports bets</span>`}</div>`);
+  $("positions").innerHTML = cards.join("");
+}
+
+/* ---------- Supervisor rounds: WARDEN walks to whoever it's checking ---------- */
+let wardenIdx = 0;
+function wardenRound(){
+  const w = byId.warden; if (!D || w.path.length) return;
+  const list = (D.checks || []).filter(c => byId[c.agent] || ["lab","council","sports"].includes(c.agent));
+  if (!list.length) return;
+  const ch = list[wardenIdx++ % list.length];
+  const target = byId[ch.agent] || {lab:byId.prism, council:byId.oracle, sports:byId.pitch}[ch.agent];
+  const room = target.path.length ? target.path.at(-1) : target.at;
+  setStatus(w, `checking ${target.name}…`);
+  goTo(w, room, () => {
+    setStatus(w, `${target.name}: ${ch.msg}`, ch.level === "alert");
+    if (!ch.ok && ch.level !== "info") addLog("warden", target.id === "warden" ? ch.msg : `${target.name}: ${ch.msg}`);
+    setTimeout(() => goTo(w, "bridge"), 2500);
+  });
+}
+
+/* ---------- Map ---------- */
+const cv = $("map"), g = cv.getContext("2d"); g.imageSmoothingEnabled = false;
+const bg = document.createElement("canvas"); bg.width = W; bg.height = H; const b = bg.getContext("2d");
+function px(ctx,x,y,w,h,c){ ctx.fillStyle = c; ctx.fillRect(Math.round(x),Math.round(y),w,h); }
+function hexA(h,a){ const n = parseInt(h.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+function drawStatic(){
+  px(b,0,0,W,H,"#020504"); for (let i=0;i<140;i++) px(b,Math.random()*W,Math.random()*H,1,1,`rgba(140,220,170,${Math.random()*.35})`);
+  for (const [p,q] of EDGES){ const A=N[p],B=N[q]; b.strokeStyle="#0b1a12"; b.lineWidth=9; b.beginPath(); b.moveTo(A.x,A.y); b.lineTo(B.x,B.y); b.stroke(); }
+  b.setLineDash([2,3]); for (const [p,q] of EDGES){ const A=N[p],B=N[q]; b.strokeStyle="#173a26"; b.lineWidth=1; b.beginPath(); b.moveTo(A.x,A.y); b.lineTo(B.x,B.y); b.stroke(); } b.setLineDash([]);
+  for (const [k,r] of Object.entries(ROOMS)){ px(b,r.x,r.y,r.w,r.h,"#07100c");
+    for (let yy=r.y+2; yy<r.y+r.h-1; yy+=6) for (let xx=r.x+2; xx<r.x+r.w-1; xx+=6) px(b,xx,yy,5,5,hexA(r.col,.05));
+    b.strokeStyle=hexA(r.col,.85); b.lineWidth=1; b.strokeRect(r.x+.5,r.y+.5,r.w-1,r.h-1); b.strokeStyle=hexA(r.col,.25); b.strokeRect(r.x+2.5,r.y+2.5,r.w-5,r.h-5); furnish(k,r); }
+}
+function furnish(k,r){ const c=r.col;
+  if (k==="data"){ for (let i=0;i<4;i++){ const x=r.x+8+i*24; px(b,x,r.y+14,16,30,"#0c1d26"); for(let j=0;j<6;j++) px(b,x+2,r.y+17+j*4,12,2,hexA(c,.35)); } }
+  if (k==="lab"){ for (let i=0;i<3;i++){ const x=r.x+8+i*30; px(b,x,r.y+16,22,10,"#0d2215"); px(b,x+3,r.y+18,16,6,hexA(c,.35)); px(b,x+9,r.y+26,4,4,"#0d2215"); } px(b,r.x+10,r.y+42,80,8,"#0d2215"); }
+  if (k==="council"){ const cx=r.x+r.w/2, cy=r.y+r.h/2+6; b.fillStyle="#22180a"; b.beginPath(); b.ellipse(cx,cy,30,14,0,0,6.29); b.fill(); b.strokeStyle=hexA(c,.6); b.stroke(); px(b,cx-6,cy-3,12,6,hexA(c,.35)); }
+  if (k==="sports"){ px(b,r.x+10,r.y+16,r.w-20,r.h-28,"#0e2c17"); b.strokeStyle="rgba(200,255,220,.25)"; b.strokeRect(r.x+12.5,r.y+18.5,r.w-25,r.h-32); b.beginPath(); b.moveTo(r.x+r.w/2,r.y+19); b.lineTo(r.x+r.w/2,r.y+r.h-14); b.stroke(); b.beginPath(); b.arc(r.x+r.w/2,r.y+r.h/2+1,7,0,6.29); b.stroke(); }
+  if (k==="bridge"){ px(b,r.x+14,r.y+16,72,12,"#160f24"); for(let i=0;i<6;i++) px(b,r.x+17+i*11,r.y+19,8,6,hexA(c,.4)); px(b,r.x+38,r.y+40,24,16,"#160f24"); }
+  if (k==="den"){ const cx=r.x+r.w/2, cy=r.y+r.h/2+4; b.fillStyle="#2a0d0d"; b.fillRect(cx-28,cy-10,56,22); b.strokeStyle=hexA(c,.6); b.strokeRect(cx-27.5,cy-9.5,55,21); for(let i=0;i<5;i++) px(b,cx-20+i*9,cy-2,6,4,i%2?hexA(C.amber,.6):hexA(c,.6)); }
+}
+function drawBot(a,t){
+  const col = a.offline ? C.grey : TEAMS[a.team].col;
+  const x = Math.round(a.x), y = Math.round(a.y) - (a.moving && !reduce ? (Math.floor(t*8+a.phase)%2) : 0);
+  px(g,x-3,y+4,7,1,"rgba(0,0,0,.6)"); px(g,x-3,y-6,7,6,col); px(g,x-2,y-5,5,2,"#04140a");
+  px(g,a.dir>0?x+1:x-1,y-5,1,1,a.offline?"#1c2a22":a.id==="ace"?C.red:"#e9fff0");
+  px(g,x-2,y,5,3,hexA(col,.75));
+  if (a.moving && !reduce){ const s=Math.floor(t*8+a.phase)%2; px(g,x-2,y+3,1,1+s,col); px(g,x+2,y+3,1,2-s,col); } else { px(g,x-2,y+3,1,1,col); px(g,x+2,y+3,1,1,col); }
+  px(g,x,y-8,1,2,col); if (!a.offline) px(g,x,y-9,1,1,(Math.floor(t*2+a.phase)%2) ? C.amber : col);
+  if (a.offline){ g.fillStyle = C.muted; g.font = "6px Silkscreen, monospace"; g.fillText("zz", x+4, y-12); }
+  if (a.id==="warden") px(g,x-3,y-7,7,1,C.violet);
+  if (a.id==="ace"){ px(g,x-4,y-7,9,1,"#222"); px(g,x-2,y-9,5,2,"#222"); }
+  if (a.alert && Math.floor(t*3)%2){ px(g,x-1,y-15,3,5,C.red); px(g,x-1,y-9,3,1,C.red); }
+  if (sel === a.id){ g.strokeStyle = C.amber; g.lineWidth = 1; g.strokeRect(x-5.5,y-11.5,12,17); }
+}
+function frame(now){
+  const t = now/1000, dt = Math.min(.05,(now-(frame.last||now))/1000); frame.last = now;
+  for (const a of AGENTS) step(a, dt); stepPackets(dt);
+  g.drawImage(bg,0,0);
+  const live = D && ["btc15","btc60"].some(f => D.gambler?.[f]?.enabled && D.gambler?.[f]?.liveTrading && D.gambler?.[f]?.dryRun === false);
+  const openPos = D && (D.gambler?.btc15?.openPosition || D.gambler?.btc60?.openPosition);
+  for (const [k,r] of Object.entries(ROOMS)){
+    const busy = (k==="den" && openPos) || (k==="data" && D?.recorder?.enabled) || (k==="bridge" && byId.warden.alert);
+    if (selRoom===k || busy){ g.strokeStyle = selRoom===k ? C.amber : hexA(r.col,.5+.5*Math.sin(t*4)); g.strokeRect(r.x-.5,r.y-.5,r.w+1,r.h+1); }
+    g.font = "7px Silkscreen, monospace"; g.textBaseline = "top"; px(g,r.x+3,r.y+3,g.measureText(r.name).width+4,9,"#020504"); g.fillStyle = r.col; g.fillText(r.name, r.x+5, r.y+4);
+  }
+  g.font = "7px Silkscreen, monospace";
+  const lw = D?.recorder?.liveWindows || [];
+  const t15 = lw.find(w => w.family==="btc15"), t60 = lw.find(w => w.family==="btc60");
+  g.fillStyle = C.cyan; g.fillText(`15m ${t15 ? t15.ticks : "–"}`, ROOMS.data.x+8, ROOMS.data.y+66); g.fillText(`60m ${t60 ? t60.ticks : "–"}`, ROOMS.data.x+56, ROOMS.data.y+66);
+  g.fillStyle = live ? C.red : C.phos; g.fillText(live ? "LIVE MONEY" : "PAPER / OFF", ROOMS.den.x+34, ROOMS.den.y+ROOMS.den.h-12);
+  for (const p of packets){ if (p.i >= p.pts.length-1) continue; const A=p.pts[p.i],B=p.pts[p.i+1]; const x=A.x+(B.x-A.x)*p.t, y=A.y+(B.y-A.y)*p.t; px(g,x-1,y-1,3,3,hexA(p.col,.35)); px(g,x,y,1,1,p.col); }
+  if (!reduce) for (let i=0;i<EDGES.length;i++){ const [p,q]=EDGES[i],A=N[p],B=N[q]; const f=((t*.25+i*.13)%1); px(g,A.x+(B.x-A.x)*f,A.y+(B.y-A.y)*f,1,1,"rgba(56,242,122,.55)"); }
+  for (const a of [...AGENTS].sort((x,y)=>x.y-y.y)) drawBot(a,t);
+  requestAnimationFrame(frame);
+}
+
+/* ---------- Interaction ---------- */
+let sel = null, selRoom = null;
+function selectAgent(id){ sel = id; selRoom = null; const a = byId[id]; $("mapNote").textContent = `${a.name} · ${a.role} · ${a.status}`;
+  document.querySelectorAll(".agent").forEach(x => x.setAttribute("aria-pressed", x.dataset.agent === id)); }
+function selectRoom(k){ selRoom = k; sel = null; const r = ROOMS[k]; $("mapNote").textContent = `${r.name}: ${r.job}`; document.querySelectorAll(".agent").forEach(x => x.setAttribute("aria-pressed","false")); }
+$("roster").addEventListener("click", e => { const x = e.target.closest(".agent"); if (x) selectAgent(x.dataset.agent); });
+document.querySelector(".foot").addEventListener("click", e => { const x = e.target.closest("button"); if (x) selectRoom(x.dataset.room); });
+cv.addEventListener("click", e => { const r = cv.getBoundingClientRect(), x = (e.clientX-r.left)*W/r.width, y = (e.clientY-r.top)*H/r.height;
+  let best=null, bd=9; for (const a of AGENTS){ const d=Math.hypot(a.x-x,a.y-2-y); if (d<bd){bd=d;best=a;} } if (best) return selectAgent(best.id);
+  for (const [k,rm] of Object.entries(ROOMS)) if (x>=rm.x&&x<=rm.x+rm.w&&y>=rm.y&&y<=rm.y+rm.h) return selectRoom(k); });
+document.querySelector(".tabs").addEventListener("click", e => { const x = e.target.closest("button"); if (!x) return;
+  document.querySelectorAll(".tabs button").forEach(y => y.setAttribute("aria-selected", y === x)); ["strat","vote","bets"].forEach(p => $("p-"+p).hidden = p !== x.dataset.pane); });
+function clock(){ const ms = Math.ceil(Date.now()/900000)*900000 - Date.now(); $("kClock").textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms%60000/1000)).padStart(2,"0")}`; }
+
+drawStatic(); renderRoster(); clock();
+poll(); setInterval(poll, POLL_MS); setInterval(clock, 1000); setInterval(wardenRound, 6000);
+requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
