@@ -17,7 +17,8 @@ import { appendWindow } from "./tape.js";
 
 const GATEWAY = "https://gateway.polymarket.us";
 const TICK_MS = Math.max(2000, Number(process.env.ARENA_TICK_MS || 5000));
-const LISTING_MS = 30_000;                  // refresh the market list this often
+const LISTING_MS = 0;                       // the listing IS the price source now: refresh it every tick
+const BBO_BACKOFF_MS = 60_000;              // after a 429, skip per-market book requests for a minute
 const SETTLE_POLL_MS = 30_000;
 const SETTLE_GIVE_UP_MS = 6 * 60 * 60_000;  // stop chasing a settlement after 6h (outcome stays null)
 
@@ -25,9 +26,10 @@ const live = new Map();      // slug -> window record being filled
 const pending = new Map();   // slug -> { rec, since, lastTry }
 let listing = { ts: 0, markets: [] };
 let closedCache = { ts: 0, rows: [] };
+let bboBlockedUntil = 0;
 let spot = { ts: 0, price: null };
 let timer = null;
-let stats = { started: 0, lastTickAt: 0, enabled: false, ticks: 0, windowsSaved: 0, bboErrors: 0, rateLimited: 0, lastError: null, savedTo: null };
+let stats = { started: 0, lastTickAt: 0, enabled: false, ticks: 0, windowsSaved: 0, bboErrors: 0, rateLimited: 0, quotes: {}, lastError: null, savedTo: null };
 let warnedNoMarkets = false;
 
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -50,6 +52,23 @@ export function familyOf(m) {
   if (Math.abs(mins - 15) <= 2) return "btc15";
   if (Math.abs(mins - 60) <= 5) return "btc60";
   return null;
+}
+
+/**
+ * YES bid/ask from the listing's two market sides. The listing carries a price
+ * for each side (e.g. Yes 0.13, No 0.88). Whichever convention that price uses,
+ * the YES quotes are the Yes price and 1 − No price: the lower is the bid, the
+ * higher the ask. Returns nulls if either side is missing or the result is odd.
+ */
+export function quoteFromListing(m) {
+  const sides = Array.isArray(m?.marketSides) ? m.marketSides : [];
+  const yes = num(sides.find(s => s.long === true)?.price ?? sides.find(s => s.long === true)?.quote?.value);
+  const no  = num(sides.find(s => s.long === false)?.price ?? sides.find(s => s.long === false)?.quote?.value);
+  if (yes == null || no == null || !(yes > 0 && yes < 1 && no > 0 && no < 1)) return { bid: null, ask: null };
+  const a = yes, b = +(1 - no).toFixed(4);
+  const bid = Math.min(a, b), ask = Math.max(a, b);
+  if (ask - bid > 0.2) return { bid: null, ask: null };   // implausibly wide: don't trust it
+  return { bid, ask };
 }
 
 async function refreshListing(now) {
@@ -105,16 +124,22 @@ async function tick() {
       live.set(m.slug, rec);
     }
     if (rec.strike == null) rec.strike = pm.extractSettlementNum(m.assetPriceTerms?.priceToBeat);
-    let bid = null, ask = null;
-    try {
-      const bbo = await pm.getBBO(m.slug);
-      bid = num(bbo?.bid); ask = num(bbo?.ask);
-      if (bbo == null) stats.bboErrors++;
-    } catch (err) {
-      if (/429/.test(err.message || "")) stats.rateLimited++; else stats.bboErrors++;
+    // Prices come from the listing (one request for every market). Fall back to the
+    // per-market book only when the listing has no prices and we're not rate-limited.
+    let { bid, ask } = fresh ? quoteFromListing(m) : { bid: null, ask: null };
+    let src = bid != null ? "L" : null;
+    if (bid == null && now >= bboBlockedUntil) {
+      try {
+        const bbo = await pm.getBBO(m.slug);
+        bid = num(bbo?.bid); ask = num(bbo?.ask); src = bid != null ? "B" : null;
+        if (bbo == null) stats.bboErrors++;
+      } catch (err) {
+        if (/429/.test(err.message || "")) { stats.rateLimited++; bboBlockedUntil = now + BBO_BACKOFF_MS; } else stats.bboErrors++;
+      }
     }
+    if (src) stats.quotes[src] = (stats.quotes[src] || 0) + 1; else stats.quotes.none = (stats.quotes.none || 0) + 1;
     const listYes = fresh ? num(pm.extractYesPrice(m)) : null;
-    rec.ticks.push([now, bid, ask, listYes, px]);
+    rec.ticks.push([now, bid, ask, listYes, px, src]);
   }
 
   // Windows that ended move to the settlement queue.
