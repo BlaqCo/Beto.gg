@@ -127,6 +127,14 @@ td.r,th.r{text-align:right}
 .live-on{font-family:var(--f-pix);font-size:10px;color:var(--void);background:var(--red);padding:1px 6px;border-radius:3px;animation:blink 1.2s steps(2) infinite}
 @keyframes blink{50%{opacity:.4}}
 .why{color:var(--muted);font-size:10.5px}
+.askrow{display:flex;gap:8px;margin:10px 0}
+.askrow input{flex:1;min-width:0;background:#020504;border:1px solid var(--phos-dim);border-radius:6px;padding:8px 10px;color:var(--text);font:inherit;font-size:13px}
+.askrow input:focus{outline:2px solid var(--phos);outline-offset:1px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.askmsg{border:1px solid var(--phos-dim);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12.5px;white-space:pre-wrap}
+.askmsg.you{border-color:var(--phos-faint);color:var(--muted)}
+.askmsg.bad{border-color:var(--red);color:var(--red)}
+.askmsg.confirm{border-color:var(--amber)}
 .pos-card{border:1px solid var(--phos-dim);border-radius:8px;padding:8px 10px;display:grid;gap:2px;font-size:12px}
 .pos-card b{font-family:var(--f-pix);font-weight:400;font-size:10px;letter-spacing:.06em;color:var(--amber)}
 .empty{color:var(--muted);font-size:12px}
@@ -165,6 +173,7 @@ td.r,th.r{text-align:right}
         <button role="tab" aria-selected="true" data-pane="strat">STRATEGIES</button>
         <button role="tab" aria-selected="false" data-pane="vote">VOTE</button>
         <button role="tab" aria-selected="false" data-pane="bets">BETS</button>
+        <button role="tab" aria-selected="false" data-pane="ask">BETOBOT</button>
       </div>
       <div class="pane" id="p-strat" role="tabpanel">
         <p class="rule">Every strategy replayed on the recorded prices, after spread and taker fees. Ranked by the low end of the 95% range of profit per trade. Forward = trades after the strategy was written.</p>
@@ -183,6 +192,16 @@ td.r,th.r{text-align:right}
         </div>
         <div id="positions"></div>
       </div>
+      <div class="pane" id="p-ask" role="tabpanel" hidden>
+        <p class="rule">Ask about results, or change a setting in plain English, the same as BetoBot on the dashboard. Changes need your admin token (ADMIN_TOKEN in Railway); it's asked once and kept in this browser only.</p>
+        <form id="askForm" class="askrow">
+          <label for="askIn" class="sr">Request</label>
+          <input id="askIn" autocomplete="off" placeholder="flat bets to $2, or ask a question">
+          <button class="btn" id="askSend" type="submit">REQUEST</button>
+        </form>
+        <p class="why" id="askCfg"></p>
+        <div id="askOut" aria-live="polite"></div>
+      </div>
     </aside>
   </div>
 
@@ -195,8 +214,18 @@ td.r,th.r{text-align:right}
     <button type="button" data-room="den">GAMBLER'S DEN</button>
   </nav>
 </div>
-<p class="under" id="under">Live from this server's arena, recorder and bots. Read-only: nothing on this page can place, change or cancel a bet.</p>
+<p class="under" id="under">Live from this server's arena, recorder and bots. The BETOBOT tab can change settings (with your admin token); everything else here is read-only.</p>
 
+<script>
+// Admin token for BetoBot changes (stored only in this browser), same as the dashboard.
+async function adminPost(url, body){
+  let tok = ""; try { tok = localStorage.getItem("betoAdminToken") || ""; } catch {}
+  if (!tok) { tok = prompt("Admin token (ADMIN_TOKEN) to make changes:") || ""; try { if (tok) localStorage.setItem("betoAdminToken", tok); } catch {} }
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": tok }, body: JSON.stringify(body) });
+  if (r.status === 401) { try { localStorage.removeItem("betoAdminToken"); } catch {} }
+  return r.json();
+}
+</script>
 <script>
 (() => {
 "use strict";
@@ -487,12 +516,32 @@ cv.addEventListener("click", e => { const r = cv.getBoundingClientRect(), x = (e
   let best=null, bd=9; for (const a of AGENTS){ const d=Math.hypot(a.x-x,a.y-2-y); if (d<bd){bd=d;best=a;} } if (best) return selectAgent(best.id);
   for (const [k,rm] of Object.entries(ROOMS)) if (x>=rm.x&&x<=rm.x+rm.w&&y>=rm.y&&y<=rm.y+rm.h) return selectRoom(k); });
 document.querySelector(".tabs").addEventListener("click", e => { const x = e.target.closest("button"); if (!x) return;
-  document.querySelectorAll(".tabs button").forEach(y => y.setAttribute("aria-selected", y === x)); ["strat","vote","bets"].forEach(p => $("p-"+p).hidden = p !== x.dataset.pane); });
+  document.querySelectorAll(".tabs button").forEach(y => y.setAttribute("aria-selected", y === x)); ["strat","vote","bets","ask"].forEach(p => $("p-"+p).hidden = p !== x.dataset.pane); });
 function clock(){ const ms = Math.ceil(Date.now()/900000)*900000 - Date.now(); $("kClock").textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms%60000/1000)).padStart(2,"0")}`; }
 
 drawStatic(); renderRoster(); clock();
 poll(); setInterval(poll, POLL_MS); setInterval(clock, 1000); setInterval(wardenRound, 6000);
 requestAnimationFrame(frame);
+// ── BetoBot tab ──
+function askAdd(text, cls){ const d = document.createElement("div"); d.className = "askmsg " + (cls || ""); d.textContent = text; $("askOut").prepend(d); }
+async function askCfg(){
+  try { const c = (await (await fetch("/api/config")).json()).config || {};
+    $("askCfg").textContent = `Now: sports $${c.BET_SIZE} · BTC15 $${c.BTC15_BET_SIZE} · BTC60 $${c.BTC60_BET_SIZE} · ${c.PAUSED ? "sports PAUSED" : "sports running"}`;
+  } catch { $("askCfg").textContent = ""; }
+}
+$("askForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const text = $("askIn").value.trim(); if (!text) return;
+  $("askSend").disabled = true; askAdd(text, "you");
+  try {
+    const d = await adminPost("/api/command", { text });
+    askAdd(d.message || (d.ok ? "Done." : "Request failed."), !d.ok ? "bad" : d.kind === "confirm" ? "confirm" : "");
+    if (d.ok) { $("askIn").value = ""; askCfg(); }
+    $("askIn").placeholder = d.kind === "confirm" ? "type yes to confirm, or cancel" : "flat bets to $2, or ask a question";
+  } catch { askAdd("Couldn't reach the server.", "bad"); }
+  $("askSend").disabled = false; $("askIn").focus();
+});
+askCfg();
 })();
 </script>
 
