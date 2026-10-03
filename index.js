@@ -766,7 +766,13 @@ async function getArenaLeaderboard() {
     const { strategies, errors } = await loadStrategies();
     const windows = (await Promise.all(tape.FAMILIES.map(f => tape.loadWindows(f)))).flat();
     const out = windows.length ? scoreAll(strategies, windows) : { rows: [], windows: {}, strategies: strategies.length };
-    _arenaCache = { data: { ...out, loadErrors: errors }, ts: Date.now(), busy: null };
+    // Reality check: the bots' own BTC trades replayed through the arena's fill model.
+    let reality = null;
+    try {
+      const [{ compareTrades }, tracker] = await Promise.all([import("./arena/reality.js"), import("./tracker.js")]);
+      reality = compareTrades(await tracker.getTrades(), windows);
+    } catch (e) { reality = { error: e.message, rows: [], summary: null }; }
+    _arenaCache = { data: { ...out, loadErrors: errors, reality }, ts: Date.now(), busy: null };
   })().catch(e => { _arenaCache.busy = null; throw e; });
   await _arenaCache.busy;
   return _arenaCache.data;
@@ -776,7 +782,12 @@ app.get("/api/arena/status", async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/arena/leaderboard", async (req, res) => {
-  try { const d = await getArenaLeaderboard(); res.json({ ...d, ageMs: Date.now() - _arenaCache.ts }); }
+  try { const { reality, ...d } = await getArenaLeaderboard(); res.json({ ...d, reality: reality?.summary ?? null, ageMs: Date.now() - _arenaCache.ts }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Bot trades vs the arena's replay of the same trades (is the simulator realistic?)
+app.get("/api/arena/reality", async (req, res) => {
+  try { res.json((await getArenaLeaderboard()).reality || { rows: [], summary: null }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -831,6 +842,10 @@ app.get("/api/colony", async (req, res) => {
     }
     const strategies = lb?.strategies || 0;
     check("lab", !(lb?.loadErrors || []).length, (lb?.loadErrors || []).length ? `${lb.loadErrors.length} strategy file(s) failed to load` : `${strategies} strategies loaded`);
+    const rs = lb?.reality?.summary;
+    out.reality = rs || null;
+    if (rs) check("lab", rs.label !== "arena too optimistic", `reality check: ${rs.msg}`, rs.label === "arena too optimistic" ? "alert" : rs.label === "matches" ? "ok" : "info");
+    else if (lb?.reality?.error) check("lab", false, `reality check failed: ${lb.reality.error}`);
     const ag = out.agents;
     check("lab", !!ag?.enabled, !ag?.enabled ? "AI agents off: set AGENTS_ENABLED=true" : ag.lastError ? `AI agents error: ${ag.lastError}` : ag.lastRunAt ? `AI agents ran ${Math.round((Date.now() - ag.lastRunAt) / 60000)}m ago; next in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m` : `AI agents start in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m`, ag?.enabled ? (ag.lastError ? "warn" : "ok") : "info");
     const sr = out.sportsRecorder;

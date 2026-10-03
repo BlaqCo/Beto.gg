@@ -299,7 +299,7 @@ function apply(){
   const labCheck = checksFor("lab")[0];
   const tapeN = Object.values(arena.windows || {}).reduce((a,b)=>a+b,0);
   const retired = specs.filter(sp => sp.status === "retired").length;
-  setStatus(byId.prism, arena.error ? `arena error: ${arena.error}` : tapeN ? `scored ${arena.strategies} strategies on ${tapeN.toLocaleString()} windows${retired ? ` · ${retired} retired` : ""} · ${Math.round((arena.ageMs||0)/60000)}m ago` : (labCheck?.msg || "") + " · waiting for recorded windows", !!arena.error || (labCheck && !labCheck.ok));
+  setStatus(byId.prism, arena.error ? `arena error: ${arena.error}` : tapeN ? `scored ${arena.strategies} strategies on ${tapeN.toLocaleString()} windows${retired ? ` · ${retired} retired` : ""} · ${Math.round((arena.ageMs||0)/60000)}m ago${D.reality ? ` · reality: ${D.reality.label}` : ""}` : (labCheck?.msg || "") + " · waiting for recorded windows", !!arena.error || (labCheck && !labCheck.ok) || D.reality?.label === "arena too optimistic");
   // Council
   const lastVote = lastLine("ORACLE");
   setStatus(byId.oracle, D.votes?.length ? `${D.votes.length} recent ballots${lastVote ? " · " + lastVote.slice(8) : ""}` : (checksFor("council")[0]?.msg || "no votes yet"));
