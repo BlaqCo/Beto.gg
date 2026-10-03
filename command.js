@@ -55,6 +55,8 @@ const toNum = raw => { const n = parseFloat(raw); return Number.isFinite(n) ? n 
 const onOff = txt => /\b(on|enable[d]?|turn on|start|resume|yes|true)\b/i.test(txt) ? true
               : /\b(off|disable[d]?|turn off|stop|no|false)\b/i.test(txt) ? false : null;
 
+const allStakes = v => ({ BET_SIZE: v, BTC15_BET_SIZE: v, BTC60_BET_SIZE: v });
+
 /** Each rule: a matcher over the phrase, and what config keys it sets. */
 const RULES = [
   // ── band written as a range: "edge 60-70", "band 60 to 70", "57%-68%"
@@ -62,9 +64,10 @@ const RULES = [
     apply: m => ({ FAV_MIN: toPrice(m[1]), FAV_MAX: toPrice(m[2]) }) },
 
   // ── stake
+  // A stake applies to every bot: sports, BTC15 and BTC60 all bet the same flat amount.
   { re: /\b(?:flat\s*bets?|bet\s*size|bet\s*amount|stake|wager|bets?)\b[^0-9$]{0,18}\$?\s*(\d+(?:\.\d+)?)/i,
-    apply: m => ({ BET_SIZE: toNum(m[1]) }) },
-  { re: /\$\s*(\d+(?:\.\d+)?)\s*(?:flat\s*)?bets?\b/i, apply: m => ({ BET_SIZE: toNum(m[1]) }) },
+    apply: m => allStakes(toNum(m[1])) },
+  { re: /\$\s*(\d+(?:\.\d+)?)\s*(?:flat\s*)?bets?\b/i, apply: m => allStakes(toNum(m[1])) },
 
   // ── slots
   { re: /\b(?:bet\s*)?(?:slots?|concurrent|positions?|max\s*open)\b[^0-9]{0,18}(\d{1,4})/i,
