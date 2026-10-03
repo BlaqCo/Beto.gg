@@ -228,12 +228,12 @@ const TEAMS = {data:{label:"DATA",col:C.cyan},build:{label:"BUILD",col:C.phos},v
 const AGENTS = [
   {id:"scout15",name:"SCOUT-15",team:"data",  home:"data",   role:"The recorder, on BTC 15-minute windows"},
   {id:"scout60",name:"SCOUT-60",team:"data",  home:"data",   role:"The recorder, on BTC hourly windows"},
-  {id:"forge",  name:"FORGE",   team:"build", home:"lab",    role:"AI strategy writer (joins when the scheduled agents are set up)", future:true},
-  {id:"vector", name:"VECTOR",  team:"build", home:"lab",    role:"AI strategy writer (joins when the scheduled agents are set up)", future:true},
+  {id:"forge",  name:"FORGE",   team:"build", home:"lab",    role:"AI agent: writes BTC strategies from price patterns and timing", future:true},
+  {id:"vector", name:"VECTOR",  team:"build", home:"lab",    role:"AI agent: writes BTC strategies from spot vs strike", future:true},
   {id:"prism",  name:"PRISM",   team:"build", home:"lab",    role:"The arena: replays and scores every strategy"},
-  {id:"oracle", name:"ORACLE",  team:"vote",  home:"council",role:"Counts the Council's ballots"},
+  {id:"oracle", name:"ORACLE",  team:"vote",  home:"council",role:"Chairs the Council: every agent votes on the next forward-test focus"},
   {id:"pitch",  name:"PITCH",   team:"sports",home:"sports", role:"The sports bot"},
-  {id:"dugout", name:"DUGOUT",  team:"sports",home:"sports", role:"Sports strategy tester (needs a sports recorder first)", future:true},
+  {id:"dugout", name:"DUGOUT",  team:"sports",home:"sports", role:"AI agent + sports recorder: records pre-game prices, writes sports strategies", future:true},
   {id:"warden", name:"WARDEN",  team:"super", home:"bridge", role:"Supervisor: runs health and safety checks on everything"},
   {id:"ace",    name:"ACE",     team:"gamble",home:"den",    role:"The Gambler: the BTC15 and BTC60 betting bots"}
 ];
@@ -287,24 +287,31 @@ function apply(){
   }
   if (prev && (D.recorder?.windowsSaved || 0) > (prev.recorder?.windowsSaved || 0)) sendPacket("data","lab",C.cyan);
   if (prev && (D.recorder?.ticks || 0) > (prev.recorder?.ticks || 0) && Math.random() < .5) sendPacket("data","hubW",C.cyan);
-  // Builders
+  // Builders: the AI agents (recipes they wrote + their latest log line)
+  const ag = D.agents || {}, specs = D.specs || [];
+  const lastLine = name => [...(ag.lastResult?.lines || [])].reverse().find(l => l.startsWith(name + ":"));
   for (const id of ["forge","vector"]){
-    const mine = arena.rows.filter(r => (r.author || "").toUpperCase() === byId[id].name);
-    byId[id].offline = !mine.length;
-    setStatus(byId[id], mine.length ? `${mine.length} strategy result(s) on the board` : "not connected yet: joins with the scheduled AI agents");
+    const a = byId[id], mine = specs.filter(sp => sp.author === a.name), act = mine.filter(sp => sp.status === "active").length;
+    a.offline = !ag.enabled && !mine.length;
+    const ll = lastLine(a.name);
+    setStatus(a, !ag.enabled ? (mine.length ? `${mine.length} recipe(s) on file; agents switched off` : "not connected: set AGENTS_ENABLED=true") : ll ? ll.slice(a.name.length + 2) : `${act} active recipe(s) · next run in ${Math.max(0, Math.round((ag.nextRunAt - Date.now())/60000))}m`, ll && /error|rejected/.test(ll));
   }
   const labCheck = checksFor("lab")[0];
   const tapeN = Object.values(arena.windows || {}).reduce((a,b)=>a+b,0);
-  setStatus(byId.prism, arena.error ? `arena error: ${arena.error}` : tapeN ? `scored ${arena.strategies} strategies on ${tapeN.toLocaleString()} windows · ${Math.round((arena.ageMs||0)/60000)}m ago` : (labCheck?.msg || "") + " · waiting for recorded windows", !!arena.error || (labCheck && !labCheck.ok));
+  const retired = specs.filter(sp => sp.status === "retired").length;
+  setStatus(byId.prism, arena.error ? `arena error: ${arena.error}` : tapeN ? `scored ${arena.strategies} strategies on ${tapeN.toLocaleString()} windows${retired ? ` · ${retired} retired` : ""} · ${Math.round((arena.ageMs||0)/60000)}m ago` : (labCheck?.msg || "") + " · waiting for recorded windows", !!arena.error || (labCheck && !labCheck.ok));
   // Council
-  setStatus(byId.oracle, D.votes?.length ? `${D.votes.length} recent ballots` : "no voting agents connected yet");
-  byId.oracle.offline = !D.votes?.length;
+  const lastVote = lastLine("ORACLE");
+  setStatus(byId.oracle, D.votes?.length ? `${D.votes.length} recent ballots${lastVote ? " · " + lastVote.slice(8) : ""}` : (checksFor("council")[0]?.msg || "no votes yet"));
+  byId.oracle.offline = !ag.enabled && !D.votes?.length;
   // Sports
   const sc = checksFor("sports")[0];
   const sst = sp.stats ? ` · ${sp.stats.totalBets ?? 0} bets, ${money(sp.stats.pnl ?? 0)}` : "";
   setStatus(byId.pitch, (sc ? sc.msg : "unknown") + sst, sc && !sc.ok);
   byId.pitch.offline = !sp.loaded;
-  setStatus(byId.dugout, "needs a sports recorder before it can test anything");
+  const dc = checksFor("dugout")[0], dSpecs = specs.filter(sp => sp.author === "DUGOUT").length, dl = lastLine("DUGOUT");
+  byId.dugout.offline = !(dc && dc.ok) && !dSpecs;
+  setStatus(byId.dugout, dl ? dl.slice(8) : dc ? dc.msg + (dSpecs ? ` · ${dSpecs} recipe(s)` : "") : "sports recorder status unknown");
   // Gambler
   const aceChecks = checksFor("ace"), alert = aceChecks.find(c => c.level === "alert");
   const open = [g.btc15?.openPosition && ["btc15", g.btc15.openPosition], g.btc60?.openPosition && ["btc60", g.btc60.openPosition]].filter(Boolean);
@@ -321,6 +328,9 @@ function apply(){
   renderAll();
 }
 function guessAgent(msg){
+  const am = /\[agents\]\s*(FORGE|VECTOR|DUGOUT|PRISM|ORACLE|WARDEN)/.exec(msg);
+  if (am) return am[1].toLowerCase();
+  if (/🏟/.test(msg)) return "dugout";
   if (/\[arena\]|🎞/.test(msg)) return /btc60/.test(msg) ? "scout60" : "scout15";
   if (/BTC60/.test(msg)) return "ace";
   if (/BTC15|₿/.test(msg)) return "ace";
@@ -361,7 +371,7 @@ function renderAll(){
   $("lbMeta").textContent = arena.from ? `Tape: ${new Date(arena.from).toLocaleString()} → ${new Date(arena.to).toLocaleString()} · ${JSON.stringify(arena.windows)}` : "";
   // votes
   const V = D.votes || [];
-  if (!V.length) $("votes").innerHTML = `<p class="empty">No votes yet. The Council fills up when the scheduled AI agents are connected. Each one reads this leaderboard, proposes strategies and casts a ballot.</p>`;
+  if (!V.length) $("votes").innerHTML = `<p class="empty">No votes yet. The Council votes once at least two strategies have 30+ trades.</p>`;
   else {
     const rounds = {}; for (const v of V) (rounds[v.round] ||= []).push(v);
     $("votes").innerHTML = Object.entries(rounds).map(([round, vs]) => {

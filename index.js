@@ -783,7 +783,7 @@ app.get("/api/arena/leaderboard", async (req, res) => {
 // ── Colony: one read-only snapshot for the /colony station page ──
 // Maps each "agent" on the page to a real part of the system and runs the
 // Supervisor's checks server-side, so the page shows facts, not animation.
-const COLONY_LOG_RE = /\[arena\]|\[BTC15|\[BTC60|BTC15 window|BTC60 window|Entry rule fired|TP hit|SL hit|HARD STOP|resolved via|config updated|settled|WON|LOST|PAPER|🎯|🛑|🎞/;
+const COLONY_LOG_RE = /\[agents\]|🏟|🤖|\[arena\]|\[BTC15|\[BTC60|BTC15 window|BTC60 window|Entry rule fired|TP hit|SL hit|HARD STOP|resolved via|config updated|settled|WON|LOST|PAPER|🎯|🛑|🎞/;
 app.get("/api/colony", async (req, res) => {
   const out = { now: Date.now(), checks: [] };
   const check = (agent, ok, msg, level) => out.checks.push({ agent, ok, level: level || (ok ? "ok" : "warn"), msg });
@@ -809,6 +809,9 @@ app.get("/api/colony", async (req, res) => {
     try { stats = await fullStats(null); } catch {}
     out.sports = { loaded: !!sportsBot?.runScanCycle, paused: cfg.PAUSED ?? null, dryRun: DRY_RUN, stats: stats?.sports || null,
                    activeBets: (state.getAllActiveBets?.() || []).slice(0, 8).map(b => ({ q: b.marketQuestion || b.market || b.id, side: b.side ?? null, px: b.entryPrice ?? null, size: b.betSize ?? null, placedAt: b.placedAt ?? null })) };
+    try { out.sportsRecorder = (await import("./arena/sports-recorder.js")).sportsRecorderStatus(); } catch { out.sportsRecorder = null; }
+    try { out.agents = (await import("./arena/agents.js")).agentsStatus(); } catch { out.agents = null; }
+    try { out.specs = (await (await import("./arena/specs-store.js")).listSpecs()).map(r => ({ name: r.spec.name, family: r.spec.family, author: r.author, status: r.status, created: r.created, note: r.note })); } catch { out.specs = []; }
     out.votes = [];
     try { out.votes = await (await import("./arena/votes.js")).recentVotes(10); } catch {}
     out.log = uiLog.filter(l => COLONY_LOG_RE.test(l.msg)).slice(0, 40);
@@ -828,7 +831,11 @@ app.get("/api/colony", async (req, res) => {
     }
     const strategies = lb?.strategies || 0;
     check("lab", !(lb?.loadErrors || []).length, (lb?.loadErrors || []).length ? `${lb.loadErrors.length} strategy file(s) failed to load` : `${strategies} strategies loaded`);
-    check("council", out.votes.length > 0, out.votes.length ? `${out.votes.length} recent votes` : "no voting agents connected yet", "info");
+    const ag = out.agents;
+    check("lab", !!ag?.enabled, !ag?.enabled ? "AI agents off: set AGENTS_ENABLED=true" : ag.lastError ? `AI agents error: ${ag.lastError}` : ag.lastRunAt ? `AI agents ran ${Math.round((Date.now() - ag.lastRunAt) / 60000)}m ago; next in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m` : `AI agents start in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m`, ag?.enabled ? (ag.lastError ? "warn" : "ok") : "info");
+    const sr = out.sportsRecorder;
+    check("dugout", !!sr?.enabled, sr?.enabled ? `sports recorder: ${sr.tracked} upcoming games tracked, ${sr.windowsSaved} saved, ${sr.awaitingSettlement} awaiting results` : "sports recorder off: set ARENA_SPORTS=true", sr?.enabled ? "ok" : "info");
+    check("council", out.votes.length > 0, out.votes.length ? `${out.votes.length} recent votes` : ag?.enabled ? "no vote yet: needs 2 strategies with 30+ trades" : "no voting agents connected yet", "info");
     check("sports", out.sports.loaded, out.sports.loaded ? (cfg.PAUSED ? "sports bot loaded, paused" : "sports bot running") : `sports bot not loaded: ${sportsLoadError || "unknown"}`);
     for (const [fam, st] of [["btc15", btc15], ["btc60", btc60]]) {
       if (!st) { check("ace", false, `${fam} bot not loaded`); continue; }
@@ -848,6 +855,14 @@ app.get("/colony", (req, res) => {
   res.sendFile(path.join(__dirname, "colony.html"));
 });
 
+app.get("/api/arena/specs", async (req, res) => {
+  try { res.json(await (await import("./arena/specs-store.js")).listSpecs()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/arena/agents", async (req, res) => {
+  try { res.json((await import("./arena/agents.js")).agentsStatus()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get("/api/arena/tape", async (req, res) => {
   try {
     const tape = await import("./arena/tape.js");
@@ -1086,6 +1101,15 @@ async function loadBots() {
   } catch (err) {
     console.log("🎞 Arena recorder not loaded:", err.message);
   }
+  try { (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
+  catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
+  // AI agents: add strategy recipes and vote. Off unless AGENTS_ENABLED=true.
+  try {
+    (await import("./arena/agents.js")).startAgents({
+      getLeaderboard: () => getArenaLeaderboard(),
+      onChange: () => { _arenaCache.ts = 0; _arenaCache.data = null; },
+    });
+  } catch (err) { console.log("🤖 AI agents not loaded:", err.message); }
 
   // Latency lab — measurement only, off unless LATENCY_LAB=true
   try {

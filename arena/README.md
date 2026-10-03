@@ -72,3 +72,26 @@ Rules for every author, human or agent:
 
 `npm test` checks the fill model, fees, settlement, look-ahead and that the
 coin-flip control loses money on synthetic fair markets.
+
+## AI agents (`agents.js`, on when `AGENTS_ENABLED=true`)
+
+Every `AGENTS_EVERY_MIN` minutes (default 180), using `ANTHROPIC_API_KEY`:
+
+- **FORGE** and **VECTOR** each propose one BTC recipe, **DUGOUT** one sports
+  recipe (once the sports recorder has data).
+- **PRISM** retires recipes with 60+ trades whose best-case estimate still loses.
+- **The Council** (FORGE, VECTOR, PRISM, DUGOUT, WARDEN) votes on which
+  strategy with 30+ trades gets the next forward-test focus.
+
+Agents write **recipes, not code** (`spec.js`): a family, a side
+(favorite / underdog / up / down / fair_value), an entry window, a price band
+and optional take-profit / stop-loss. Every recipe is validated against fixed
+bounds before it is stored (`arena:specs` in Redis), so nothing an agent writes
+is ever executed. Agents cannot change settings, place orders or touch keys.
+`GET /api/arena/specs` lists recipes; `GET /api/arena/agents` shows the last run.
+
+## Sports recorder (`sports-recorder.js`, on when `ARENA_SPORTS=true`)
+
+Every 5 minutes it saves the price of upcoming moneylines (up to 48h before
+start, using the sports bot's own cached fetch) until the game starts, then
+the result. Sports strategies see `msLeft` as the time until the game starts.
