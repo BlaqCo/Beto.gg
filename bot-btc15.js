@@ -31,7 +31,7 @@ import { getConfig } from "./config.js";
  *
  * ENTRY RULE: same shape as BTC60's — bet the favored side within a price
  * band, only in the final stretch before the window closes — but scaled
- * to a 15-minute window: the last 4 minutes, not the last 15. Real,
+ * to a 15-minute window: from 12:30 in (the last 2:30), not the last 15. Real,
  * user-specified strategy, not a placeholder; still unvalidated against
  * historical data until enough real trades exist to check it against.
  */
@@ -635,7 +635,9 @@ const ENTRY_EDGE_MIN = Number(process.env.BTC15_ENTRY_EDGE_MIN || 0.50);
 // own — most of these trades ride to natural expiry instead, sidestepping
 // the TP-vs-hard-stop dollar-size race that's been the main problem so
 // far, rather than trying to win that race with a better threshold.
-const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 3 * 60_000);
+// Enter at 12:30 into the window (2:30 left), on whichever side is
+// trending (priced above 50¢), Up or Down.
+const ENTRY_LATE_WINDOW_MS = Number(process.env.BTC15_ENTRY_LATE_WINDOW_MS || 150_000);
 // Ceiling removed too, per the same "no matter what edge" request —
 // back to 1.0, no price-band restriction on either side anymore.
 const ENTRY_EDGE_MAX = Number(process.env.BTC15_ENTRY_EDGE_MAX || 1.0);
@@ -780,7 +782,7 @@ export async function runBTC15ScanCycle() {
     // 3-min window). Reports the real reason now instead of guessing.
     const endsInMs = market.endDate ? new Date(market.endDate).getTime() - Date.now() : null;
     const reason = (endsInMs == null || endsInMs < 0 || endsInMs > ENTRY_LATE_WINDOW_MS)
-      ? `outside the ${(ENTRY_LATE_WINDOW_MS/60000)}min entry window (${endsInMs != null ? Math.round(endsInMs/60000) : "?"}min remaining)`
+      ? `outside the ${(ENTRY_LATE_WINDOW_MS/60000)}min entry window (${endsInMs != null ? (endsInMs/60000).toFixed(1) : "?"}min remaining)`
       : `price outside live band ${ENTRY_EDGE_MIN}-${ENTRY_EDGE_MAX}`;
     console.log(`  🔍 [BTC15] entry rejected — ${reason}, yesPrice=${market.outcomePrices?.[0]}, endDate=${market.endDate}, now=${new Date().toISOString()}`);
     return;
