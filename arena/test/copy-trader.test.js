@@ -56,3 +56,23 @@ test("normTrade: reads the public trade shape, seconds or ms", () => {
   const t = ct.normTrade({ proxyWallet: "0xABC", side: "BUY", outcomeIndex: 1, size: "12", price: "0.3", timestamp: 1791385200, transactionHash: "0x1", pseudonym: "Fox" }, ["Up", "Down"]);
   assert.equal(t.wallet, "0xabc"); assert.equal(t.outcome, "Down"); assert.equal(t.size, 12); assert.equal(t.t, 1791385200000); assert.equal(t.name, "Fox");
 });
+
+test("newTrades: reads only unseen trades whether the feed is newest-first or oldest-first", async () => {
+  for (const order of ["desc", "asc"]) {
+    let all = Array.from({ length: 1200 }, (_, i) => ({ proxyWallet: "0x" + (i % 7), side: "BUY", outcome: "Up", size: 1, price: 0.5, timestamp: 1000 + i, transactionHash: "0x" + i }));
+    ct._setFetch(async url => {
+      const u = new URL(url), lim = +u.searchParams.get("limit"), off = +u.searchParams.get("offset");
+      const rows = order === "desc" ? [...all].reverse() : all;
+      return { ok: true, json: async () => rows.slice(off, off + lim) };
+    });
+    const cur = { market: { conditionId: "c", outcomes: ["Up", "Down"] }, seen: new Set(), order: null, nextOffset: 0 };
+    const first = await ct.newTrades(cur);
+    assert.equal(first.length, 1200, `${order}: first read gets everything`);
+    for (const t of first) cur.seen.add(t.id);
+    all = all.concat(Array.from({ length: 30 }, (_, i) => ({ proxyWallet: "0xnew", side: "BUY", outcome: "Down", size: 2, price: 0.4, timestamp: 5000 + i, transactionHash: "0xn" + i })));
+    const next = await ct.newTrades(cur);
+    assert.equal(next.length, 30, `${order}: second read gets only the 30 new trades`);
+    assert.equal(cur.order, order);
+  }
+  ct._setFetch((...a) => fetch(...a));
+});

@@ -257,14 +257,52 @@ export function settlePaper(rec) {
   persistBook();
 }
 
+/**
+ * Trades in the live window we haven't seen yet. The public feed's sort order isn't
+ * documented, so it's detected: newest-first pages forward until it reaches trades it
+ * has seen; oldest-first keeps an offset and reads on from where it stopped.
+ */
+export async function newTrades(cur) {
+  const PAGE = 500, MAX_PAGES = 8, out = [];
+  if (cur.order === "asc") {
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const page = await fetchTrades(cur.market, { limit: PAGE, offset: cur.nextOffset });
+      cur.nextOffset += page.length;
+      out.push(...page);
+      if (page.length < PAGE) break;
+    }
+  } else {
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const page = await fetchTrades(cur.market, { limit: PAGE, offset: i * PAGE });
+      if (!cur.order && page.length > 1) {
+        const a = page[0].t, b = page[page.length - 1].t;
+        if (a !== b) cur.order = a < b ? "asc" : "desc";
+        if (cur.order === "asc") { cur.nextOffset = page.length; out.push(...page); if (page.length === PAGE) return out.concat(await newTrades(cur)); return out; }
+      }
+      const unseen = page.filter(t => !cur.seen.has(t.id));
+      out.push(...unseen);
+      if (page.length < PAGE || unseen.length < page.length) break;   // reached what we already have
+    }
+  }
+  return out.filter(t => !cur.seen.has(t.id));
+}
+
+function windowSummary(family, c) {
+  const d = c.diag;
+  const order = c.order === "asc" ? "oldest-first" : c.order === "desc" ? "newest-first" : "order unknown";
+  emit("window", `${family.toUpperCase()} ${new Date(c.start).toISOString().slice(11, 16)}Z closed: ${d.trades} trades seen (feed ${order}), ` +
+    `${d.smartBuys} buys by smart wallets${d.smartSmall ? ` (${d.smartSmall} under $${CFG.minSignalUsd}, ignored)` : ""}, ${d.copies} copied`, { family });
+}
+
 async function pollLive(family, now) {
   const start = windowStart(family, now);
   const key = `${family}:${start}`;
   let cur = live[family];
   if (!cur || cur.key !== key) {
-    if (cur) toScore.unshift({ family, start: cur.start, tries: 0 });   // score the window that just closed first
+    if (cur) { toScore.unshift({ family, start: cur.start, tries: 0 }); windowSummary(family, cur); }   // score the window that just closed first
     const market = await findMarket(family, start);
-    cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 }, first: true, skips: new Set() };
+    cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 },
+      skips: new Set(), order: null, nextOffset: 0, newest: 0, warned: false, diag: { trades: 0, smartBuys: 0, smartSmall: 0, copies: 0 } };
     emit("window", market ? `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: watching global market ${market.slug}`
       : `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: global market not found yet (tried ${globalSlugs(family, start).join(", ")})`, { family });
   }
@@ -273,23 +311,29 @@ async function pollLive(family, now) {
     if (!cur.market) { emit("poll", `${family.toUpperCase()}: global market not found yet${stats.lastError ? ` (${stats.lastError})` : ""}`, { family, n: 0 }); return; }
     emit("window", `found global ${family.toUpperCase()} market ${cur.market.slug}`, { family });
   }
-  const trades = await fetchTrades(cur.market, { limit: 300 });
-  const fresh = trades.filter(t => !cur.seen.has(t.id)).sort((a, b) => a.t - b.t);
-  for (const t of fresh) cur.seen.add(t.id);
-  if (cur.first) { cur.first = false; if (fresh.length) emit("poll", `${family.toUpperCase()}: ${fresh.length} trades already in this window`, { family }); }
+  const fresh = (await newTrades(cur)).sort((a, b) => a.t - b.t);
+  for (const t of fresh) { cur.seen.add(t.id); cur.newest = Math.max(cur.newest, t.t); }
+  cur.diag.trades += fresh.length;
+  // A busy window whose newest trade we see is minutes old means we're reading the wrong end of the feed.
+  if (!cur.warned && now - start > 4 * 60_000 && cur.diag.trades > 50 && now - cur.newest > 3 * 60_000) {
+    cur.warned = true;
+    emit("error", `${family.toUpperCase()}: newest trade seen is ${Math.round((now - cur.newest) / 60_000)} min old, the live trade feed may be lagging`, { family });
+  }
   for (const t of fresh) {
     if (t.side !== "BUY") continue;
     const amt = t.size * t.price;
     cur.flow[t.outcome] += amt;
     const s = wallets.get(t.wallet);
     const j = judge(s, now);
-    if (!j.smart || amt < CFG.minSignalUsd) continue;
+    if (!j.smart) continue;
+    cur.diag.smartBuys++;
+    if (amt < CFG.minSignalUsd) { cur.diag.smartSmall++; continue; }
     cur.smartFlow[t.outcome] += amt;
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
     const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
     const holding = book.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
     const d = decideCopy({ trade: t, us, holding, now });
-    if (d.copy) openPaper({ family, trade: t, us, price: d.price, now, judged: j });
+    if (d.copy) { cur.diag.copies++; openPaper({ family, trade: t, us, price: d.price, now, judged: j }); }
     else if (!holding && !cur.skips.has(d.why)) { cur.skips.add(d.why); emit("skip", `not copying: ${d.why}`, { family }); }
   }
   emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
