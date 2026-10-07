@@ -35,7 +35,7 @@ export const CFG = {
   maxBestShare: env("COPY_MAX_BEST_SHARE", 0.5),// biggest single window as a share of total profit
   activeMs: env("COPY_ACTIVE_HOURS", 24) * 3600_000,
   minSignalUsd: env("COPY_MIN_SIGNAL_USD", 20), // ignore their dust trades
-  maxPrice: env("COPY_MAX_PRICE", 0.9),         // don't pay more than this on US
+  maxPrice: env("COPY_MAX_PRICE", 0.95),        // don't pay more than this on US
   maxSlippage: env("COPY_MAX_SLIPPAGE", 0.1),   // US ask may be at most this much worse than their price
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
   backfill15: env("COPY_BACKFILL_BTC15", 96),   // windows to score on startup (96 = one day)
@@ -406,6 +406,32 @@ export function copyStatus(now = Date.now()) {
   };
 }
 export function recentEvents(n = 120) { return events.slice(-n); }
+
+/**
+ * SHADOW's settled paper copies as /colony leaderboard rows, one per family, in the
+ * arena's units ($10 stake, P&L per trade after fees). Every copy is a live trade, so
+ * all of them count as forward. Verdicts follow the arena's rules without the
+ * tape-only checks (halves, baseline).
+ */
+export function leaderboardRows() {
+  const out = [];
+  for (const family of ["btc15", "btc60"]) {
+    const trades = book.closed.filter(p => p.family === family && p.won != null);
+    const n = trades.length;
+    const pnl = trades.reduce((a, t) => a + t.pnl, 0), mean = n ? pnl / n : null;
+    const sd = n > 1 ? Math.sqrt(trades.reduce((a, t) => a + (t.pnl - mean) ** 2, 0) / (n - 1)) : null;
+    const se = sd != null ? sd / Math.sqrt(n) : null;
+    const lcb = se != null ? mean - 1.96 * se : null, ucb = se != null ? mean + 1.96 * se : null;
+    const verdict = n < 30 ? "too early" : ucb < 0 ? "losing" : lcb > 0 ? "promising" : "unproven";
+    const why = n < 30 ? `${n} live paper copies so far; needs 30 to say anything`
+      : verdict === "losing" ? "even the optimistic estimate loses money per copy"
+      : verdict === "promising" ? "profitable so far with 95% confidence; keep watching before trusting it"
+      : "no clear edge yet; the range still includes losing";
+    out.push({ id: `shadow-copy-${family}`, name: "shadow-copy", family, author: "SHADOW", created: stats.startedAt ? new Date(stats.startedAt).toISOString().slice(0, 10) : null,
+      n, mean, lcb, ucb, fwdN: n, fwdMean: mean, verdict, why: `Live paper copies of smart wallets: ${why}` });
+  }
+  return out;
+}
 
 export async function startCopyTrader() {
   if (process.env.COPY_TRADER === "false") { console.log("👥 Copy trader (SHADOW) off (COPY_TRADER=false)"); return; }

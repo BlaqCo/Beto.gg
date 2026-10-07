@@ -76,3 +76,11 @@ test("newTrades: reads only unseen trades whether the feed is newest-first or ol
   }
   ct._setFetch((...a) => fetch(...a));
 });
+
+test("leaderboardRows: one row per family in arena units, too early under 30 copies", () => {
+  ct._reset();
+  const rows = ct.leaderboardRows();
+  assert.deepEqual(rows.map(r => [r.name, r.family, r.n, r.verdict]), [["shadow-copy", "btc15", 0, "too early"], ["shadow-copy", "btc60", 0, "too early"]]);
+  ct.settlePaper({ slug: "none", outcome: 1 });   // nothing open: no change
+  assert.equal(ct.leaderboardRows()[0].n, 0);
+});

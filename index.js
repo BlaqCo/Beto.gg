@@ -472,6 +472,8 @@ app.get("/api/crypto-segments", async (req, res) => {
 app.get("/api/crypto-status", (req, res) => {
   try {
     const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
+    // SHADOW's live paper copies, scored in the same units as the arena rows.
+    try { if (out.arena) out.arena.rows.push(...(await import("./arena/copy-trader.js")).leaderboardRows()); } catch {}
     const btc15 = btc15Bot?.btc15Status ? btc15Bot.btc15Status() : null;
     res.json({ btc60, btc15 });
   } catch (err) {
@@ -813,6 +815,8 @@ app.get("/api/colony", async (req, res) => {
         n: r.all?.n || 0, mean: r.all?.mean ?? null, lcb: r.all?.lcb ?? null, ucb: r.all?.ucb ?? null,
         fwdN: r.forward?.n || 0, fwdMean: r.forward?.mean ?? null, verdict: r.verdict?.label || "", why: r.verdict?.why || "" })),
     };
+    // SHADOW's live paper copies, scored in the same units as the arena rows.
+    try { if (out.arena) out.arena.rows.push(...(await import("./arena/copy-trader.js")).leaderboardRows()); } catch {}
     const btc15 = btc15Bot?.btc15Status ? btc15Bot.btc15Status() : null;
     const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
     out.gambler = { btc15, btc60 };
