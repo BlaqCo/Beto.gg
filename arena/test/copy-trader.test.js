@@ -94,3 +94,27 @@ test("leaderboardRows: one row per family in arena units, too early under 30 cop
   ct.settlePaper({ slug: "none", outcome: 1 });   // nothing open: no change
   assert.equal(ct.leaderboardRows()[0].n, 0);
 });
+
+test("position management: DCA once in the band, stop at 22¢, numbers match the plan", () => {
+  const cfg = { ...ct.CFG, stake: 10, dcaUsd: 20, dcaLow: 0.58, dcaHigh: 0.66, stopPrice: 0.22, minMsLeft: 30_000 };
+  const now = 1_000_000;
+  const pos = { side: "Up", end: now + 300_000, price: 0.82, contracts: 10 / 0.82, cost: 10 + 0.1081, staked: 10, avg: 0.82, dca: null };
+  assert.equal(ct.decideManage({ pos, us: { bid: 0.75, ask: 0.77 }, now, cfg }), null, "no action above the band");
+  assert.equal(ct.decideManage({ pos, us: { bid: 0.50, ask: 0.52 }, now, cfg }), null, "a gap past the band doesn't add");
+  const d = ct.decideManage({ pos, us: { bid: 0.61, ask: 0.62 }, now, cfg });
+  assert.deepEqual(d, { dca: true, price: 0.62, bid: 0.61 });
+  ct.applyManage(pos, d, now, cfg);
+  assert.equal(pos.staked, 30);
+  assert.equal(Math.round(pos.contracts * 100) / 100, 44.45);
+  assert.equal(Math.round(pos.avg * 1000) / 10, 67.5);
+  assert.equal(ct.decideManage({ pos, us: { bid: 0.60, ask: 0.61 }, now, cfg }), null, "DCA happens once");
+  const st = ct.decideManage({ pos, us: { bid: 0.22, ask: 0.24 }, now, cfg });
+  assert.equal(st.stop, true);
+  const closed = ct.applyManage(pos, st, now, cfg);
+  assert.equal(closed.pnl, -21.24);
+  assert.equal(closed.exit.reason, "stop");
+  // Down side reads the complement of the Up quote.
+  const down = { side: "Down", end: now + 300_000, dca: null };
+  assert.deepEqual(ct.decideManage({ pos: down, us: { bid: 0.38, ask: 0.40 }, now, cfg }), { dca: true, price: 0.62, bid: 0.6 });
+  assert.equal(ct.decideManage({ pos: down, us: { bid: 0.76, ask: 0.78 }, now, cfg }).stop, true);
+});
