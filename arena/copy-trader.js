@@ -10,9 +10,11 @@
  *   2. Smart wallets. A wallet counts as "smart" only with enough settled windows,
  *      recent activity, a real profit and win rate, profit not from one lucky window,
  *      and not trading both sides of the same window (market makers / arbitrage bots).
- *   3. Copying. During a live window it polls the newest trades. When a smart wallet
- *      buys Up or Down, it makes the same $10 paper bet on the matching Polymarket US
- *      window at the US ask, after the taker fee, and settles it on the US result.
+ *   3. Entering. During a live window it polls the newest trades and adds up what smart
+ *      wallets buy on each side. In the last 3 minutes, if smart money backed a side and
+ *      that side costs 80-95¢ on Polymarket US, it makes a $10 paper bet at the US ask
+ *      (after the taker fee), adds $20 once on a dip to 58-66¢, stops out at 22¢, and
+ *      otherwise settles on the US result.
  *
  * Everything it does goes to an event feed, streamed to the /copy page.
  * On by default (paper only); set COPY_TRADER=false to turn it off.
@@ -35,8 +37,10 @@ export const CFG = {
   maxBestShare: env("COPY_MAX_BEST_SHARE", 0.5),// biggest single window as a share of total profit
   activeMs: env("COPY_ACTIVE_HOURS", 24) * 3600_000,
   minSignalUsd: env("COPY_MIN_SIGNAL_USD", 20), // ignore their dust trades
-  maxPrice: env("COPY_MAX_PRICE", 0.95),        // don't pay more than this on US
-  maxSlippage: env("COPY_MAX_SLIPPAGE", 0.1),   // US ask may be at most this much worse than their price
+  // Entry: only in the last few minutes, only on a strong favorite that smart money backed.
+  entryWindowMs: env("COPY_ENTRY_SECONDS", 180) * 1000,  // enter only with this much time left or less
+  minPrice: env("COPY_MIN_PRICE", 0.80),        // our side must cost at least this on US...
+  maxPrice: env("COPY_MAX_PRICE", 0.95),        // ...and at most this
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
   // Position management: add once on a dip, cut the whole position at the stop.
   dcaUsd: env("COPY_DCA_USD", 20),              // paper dollars added on the dip (0 turns DCA off)
@@ -51,7 +55,8 @@ export const CFG = {
 
 const DUR = { btc15: 15 * 60_000, btc60: 60 * 60_000 };
 // v2: v1 held hourly scores from year-old markets (a slug without a year matched 2025).
-const KEY_WALLETS = "arena:copy:wallets:v2", KEY_BOOK = "arena:copy:book", KEY_EVENTS = "arena:copy:events";
+// book v2: results under the last-3-minutes / 80¢+ entry rule (v1 kept in Redis for reference).
+const KEY_WALLETS = "arena:copy:wallets:v2", KEY_BOOK = "arena:copy:book:v2", KEY_EVENTS = "arena:copy:events";
 const MAX_EVENTS = 300, MAX_WALLETS = 3000;   // keeps the saved wallet list well under Redis's 1 MB request limit
 
 // ── State ───────────────────────────────────────────────────────────
@@ -243,19 +248,35 @@ function pruneWallets(now) {
 }
 
 // ── Copying ─────────────────────────────────────────────────────────
-/** Should SHADOW copy this smart-wallet buy on Polymarket US? */
-export function decideCopy({ trade, us, holding, now, cfg = CFG }) {
-  if (!us) return { copy: false, why: "no matching Polymarket US window live" };
-  if (us.end - now < cfg.minMsLeft) return { copy: false, why: "too close to the close" };
-  if (holding) return { copy: false, why: "already copied a trade this window" };
-  const q = trade.outcome === "Up" ? us.ask : (us.bid != null ? +(1 - us.bid).toFixed(4) : null);
-  if (q == null) return { copy: false, why: "no US price yet" };
-  if (q > cfg.maxPrice) return { copy: false, why: `US ${trade.outcome} costs ${cents(q)}, above the ${cents(cfg.maxPrice)} cap` };
-  if (q - trade.price > cfg.maxSlippage) return { copy: false, why: `US price ${cents(q)} is ${cents(q - trade.price)} worse than theirs (${cents(trade.price)})` };
-  return { copy: true, price: q };
+/** The side smart money backed this window: more smart dollars, and only one side if tied. */
+export function smartSide(smartFlow) {
+  const up = smartFlow?.Up || 0, down = smartFlow?.Down || 0;
+  if (up === down) return null;
+  return up > down ? "Up" : "Down";
+}
+
+/**
+ * Should SHADOW enter now? Rule: in the last 3 minutes of the window, buy the side smart
+ * wallets backed this window, only if that side costs 80-95¢ on Polymarket US.
+ * `wait: true` means "not yet" (too early), which isn't worth a feed line.
+ */
+export function decideEntry({ smartFlow, us, holding, now, cfg = CFG }) {
+  if (holding) return { enter: false, why: "already holding this window" };
+  if (!us) return { enter: false, why: "no matching Polymarket US window live" };
+  const left = us.end - now;
+  if (left > cfg.entryWindowMs) return { enter: false, wait: true, why: "waiting for the last 3 minutes" };
+  if (left < cfg.minMsLeft) return { enter: false, why: "too close to the close" };
+  const side = smartSide(smartFlow);
+  if (!side) return { enter: false, why: "no smart-wallet side this window" };
+  const price = side === "Up" ? us.ask : (us.bid != null ? +(1 - us.bid).toFixed(4) : null);
+  if (price == null || !(price >= 0.01 && price <= 0.99)) return { enter: false, why: "no valid US price" };
+  if (price < cfg.minPrice) return { enter: false, why: `US ${side} is ${cents(price)}, under the ${cents(cfg.minPrice)} minimum` };
+  if (price > cfg.maxPrice) return { enter: false, why: `US ${side} is ${cents(price)}, over the ${cents(cfg.maxPrice)} cap` };
+  return { enter: true, side, price };
 }
 
 function openPaper({ family, trade, us, price, now, judged }) {
+  if (!(price >= 0.01 && price <= 0.99)) { emit("error", `refused to open at an impossible price ${price}`, { family }); return; }
   const contracts = CFG.stake / price;
   const fee = takerFee(contracts, price);
   const pos = { id: `${us.slug}`, family, usSlug: us.slug, end: us.end, side: trade.outcome, price, contracts: +contracts.toFixed(4),
@@ -381,7 +402,7 @@ async function pollLive(family, now) {
   if (!cur || cur.key !== key) {
     if (cur) { toScore.unshift({ family, start: cur.start, tries: 0 }); windowSummary(family, cur); }   // score the window that just closed first
     const market = await findMarket(family, start);
-    cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 },
+    cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 }, smartBest: { Up: null, Down: null },
       skips: new Set(), order: null, nextOffset: 0, newest: 0, warned: false, diag: { trades: 0, smartBuys: 0, smartSmall: 0, copies: 0 } };
     emit("window", market ? `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: watching global market ${market.slug}`
       : `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: global market not found yet (tried ${globalSlugs(family, start).join(", ")})`, { family });
@@ -409,13 +430,19 @@ async function pollLive(family, now) {
     cur.diag.smartBuys++;
     if (amt < CFG.minSignalUsd) { cur.diag.smartSmall++; continue; }
     cur.smartFlow[t.outcome] += amt;
+    const best = cur.smartBest[t.outcome];
+    if (!best || amt > best.usd) cur.smartBest[t.outcome] = { wallet: t.wallet, name: t.name, usd: amt, price: t.price, size: t.size, outcome: t.outcome, why: j.why };
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
-    const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
-    const holding = book.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
-    const d = decideCopy({ trade: t, us, holding, now });
-    if (d.copy) { cur.diag.copies++; openPaper({ family, trade: t, us, price: d.price, now, judged: j }); }
-    else if (!holding && !cur.skips.has(d.why)) { cur.skips.add(d.why); emit("skip", `not copying: ${d.why}`, { family }); }
   }
+  // Entry check every poll: last 3 minutes, smart-money side, 80-95¢ on US.
+  const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
+  const holding = book.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
+  const d = decideEntry({ smartFlow: cur.smartFlow, us, holding, now });
+  if (d.enter) {
+    const b = cur.smartBest[d.side];
+    cur.diag.copies++;
+    openPaper({ family, trade: { ...b, size: b.usd / Math.max(b.price, 0.01) }, us, price: d.price, now, judged: { why: b.why } });
+  } else if (!d.wait && !holding && !cur.skips.has(d.why)) { cur.skips.add(d.why); emit("skip", `not entering: ${d.why}`, { family }); }
   stats.lastPollAt = Date.now();
   emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
 }
@@ -472,7 +499,7 @@ export function copyStatus(now = Date.now()) {
     .sort((x, y) => y.j.roi * Math.sqrt(y.s.windows) - x.j.roi * Math.sqrt(x.s.windows))
     .slice(0, 20).map(({ a, s, j }) => ({ wallet: a, name: s.name, windows: s.windows, winRate: +j.winRate.toFixed(3), roi: +j.roi.toFixed(3), pnl: +s.pnl.toFixed(2), lastSeen: s.lastSeen }));
   const closed = book.closed;
-  const settled = closed.filter(p => p.won != null);
+  const settled = closed.filter(p => p.won != null && Number.isFinite(p.pnl));
   const pnl = settled.reduce((a, p) => a + p.pnl, 0);
   const cur = f => {
     const c = live[f]; if (!c) return null;
@@ -501,7 +528,7 @@ export function recentEvents(n = 120) { return events.slice(-n); }
 export function leaderboardRows() {
   const out = [];
   for (const family of ["btc15", "btc60"]) {
-    const trades = book.closed.filter(p => p.family === family && p.won != null);
+    const trades = book.closed.filter(p => p.family === family && p.won != null && Number.isFinite(p.pnl));
     const n = trades.length;
     const pnl = trades.reduce((a, t) => a + t.pnl, 0), mean = n ? pnl / n : null;
     const sd = n > 1 ? Math.sqrt(trades.reduce((a, t) => a + (t.pnl - mean) ** 2, 0) / (n - 1)) : null;
@@ -528,6 +555,9 @@ export async function startCopyTrader() {
   if (saved?.wallets) { wallets = new Map(saved.wallets); for (const k of saved.scored || []) scored.add(k); }
   const savedBook = await loadJSON(KEY_BOOK);
   if (savedBook?.open) book = { open: savedBook.open, closed: savedBook.closed || [] };
+  // Never let a bad number (e.g. a 0¢ quote) poison the totals.
+  book.open = book.open.filter(p => Number.isFinite(p.contracts) && Number.isFinite(p.cost) && p.price > 0);
+  for (const c of book.closed) if (!Number.isFinite(c.pnl)) { c.pnl = 0; c.won = null; }
   const savedEvents = await loadJSON(KEY_EVENTS);
   if (Array.isArray(savedEvents)) events = savedEvents;
 
@@ -541,7 +571,7 @@ export async function startCopyTrader() {
     }
   }
   stats.backfillTotal = toScore.length;
-  emit("start", `SHADOW on (paper only): ${wallets.size} wallets remembered, scoring ${toScore.length} past windows, copying $${CFG.stake} per signal, +$${CFG.dcaUsd} if it dips to ${cents(CFG.dcaLow)}-${cents(CFG.dcaHigh)}, stop at ${cents(CFG.stopPrice)}${recorder ? "" : ". Recorder unavailable: can't price US copies"}`, {});
+  emit("start", `SHADOW on (paper only): ${wallets.size} wallets remembered, scoring ${toScore.length} past windows, entering $${CFG.stake} in the last ${Math.round(CFG.entryWindowMs / 60000)} min on the smart-money side at ${cents(CFG.minPrice)}-${cents(CFG.maxPrice)}, +$${CFG.dcaUsd} if it dips to ${cents(CFG.dcaLow)}-${cents(CFG.dcaHigh)}, stop at ${cents(CFG.stopPrice)}${recorder ? "" : ". Recorder unavailable: can't price US copies"}`, {});
 
   let busyLive = false, busyScore = false;
   timers.push(setInterval(async () => {

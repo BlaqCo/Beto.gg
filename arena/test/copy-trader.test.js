@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as ct from "../copy-trader.js";
 
-const cfg = { ...ct.CFG, minWindows: 20, minWinRate: 0.55, minRoi: 0.05, maxBothSides: 0.3, maxBestShare: 0.5, activeMs: 86400_000, maxPrice: 0.9, maxSlippage: 0.1, minMsLeft: 30_000 };
+const cfg = { ...ct.CFG, minWindows: 20, minWinRate: 0.55, minRoi: 0.05, maxBothSides: 0.3, maxBestShare: 0.5, activeMs: 86400_000, entryWindowMs: 180_000, minPrice: 0.8, maxPrice: 0.95, minMsLeft: 30_000 };
 
 test("global slugs: 15-minute by start time, hourly by ET hour", () => {
   assert.deepEqual(ct.globalSlugs("btc15", Date.UTC(2026, 9, 7, 15, 0)), ["btc-updown-15m-1791385200"]);
@@ -49,17 +49,20 @@ test("judge: needs a long, recent, profitable record and isn't a two-sided bot",
   assert.match(ct.judge({ ...good, best: 250 }, now, cfg).why, /one window/);
 });
 
-test("decideCopy: prices Down off the Up bid, and skips bad US prices", () => {
-  const now = 1_000_000;
-  const us = { slug: "x", end: now + 120_000, bid: 0.40, ask: 0.42 };
-  const up = { outcome: "Up", price: 0.40 }, down = { outcome: "Down", price: 0.55 };
-  assert.deepEqual(ct.decideCopy({ trade: up, us, holding: false, now, cfg }), { copy: true, price: 0.42 });
-  assert.deepEqual(ct.decideCopy({ trade: down, us, holding: false, now, cfg }), { copy: true, price: 0.6 });
-  assert.match(ct.decideCopy({ trade: up, us: null, holding: false, now, cfg }).why, /no matching/);
-  assert.match(ct.decideCopy({ trade: up, us: { ...us, end: now + 10_000 }, holding: false, now, cfg }).why, /close/);
-  assert.match(ct.decideCopy({ trade: up, us, holding: true, now, cfg }).why, /already/);
-  assert.match(ct.decideCopy({ trade: { outcome: "Up", price: 0.2 }, us, holding: false, now, cfg }).why, /worse than theirs/);
-  assert.match(ct.decideCopy({ trade: { outcome: "Up", price: 0.93 }, us: { ...us, bid: 0.93, ask: 0.95 }, holding: false, now, cfg }).why, /cap/);
+test("decideEntry: last 3 minutes, smart-money side, 80-95¢ on US only", () => {
+  const now = 1_000_000, end = now + 150_000;
+  const us = { end, bid: 0.84, ask: 0.86 };       // Up 86¢ to buy, Down 16¢
+  const up = { Up: 120, Down: 30 }, down = { Up: 10, Down: 90 };
+  assert.deepEqual(ct.decideEntry({ smartFlow: up, us, holding: false, now, cfg }), { enter: true, side: "Up", price: 0.86 });
+  assert.equal(ct.decideEntry({ smartFlow: up, us: { ...us, end: now + 600_000 }, holding: false, now, cfg }).wait, true, "too early just waits");
+  assert.match(ct.decideEntry({ smartFlow: up, us: { ...us, end: now + 10_000 }, holding: false, now, cfg }).why, /close/);
+  assert.match(ct.decideEntry({ smartFlow: down, us, holding: false, now, cfg }).why, /under the 80¢ minimum/, "Down at 16¢ is too cheap");
+  assert.match(ct.decideEntry({ smartFlow: { Up: 0, Down: 0 }, us, holding: false, now, cfg }).why, /no smart-wallet side/);
+  assert.match(ct.decideEntry({ smartFlow: { Up: 50, Down: 50 }, us, holding: false, now, cfg }).why, /no smart-wallet side/, "a tie isn't a side");
+  assert.match(ct.decideEntry({ smartFlow: up, us: { ...us, bid: 0.95, ask: 0.97 }, holding: false, now, cfg }).why, /over the 95¢ cap/);
+  assert.match(ct.decideEntry({ smartFlow: up, us: { ...us, bid: 0, ask: 0 }, holding: false, now, cfg }).why, /no valid US price/, "a 0¢ quote is refused");
+  assert.match(ct.decideEntry({ smartFlow: up, us, holding: true, now, cfg }).why, /already holding/);
+  assert.deepEqual(ct.decideEntry({ smartFlow: down, us: { end, bid: 0.10, ask: 0.12 }, holding: false, now, cfg }), { enter: true, side: "Down", price: 0.9 });
 });
 
 test("normTrade: reads the public trade shape, seconds or ms", () => {
