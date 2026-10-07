@@ -35,7 +35,7 @@ export const CFG = {
   maxBestShare: env("COPY_MAX_BEST_SHARE", 0.5),// biggest single window as a share of total profit
   activeMs: env("COPY_ACTIVE_HOURS", 24) * 3600_000,
   minSignalUsd: env("COPY_MIN_SIGNAL_USD", 20), // ignore their dust trades
-  maxPrice: env("COPY_MAX_PRICE", 0.9),         // don't pay more than this on US
+  maxPrice: env("COPY_MAX_PRICE", 0.95),        // don't pay more than this on US
   maxSlippage: env("COPY_MAX_SLIPPAGE", 0.1),   // US ask may be at most this much worse than their price
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
   backfill15: env("COPY_BACKFILL_BTC15", 96),   // windows to score on startup (96 = one day)
@@ -257,14 +257,52 @@ export function settlePaper(rec) {
   persistBook();
 }
 
+/**
+ * Trades in the live window we haven't seen yet. The public feed's sort order isn't
+ * documented, so it's detected: newest-first pages forward until it reaches trades it
+ * has seen; oldest-first keeps an offset and reads on from where it stopped.
+ */
+export async function newTrades(cur) {
+  const PAGE = 500, MAX_PAGES = 8, out = [];
+  if (cur.order === "asc") {
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const page = await fetchTrades(cur.market, { limit: PAGE, offset: cur.nextOffset });
+      cur.nextOffset += page.length;
+      out.push(...page);
+      if (page.length < PAGE) break;
+    }
+  } else {
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const page = await fetchTrades(cur.market, { limit: PAGE, offset: i * PAGE });
+      if (!cur.order && page.length > 1) {
+        const a = page[0].t, b = page[page.length - 1].t;
+        if (a !== b) cur.order = a < b ? "asc" : "desc";
+        if (cur.order === "asc") { cur.nextOffset = page.length; out.push(...page); if (page.length === PAGE) return out.concat(await newTrades(cur)); return out; }
+      }
+      const unseen = page.filter(t => !cur.seen.has(t.id));
+      out.push(...unseen);
+      if (page.length < PAGE || unseen.length < page.length) break;   // reached what we already have
+    }
+  }
+  return out.filter(t => !cur.seen.has(t.id));
+}
+
+function windowSummary(family, c) {
+  const d = c.diag;
+  const order = c.order === "asc" ? "oldest-first" : c.order === "desc" ? "newest-first" : "order unknown";
+  emit("window", `${family.toUpperCase()} ${new Date(c.start).toISOString().slice(11, 16)}Z closed: ${d.trades} trades seen (feed ${order}), ` +
+    `${d.smartBuys} buys by smart wallets${d.smartSmall ? ` (${d.smartSmall} under $${CFG.minSignalUsd}, ignored)` : ""}, ${d.copies} copied`, { family });
+}
+
 async function pollLive(family, now) {
   const start = windowStart(family, now);
   const key = `${family}:${start}`;
   let cur = live[family];
   if (!cur || cur.key !== key) {
-    if (cur) toScore.unshift({ family, start: cur.start, tries: 0 });   // score the window that just closed first
+    if (cur) { toScore.unshift({ family, start: cur.start, tries: 0 }); windowSummary(family, cur); }   // score the window that just closed first
     const market = await findMarket(family, start);
-    cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 }, first: true, skips: new Set() };
+    cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 },
+      skips: new Set(), order: null, nextOffset: 0, newest: 0, warned: false, diag: { trades: 0, smartBuys: 0, smartSmall: 0, copies: 0 } };
     emit("window", market ? `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: watching global market ${market.slug}`
       : `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: global market not found yet (tried ${globalSlugs(family, start).join(", ")})`, { family });
   }
@@ -273,23 +311,29 @@ async function pollLive(family, now) {
     if (!cur.market) { emit("poll", `${family.toUpperCase()}: global market not found yet${stats.lastError ? ` (${stats.lastError})` : ""}`, { family, n: 0 }); return; }
     emit("window", `found global ${family.toUpperCase()} market ${cur.market.slug}`, { family });
   }
-  const trades = await fetchTrades(cur.market, { limit: 300 });
-  const fresh = trades.filter(t => !cur.seen.has(t.id)).sort((a, b) => a.t - b.t);
-  for (const t of fresh) cur.seen.add(t.id);
-  if (cur.first) { cur.first = false; if (fresh.length) emit("poll", `${family.toUpperCase()}: ${fresh.length} trades already in this window`, { family }); }
+  const fresh = (await newTrades(cur)).sort((a, b) => a.t - b.t);
+  for (const t of fresh) { cur.seen.add(t.id); cur.newest = Math.max(cur.newest, t.t); }
+  cur.diag.trades += fresh.length;
+  // A busy window whose newest trade we see is minutes old means we're reading the wrong end of the feed.
+  if (!cur.warned && now - start > 4 * 60_000 && cur.diag.trades > 50 && now - cur.newest > 3 * 60_000) {
+    cur.warned = true;
+    emit("error", `${family.toUpperCase()}: newest trade seen is ${Math.round((now - cur.newest) / 60_000)} min old, the live trade feed may be lagging`, { family });
+  }
   for (const t of fresh) {
     if (t.side !== "BUY") continue;
     const amt = t.size * t.price;
     cur.flow[t.outcome] += amt;
     const s = wallets.get(t.wallet);
     const j = judge(s, now);
-    if (!j.smart || amt < CFG.minSignalUsd) continue;
+    if (!j.smart) continue;
+    cur.diag.smartBuys++;
+    if (amt < CFG.minSignalUsd) { cur.diag.smartSmall++; continue; }
     cur.smartFlow[t.outcome] += amt;
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
     const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
     const holding = book.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
     const d = decideCopy({ trade: t, us, holding, now });
-    if (d.copy) openPaper({ family, trade: t, us, price: d.price, now, judged: j });
+    if (d.copy) { cur.diag.copies++; openPaper({ family, trade: t, us, price: d.price, now, judged: j }); }
     else if (!holding && !cur.skips.has(d.why)) { cur.skips.add(d.why); emit("skip", `not copying: ${d.why}`, { family }); }
   }
   emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
@@ -362,6 +406,32 @@ export function copyStatus(now = Date.now()) {
   };
 }
 export function recentEvents(n = 120) { return events.slice(-n); }
+
+/**
+ * SHADOW's settled paper copies as /colony leaderboard rows, one per family, in the
+ * arena's units ($10 stake, P&L per trade after fees). Every copy is a live trade, so
+ * all of them count as forward. Verdicts follow the arena's rules without the
+ * tape-only checks (halves, baseline).
+ */
+export function leaderboardRows() {
+  const out = [];
+  for (const family of ["btc15", "btc60"]) {
+    const trades = book.closed.filter(p => p.family === family && p.won != null);
+    const n = trades.length;
+    const pnl = trades.reduce((a, t) => a + t.pnl, 0), mean = n ? pnl / n : null;
+    const sd = n > 1 ? Math.sqrt(trades.reduce((a, t) => a + (t.pnl - mean) ** 2, 0) / (n - 1)) : null;
+    const se = sd != null ? sd / Math.sqrt(n) : null;
+    const lcb = se != null ? mean - 1.96 * se : null, ucb = se != null ? mean + 1.96 * se : null;
+    const verdict = n < 30 ? "too early" : ucb < 0 ? "losing" : lcb > 0 ? "promising" : "unproven";
+    const why = n < 30 ? `${n} live paper copies so far; needs 30 to say anything`
+      : verdict === "losing" ? "even the optimistic estimate loses money per copy"
+      : verdict === "promising" ? "profitable so far with 95% confidence; keep watching before trusting it"
+      : "no clear edge yet; the range still includes losing";
+    out.push({ id: `shadow-copy-${family}`, name: "shadow-copy", family, author: "SHADOW", created: stats.startedAt ? new Date(stats.startedAt).toISOString().slice(0, 10) : null,
+      n, mean, lcb, ucb, fwdN: n, fwdMean: mean, verdict, why: `Live paper copies of smart wallets: ${why}` });
+  }
+  return out;
+}
 
 export async function startCopyTrader() {
   if (process.env.COPY_TRADER === "false") { console.log("👥 Copy trader (SHADOW) off (COPY_TRADER=false)"); return; }
