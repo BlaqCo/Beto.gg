@@ -472,8 +472,6 @@ app.get("/api/crypto-segments", async (req, res) => {
 app.get("/api/crypto-status", (req, res) => {
   try {
     const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
-    // SHADOW's live paper copies, scored in the same units as the arena rows.
-    try { if (out.arena) out.arena.rows.push(...(await import("./arena/copy-trader.js")).leaderboardRows()); } catch {}
     const btc15 = btc15Bot?.btc15Status ? btc15Bot.btc15Status() : null;
     res.json({ btc60, btc15 });
   } catch (err) {
