@@ -6,8 +6,18 @@ const cfg = { ...ct.CFG, minWindows: 20, minWinRate: 0.55, minRoi: 0.05, maxBoth
 
 test("global slugs: 15-minute by start time, hourly by ET hour", () => {
   assert.deepEqual(ct.globalSlugs("btc15", Date.UTC(2026, 9, 7, 15, 0)), ["btc-updown-15m-1791385200"]);
-  assert.equal(ct.globalSlugs("btc60", Date.UTC(2026, 9, 7, 19, 0))[0], "bitcoin-up-or-down-october-7-3pm-et");
-  assert.equal(ct.globalSlugs("btc60", Date.UTC(2026, 9, 7, 4, 0))[0], "bitcoin-up-or-down-october-7-12am-et");
+  assert.deepEqual(ct.globalSlugs("btc60", Date.UTC(2026, 9, 7, 19, 0)),
+    ["btc-updown-1h-1791399600", "bitcoin-up-or-down-october-7-2026-3pm-et", "bitcoin-up-or-down-october-7-3pm-et"]);
+  assert.equal(ct.globalSlugs("btc60", Date.UTC(2026, 9, 7, 4, 0))[2], "bitcoin-up-or-down-october-7-12am-et");
+});
+
+test("marketMatchesWindow: rejects last year's market behind a slug with no year", () => {
+  const end = Date.UTC(2026, 9, 7, 8, 0);
+  assert.equal(ct.marketMatchesWindow("btc60", {}, { endDate: "2026-10-07T08:00:00Z" }, end), true);
+  assert.equal(ct.marketMatchesWindow("btc60", {}, { endDate: "2025-10-07T08:00:00Z" }, end), false);
+  assert.equal(ct.marketMatchesWindow("btc60", { endDate: "2025-10-07T08:00:00Z" }, {}, end), false);
+  assert.equal(ct.marketMatchesWindow("btc60", {}, {}, end), false);
+  assert.equal(ct.marketMatchesWindow("btc15", {}, {}, end), true);
 });
 
 test("scoring a window: winners get $1 a share, sells count, sell-only wallets are skipped", () => {
