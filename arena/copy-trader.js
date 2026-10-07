@@ -336,6 +336,7 @@ async function pollLive(family, now) {
     if (d.copy) { cur.diag.copies++; openPaper({ family, trade: t, us, price: d.price, now, judged: j }); }
     else if (!holding && !cur.skips.has(d.why)) { cur.skips.add(d.why); emit("skip", `not copying: ${d.why}`, { family }); }
   }
+  stats.lastPollAt = Date.now();
   emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
 }
 
@@ -386,7 +387,8 @@ async function persistAll() {
 
 // ── Status / start ──────────────────────────────────────────────────
 export function copyStatus(now = Date.now()) {
-  const smart = [...wallets.entries()].map(([a, s]) => ({ a, s, j: judge(s, now) })).filter(x => x.j.smart)
+  const smartAll = [...wallets.entries()].map(([a, s]) => ({ a, s, j: judge(s, now) })).filter(x => x.j.smart);
+  const smart = smartAll
     .sort((x, y) => y.j.roi * Math.sqrt(y.s.windows) - x.j.roi * Math.sqrt(x.s.windows))
     .slice(0, 20).map(({ a, s, j }) => ({ wallet: a, name: s.name, windows: s.windows, winRate: +j.winRate.toFixed(3), roi: +j.roi.toFixed(3), pnl: +s.pnl.toFixed(2), lastSeen: s.lastSeen }));
   const closed = book.closed;
@@ -398,7 +400,7 @@ export function copyStatus(now = Date.now()) {
     return { start: c.start, end: c.end, globalSlug: c.market?.slug || null, flow: c.flow, smartFlow: c.smartFlow, us, position: book.open.find(p => p.family === f && Math.abs(p.end - c.end) < 60_000) || null };
   };
   return {
-    enabled: stats.enabled, paper: true, now, cfg: CFG, stats: { ...stats, trackedWallets: wallets.size, smartWallets: smart.length,
+    enabled: stats.enabled, paper: true, now, cfg: CFG, stats: { ...stats, trackedWallets: wallets.size, smartWallets: smartAll.length,
       copies: closed.length + book.open.length, open: book.open.length, wins: settled.filter(p => p.won).length, losses: settled.filter(p => !p.won).length,
       pnl: +pnl.toFixed(2), recorderOn: !!recorder?.recorderStatus?.().enabled, queue: toScore.length },
     current: { btc15: cur("btc15"), btc60: cur("btc60") },

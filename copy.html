@@ -114,7 +114,7 @@ td.r,th.r{text-align:right}
   </section>
 
   <section>
-    <div class="ph">SMART WALLETS <em>ranked by return, needs a long record</em></div>
+    <div class="ph">SMART WALLETS <em>top 20 by return, needs a long record</em></div>
     <div class="tbl"><table><thead><tr><th>WALLET</th><th class="r">WINDOWS</th><th class="r">WIN %</th><th class="r">ROI</th><th class="r">P&amp;L</th><th class="r">LAST SEEN</th></tr></thead><tbody id="smart"></tbody></table></div>
     <p class="empty" id="smartEmpty" hidden></p>
   </section>
@@ -183,12 +183,13 @@ function renderWindow(f, c) {
     <div class="row"><span>All buying</span><span><span class="pos">Up ${usd(up)}</span> · <span class="neg">Down ${usd(dn)}</span></span></div>
     <div class="flow" aria-hidden="true"><div class="up" style="width:${up / tot * 100}%"></div><div class="down" style="width:${dn / tot * 100}%"></div></div>
     <div class="row"><span>Smart money</span><span>${sUp + sDn ? `<span class="pos">Up ${usd(sUp)}</span> · <span class="neg">Down ${usd(sDn)}</span>` : '<span class="mut">none yet</span>'}</span></div>
-    <div class="row"><span>US price (Up)</span><span>${us?.ask != null ? `${cents(us.bid)} / ${cents(us.ask)}` : '<span class="mut">no US window</span>'}</span></div>
+    <div class="row"><span>US price to buy</span><span>${us?.ask != null ? `<span class="pos">Up ${cents(us.ask)}</span> · <span class="neg">Down ${cents(1 - us.bid)}</span>` : '<span class="mut">no US window</span>'}</span></div>
     ${p ? `<div class="posbox">HOLDING paper ${esc(p.side)} @ ${cents(p.price)} · copied ${esc(short(p.wallet))}</div>` : ""}`;
 }
 
 function renderStatus(s) {
   status = s;
+  if (s.stats?.lastPollAt) lastPoll = Math.max(lastPoll, s.stats.lastPollAt);
   const st = s.stats || {};
   $("kPnl").textContent = usd(st.pnl ?? 0); $("kPnl").className = (st.pnl || 0) >= 0 ? "pos" : "neg";
   $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
