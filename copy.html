@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Shadow Copy Trader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Same CRT look as /colony. Phone first: one column, the live feed is the main thing. */
+:root{
+  --void:#05080a; --panel:#081210; --phos:#38f27a; --phos-dim:#1f7a45; --phos-faint:#0f2c1c;
+  --text:#c9f5d6; --muted:#6fa985; --amber:#ffb547; --red:#ff5d5d; --cyan:#5fd4ff; --violet:#b48cff;
+  --f-pix:"Silkscreen","Courier New",monospace; --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{background:var(--void);color:var(--text);margin:0}
+body{font-family:var(--f-mono);font-size:13px;line-height:1.45;padding:16px 16px 40px}
+a{color:var(--cyan)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.os{max-width:980px;margin:0 auto;border:2px solid var(--phos);border-radius:14px;background:var(--panel);
+  box-shadow:0 0 0 1px var(--phos-faint),0 0 28px rgba(56,242,122,.18);overflow:hidden}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:12px 14px;border-bottom:2px solid var(--phos)}
+.logo{font-family:var(--f-pix);font-weight:700;font-size:18px;color:var(--amber);letter-spacing:.04em;text-shadow:0 0 8px rgba(255,181,71,.45)}
+.logo span{color:var(--phos)}
+.tag{font-family:var(--f-pix);font-size:10px;padding:2px 6px;border-radius:3px;letter-spacing:.06em}
+.tag.paper{color:var(--void);background:var(--amber)}
+.conn{display:flex;align-items:center;gap:6px;margin-left:auto;font-family:var(--f-pix);font-size:10px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--red)}
+.conn.on .dot{background:var(--phos);box-shadow:0 0 8px var(--phos);animation:pulse 2s infinite}
+.conn.on{color:var(--phos)}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));border-bottom:2px solid var(--phos)}
+.kpi{padding:10px 14px;border-right:1px solid var(--phos-faint);border-bottom:1px solid var(--phos-faint)}
+.kpi b{display:block;font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.06em}
+.kpi i{font-style:normal;font-size:18px;font-variant-numeric:tabular-nums}
+.pos{color:var(--phos)} .neg{color:var(--red)} .amb{color:var(--amber)} .mut{color:var(--muted)}
+section{border-bottom:2px solid var(--phos)}
+section:last-child{border-bottom:0}
+.ph{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--phos-dim);font-family:var(--f-pix);font-size:11px;letter-spacing:.06em;color:var(--phos)}
+.ph em{font-style:normal;color:var(--muted);font-family:var(--f-mono);font-size:11px;letter-spacing:0}
+.now{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.win{padding:12px 14px;border-right:1px solid var(--phos-faint)}
+.win h3{margin:0 0 6px;display:flex;justify-content:space-between;font-family:var(--f-pix);font-size:12px;font-weight:400;color:var(--amber)}
+.win h3 span{font-family:var(--f-mono);font-size:16px;color:var(--text);font-variant-numeric:tabular-nums}
+.row{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+.row span:first-child{color:var(--muted)}
+.flow{display:flex;height:10px;border-radius:3px;overflow:hidden;background:var(--phos-faint);margin:4px 0 2px}
+.flow .up{background:var(--phos)} .flow .down{background:var(--red)}
+.posbox{margin-top:8px;padding:6px 8px;border:1px dashed var(--amber);border-radius:6px;color:var(--amber)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px;border-bottom:1px solid var(--phos-faint)}
+.chip{border:1px solid var(--phos-dim);background:transparent;border-radius:999px;padding:3px 10px;font-size:11px;cursor:pointer;color:var(--muted)}
+.chip[aria-pressed="true"]{border-color:var(--phos);color:var(--void);background:var(--phos)}
+.feed{list-style:none;margin:0;padding:0;max-height:62vh;overflow-y:auto}
+.feed li{display:grid;grid-template-columns:62px 58px minmax(0,1fr);gap:8px;padding:7px 14px;border-bottom:1px solid var(--phos-faint);word-break:break-word}
+.feed li.new{animation:flash 1.2s ease-out}
+@keyframes flash{from{background:rgba(56,242,122,.18)}to{background:transparent}}
+.feed time{color:var(--muted);font-variant-numeric:tabular-nums}
+.feed .k{font-family:var(--f-pix);font-size:9px;letter-spacing:.04em;align-self:start;padding:2px 4px;border-radius:3px;text-align:center;border:1px solid currentColor}
+.k.copy{color:var(--amber)} .k.settle{color:var(--phos)} .k.spot{color:var(--cyan)} .k.skip{color:var(--muted)}
+.k.score,.k.window,.k.start{color:var(--violet)} .k.error{color:var(--red)}
+.empty{padding:14px;color:var(--muted)}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:6px 10px;border-bottom:1px solid var(--phos-faint);text-align:left;white-space:nowrap}
+th{font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.04em}
+td.r,th.r{text-align:right}
+.hb{font-size:11px;color:var(--muted)}
+.about{padding:12px 14px;color:var(--muted)}
+.about p{margin:0 0 8px}
+.back{display:inline-block;margin:0 auto 12px;max-width:980px;font-family:var(--f-pix);font-size:11px;letter-spacing:.06em}
+.wrap{max-width:980px;margin:0 auto}
+</style>
+</head>
+<body>
+<div class="wrap"><a class="back" href="/colony">← COLONY</a></div>
+<main class="os">
+  <header class="bar">
+    <div class="logo">SHADOW<span>//</span>COPY</div>
+    <span class="tag paper">PAPER</span>
+    <div class="conn" id="conn" role="status"><span class="dot"></span><span id="connTxt">CONNECTING</span></div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi"><b>PAPER P&amp;L</b><i id="kPnl">—</i></div>
+    <div class="kpi"><b>COPIES</b><i id="kCopies">—</i></div>
+    <div class="kpi"><b>WON / LOST</b><i id="kWl">—</i></div>
+    <div class="kpi"><b>SMART WALLETS</b><i id="kSmart" class="amb">—</i></div>
+    <div class="kpi"><b>WALLETS TRACKED</b><i id="kTracked">—</i></div>
+  </div>
+
+  <section>
+    <div class="ph">RIGHT NOW <em id="hb">waiting for first poll…</em></div>
+    <div class="now">
+      <div class="win" id="w-btc15"></div>
+      <div class="win" id="w-btc60"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="ph">LIVE FEED <em id="feedCount"></em></div>
+    <div class="chips" role="group" aria-label="Filter the feed">
+      <button class="chip" data-f="all" aria-pressed="true">All</button>
+      <button class="chip" data-f="copy" aria-pressed="false">Copies &amp; results</button>
+      <button class="chip" data-f="spot" aria-pressed="false">Smart buys</button>
+      <button class="chip" data-f="skip" aria-pressed="false">Skipped</button>
+      <button class="chip" data-f="sys" aria-pressed="false">System</button>
+    </div>
+    <ul class="feed" id="feed" aria-live="polite"></ul>
+  </section>
+
+  <section>
+    <div class="ph">SMART WALLETS <em>ranked by return, needs a long record</em></div>
+    <div class="tbl"><table><thead><tr><th>WALLET</th><th class="r">WINDOWS</th><th class="r">WIN %</th><th class="r">ROI</th><th class="r">P&amp;L</th><th class="r">LAST SEEN</th></tr></thead><tbody id="smart"></tbody></table></div>
+    <p class="empty" id="smartEmpty" hidden></p>
+  </section>
+
+  <section>
+    <div class="ph">PAPER TRADES <em>newest first</em></div>
+    <div class="tbl"><table><thead><tr><th>WHEN</th><th>MARKET</th><th>SIDE</th><th class="r">PRICE</th><th>COPIED</th><th class="r">RESULT</th></tr></thead><tbody id="trades"></tbody></table></div>
+    <p class="empty" id="tradesEmpty" hidden>No paper copies yet.</p>
+  </section>
+
+  <section class="about">
+    <div class="ph" style="margin:-12px -14px 10px">HOW IT WORKS</div>
+    <p>Polymarket US hides other traders, but global Polymarket runs the same BTC 15-minute and hourly Up/Down windows on-chain. SHADOW scores every wallet on those windows after they settle, and trusts only wallets with a long, profitable, recent record that don't trade both sides.</p>
+    <p>When a trusted wallet buys Up or Down, SHADOW makes the same <b>$10 paper bet</b> on the matching Polymarket US window at the US price plus the taker fee, one per window. It skips when the US price is much worse than theirs, above 90¢, or too close to the close. <b>No real money is used.</b></p>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const usd = n => n == null ? "—" : `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
+const cents = p => p == null ? "—" : `${Math.round(p * 100)}¢`;
+const short = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?";
+const hhmmss = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+const ago = t => { if (!t) return "—"; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
+const GROUP = { copy: "copy", settle: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", error: "sys" };
+const LABEL = { copy: "COPY", settle: "RESULT", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", error: "ERROR" };
+let filter = "all", events = [], status = null, lastPoll = 0;
+
+function liFor(e, fresh) {
+  const li = document.createElement("li");
+  if (fresh) li.className = "new";
+  li.dataset.g = GROUP[e.type] || "sys";
+  li.innerHTML = `<time>${hhmmss(e.t)}</time><span class="k ${esc(e.type)}">${LABEL[e.type] || esc(e.type).toUpperCase()}</span><span>${esc(e.msg)}</span>`;
+  li.hidden = filter !== "all" && li.dataset.g !== filter;
+  return li;
+}
+function renderFeed() {
+  const ul = $("feed"); ul.textContent = "";
+  for (const e of events.slice().reverse()) ul.appendChild(liFor(e, false));
+  if (!events.length) ul.innerHTML = `<li><span></span><span></span><span class="mut">Nothing yet. SHADOW is scoring past windows; events appear here as they happen.</span></li>`;
+  $("feedCount").textContent = `${events.length} events`;
+}
+function addEvent(e) {
+  if (e.type === "poll") { lastPoll = e.t; return; }
+  events.push(e); if (events.length > 300) events.shift();
+  const ul = $("feed");
+  if (events.length === 1) ul.textContent = "";
+  ul.prepend(liFor(e, true));
+  while (ul.children.length > 300) ul.lastChild.remove();
+  $("feedCount").textContent = `${events.length} events`;
+  if (["copy", "settle", "score", "window", "spot"].includes(e.type)) loadStatus();
+}
+
+function renderWindow(f, c) {
+  const el = $(`w-${f}`);
+  const name = f === "btc15" ? "BTC 15-MIN" : "BTC HOURLY";
+  if (!c) { el.innerHTML = `<h3>${name}</h3><div class="mut">Waiting for the first poll…</div>`; return; }
+  const left = Math.max(0, c.end - Date.now());
+  const mm = Math.floor(left / 60000), ss = String(Math.floor(left % 60000 / 1000)).padStart(2, "0");
+  const up = c.flow?.Up || 0, dn = c.flow?.Down || 0, tot = up + dn || 1;
+  const sUp = c.smartFlow?.Up || 0, sDn = c.smartFlow?.Down || 0;
+  const us = c.us, p = c.position;
+  el.innerHTML = `<h3>${name}<span data-end="${c.end}">${mm}:${ss}</span></h3>
+    <div class="row"><span>Global market</span><span>${c.globalSlug ? `<a href="https://polymarket.com/event/${esc(c.globalSlug)}" target="_blank" rel="noopener">${esc(c.globalSlug.slice(0, 26))}</a>` : '<span class="neg">not found</span>'}</span></div>
+    <div class="row"><span>All buying</span><span><span class="pos">Up ${usd(up)}</span> · <span class="neg">Down ${usd(dn)}</span></span></div>
+    <div class="flow" aria-hidden="true"><div class="up" style="width:${up / tot * 100}%"></div><div class="down" style="width:${dn / tot * 100}%"></div></div>
+    <div class="row"><span>Smart money</span><span>${sUp + sDn ? `<span class="pos">Up ${usd(sUp)}</span> · <span class="neg">Down ${usd(sDn)}</span>` : '<span class="mut">none yet</span>'}</span></div>
+    <div class="row"><span>US price (Up)</span><span>${us?.ask != null ? `${cents(us.bid)} / ${cents(us.ask)}` : '<span class="mut">no US window</span>'}</span></div>
+    ${p ? `<div class="posbox">HOLDING paper ${esc(p.side)} @ ${cents(p.price)} · copied ${esc(short(p.wallet))}</div>` : ""}`;
+}
+
+function renderStatus(s) {
+  status = s;
+  const st = s.stats || {};
+  $("kPnl").textContent = usd(st.pnl ?? 0); $("kPnl").className = (st.pnl || 0) >= 0 ? "pos" : "neg";
+  $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
+  $("kWl").textContent = `${st.wins ?? 0} / ${st.losses ?? 0}`;
+  $("kSmart").textContent = st.smartWallets ?? 0;
+  $("kTracked").textContent = st.trackedWallets ?? 0;
+  renderWindow("btc15", s.current?.btc15); renderWindow("btc60", s.current?.btc60);
+
+  const sm = s.smart || [];
+  $("smart").innerHTML = sm.map(w => `<tr><td><a href="https://polymarket.com/profile/${esc(w.wallet)}" target="_blank" rel="noopener">${esc(w.name || short(w.wallet))}</a></td>
+    <td class="r">${w.windows}</td><td class="r">${(w.winRate * 100).toFixed(0)}%</td><td class="r pos">${(w.roi * 100).toFixed(1)}%</td>
+    <td class="r ${w.pnl >= 0 ? "pos" : "neg"}">${usd(w.pnl)}</td><td class="r mut">${ago(w.lastSeen)}</td></tr>`).join("");
+  const bf = st.backfillTotal ? ` Scored ${st.backfillDone}/${st.backfillTotal} past windows so far.` : "";
+  $("smartEmpty").hidden = sm.length > 0;
+  $("smartEmpty").textContent = `No wallet qualifies yet: each needs ${s.cfg?.minWindows ?? 20}+ settled windows, ${Math.round((s.cfg?.minWinRate ?? .55) * 100)}%+ wins and ${Math.round((s.cfg?.minRoi ?? .05) * 100)}%+ ROI.${bf}`;
+
+  const rows = [...(s.open || []).map(p => ({ ...p, open: true })), ...(s.closed || [])];
+  $("trades").innerHTML = rows.map(p => `<tr><td class="mut">${hhmmss(p.openedAt)}</td><td>${p.family.toUpperCase()}</td><td class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</td>
+    <td class="r">${cents(p.price)}</td><td><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc(p.walletName || short(p.wallet))}</a></td>
+    <td class="r ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.open ? "open" : p.won == null ? "void" : (p.pnl >= 0 ? "+" : "") + usd(p.pnl)}</td></tr>`).join("");
+  $("tradesEmpty").hidden = rows.length > 0;
+}
+
+let statusBusy = false, statusAgain = false;
+async function loadStatus(first) {
+  if (statusBusy) { statusAgain = true; return; }
+  statusBusy = true;
+  try {
+    const r = await fetch("/api/copy", { cache: "no-store" });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    if (first) { events = (d.events || []).filter(e => e.type !== "poll"); renderFeed(); }
+    renderStatus(d);
+    if (!d.enabled) { $("hb").textContent = "SHADOW is off on the server (COPY_TRADER=false)"; }
+  } catch (err) { $("hb").textContent = `couldn't load status: ${err.message}`; }
+  statusBusy = false;
+  if (statusAgain) { statusAgain = false; setTimeout(loadStatus, 500); }
+}
+
+function connect() {
+  const es = new EventSource("/api/copy/stream");
+  es.onopen = () => { $("conn").classList.add("on"); $("connTxt").textContent = "LIVE"; };
+  es.onerror = () => { $("conn").classList.remove("on"); $("connTxt").textContent = "RECONNECTING"; };
+  es.onmessage = m => { try { addEvent(JSON.parse(m.data)); } catch {} };
+}
+
+document.querySelector(".chips").addEventListener("click", e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  filter = b.dataset.f;
+  document.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === b));
+  for (const li of $("feed").children) li.hidden = filter !== "all" && li.dataset.g && li.dataset.g !== filter;
+});
+
+setInterval(() => {
+  document.querySelectorAll("[data-end]").forEach(el => {
+    const left = Math.max(0, Number(el.dataset.end) - Date.now());
+    el.textContent = `${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
+  });
+  if (lastPoll) $("hb").textContent = `last checked global trades ${ago(lastPoll)}`;
+}, 1000);
+setInterval(loadStatus, 15000);
+loadStatus(true);
+connect();
+</script>
+</body>
+</html>

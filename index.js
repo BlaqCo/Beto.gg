@@ -794,7 +794,7 @@ app.get("/api/arena/reality", async (req, res) => {
 // ── Colony: one read-only snapshot for the /colony station page ──
 // Maps each "agent" on the page to a real part of the system and runs the
 // Supervisor's checks server-side, so the page shows facts, not animation.
-const COLONY_LOG_RE = /\[agents\]|🏟|🤖|\[arena\]|\[BTC15|\[BTC60|BTC15 window|BTC60 window|Entry rule fired|TP hit|SL hit|HARD STOP|resolved via|config updated|settled|WON|LOST|PAPER|🎯|🛑|🎞/;
+const COLONY_LOG_RE = /\[copy\]|\[agents\]|🏟|🤖|\[arena\]|\[BTC15|\[BTC60|BTC15 window|BTC60 window|Entry rule fired|TP hit|SL hit|HARD STOP|resolved via|config updated|settled|WON|LOST|PAPER|🎯|🛑|🎞/;
 app.get("/api/colony", async (req, res) => {
   const out = { now: Date.now(), checks: [] };
   const check = (agent, ok, msg, level) => out.checks.push({ agent, ok, level: level || (ok ? "ok" : "warn"), msg });
@@ -868,6 +868,29 @@ app.get("/api/colony", async (req, res) => {
 app.get("/colony", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.sendFile(path.join(__dirname, "colony.html"));
+});
+
+// ── SHADOW copy trader: /copy page, status, and a live event stream ──
+app.get("/copy", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.sendFile(path.join(__dirname, "copy.html"));
+});
+app.get("/api/copy", async (req, res) => {
+  try {
+    const ct = await import("./arena/copy-trader.js");
+    res.set("Cache-Control", "no-store");
+    res.json({ ...ct.copyStatus(), events: ct.recentEvents(150) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/copy/stream", async (req, res) => {
+  let ct;
+  try { ct = await import("./arena/copy-trader.js"); } catch (e) { return res.status(500).end(); }
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.write("retry: 5000\n\n");
+  const send = e => res.write(`data: ${JSON.stringify(e)}\n\n`);
+  const off = ct.subscribe(send);
+  const ping = setInterval(() => res.write(": ping\n\n"), 20_000);
+  req.on("close", () => { off(); clearInterval(ping); });
 });
 
 app.get("/api/arena/specs", async (req, res) => {
@@ -1126,6 +1149,10 @@ async function loadBots() {
   } catch (err) {
     console.log("🎞 Arena recorder not loaded:", err.message);
   }
+  // SHADOW copy trader: paper copies of smart global-Polymarket wallets. Started right
+  // after the recorder so it hears every settlement. Off with COPY_TRADER=false.
+  try { await (await import("./arena/copy-trader.js")).startCopyTrader(); }
+  catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
   // AI agents: add strategy recipes and vote. Off unless AGENTS_ENABLED=true.

@@ -178,6 +178,7 @@ async function settlePending(now) {
     if (outcome != null || giveUp) {
       p.rec.outcome = outcome;
       pending.delete(slug);
+      for (const fn of settledListeners) { try { fn(p.rec); } catch { /* a listener never breaks recording */ } }
       if (p.rec.ticks.length) {
         stats.savedTo = await appendWindow(p.rec);
         stats.windowsSaved++;
@@ -185,6 +186,23 @@ async function settlePending(now) {
       }
     }
   }
+}
+
+const settledListeners = new Set();
+/** Call fn(rec) whenever a window settles (rec.outcome: 1 Up, 0 Down, null unknown). */
+export function onWindowSettled(fn) { settledListeners.add(fn); return () => settledListeners.delete(fn); }
+
+/** The live US window of a family that ends at endMs (±60s), with its latest quote. */
+export function liveQuote(family, endMs) {
+  for (const rec of live.values()) {
+    if (rec.family !== family || Math.abs(rec.end - endMs) > 60_000) continue;
+    for (let i = rec.ticks.length - 1; i >= 0; i--) {
+      const [t, bid, ask] = rec.ticks[i];
+      if (bid != null && ask != null) return { slug: rec.slug, start: rec.start, end: rec.end, t, bid, ask };
+    }
+    return { slug: rec.slug, start: rec.start, end: rec.end, t: null, bid: null, ask: null };
+  }
+  return null;
 }
 
 /** In-progress windows as plain data (for saving across restarts). */
