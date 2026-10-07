@@ -485,6 +485,9 @@ export function copyStatus(now = Date.now()) {
       pnl: +pnl.toFixed(2), recorderOn: !!recorder?.recorderStatus?.().enabled, queue: toScore.length },
     current: { btc15: cur("btc15"), btc60: cur("btc60") },
     smart, open: book.open, closed: closed.slice(-25).reverse(),
+    // Every settled copy in order, for the P&L chart.
+    curve: settled.slice().sort((a, b) => (a.closedAt || 0) - (b.closedAt || 0)).map(p => ({ t: p.closedAt, family: p.family, side: p.side,
+      price: p.price, avg: p.avg ?? p.price, staked: p.staked ?? CFG.stake, dca: !!p.dca, stop: p.exit?.reason === "stop", won: p.won, pnl: p.pnl })),
   };
 }
 export function recentEvents(n = 120) { return events.slice(-n); }

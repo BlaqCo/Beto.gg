@@ -70,6 +70,20 @@ th,td{padding:6px 10px;border-bottom:1px solid var(--phos-faint);text-align:left
 th{font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.04em}
 td.r,th.r{text-align:right}
 .hb{font-size:11px;color:var(--muted)}
+.chart{position:relative;padding:10px 14px 4px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .grid{stroke:var(--phos-faint);stroke-width:1}
+.chart .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.chart .axis{fill:var(--muted);font:11px var(--f-mono)}
+.chart .line{fill:none;stroke:var(--phos);stroke-width:2;stroke-linejoin:round}
+.chart .win{fill:var(--phos);stroke:var(--panel);stroke-width:2}
+.chart .loss{fill:var(--panel);stroke:var(--red);stroke-width:2}
+.chart .hit{fill:transparent;cursor:pointer}
+.chart .cross{stroke:var(--muted);stroke-width:1}
+.tip{position:absolute;pointer-events:none;background:#0b1a14;border:1px solid var(--phos-dim);border-radius:6px;padding:6px 8px;font-size:11px;line-height:1.4;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.chartfoot{display:flex;flex-wrap:wrap;gap:4px 14px;padding:4px 14px 12px;font-size:11px;color:var(--muted)}
+.chartfoot .k-win::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--phos);margin-right:5px;vertical-align:middle}
+.chartfoot .k-loss::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;border:2px solid var(--red);margin-right:5px;vertical-align:middle}
 .about{padding:12px 14px;color:var(--muted)}
 .about p{margin:0 0 8px}
 .back{display:inline-block;margin:0 auto 12px;max-width:980px;font-family:var(--f-pix);font-size:11px;letter-spacing:.06em}
@@ -92,6 +106,12 @@ td.r,th.r{text-align:right}
     <div class="kpi"><b>SMART WALLETS</b><i id="kSmart" class="amb">—</i></div>
     <div class="kpi"><b>WALLETS TRACKED</b><i id="kTracked">—</i></div>
   </div>
+
+  <section>
+    <div class="ph">PAPER P&amp;L OVER TIME <em id="curveMeta">cumulative, after fees</em></div>
+    <div class="chart" id="chart"><p class="empty">The chart starts with SHADOW's first settled copy.</p></div>
+    <div class="chartfoot"><span class="k-win">won</span><span class="k-loss">lost or stopped</span><span>tap a dot for details</span></div>
+  </section>
 
   <section>
     <div class="ph">RIGHT NOW <em id="hb">waiting for first poll…</em></div>
@@ -203,6 +223,7 @@ function renderStatus(s) {
   $("kSmart").textContent = st.smartWallets ?? 0;
   $("kTracked").textContent = st.trackedWallets ?? 0;
   renderWindow("btc15", s.current?.btc15); renderWindow("btc60", s.current?.btc60);
+  renderCurve(s.curve);
 
   const sm = s.smart || [];
   $("smart").innerHTML = sm.map(w => `<tr><td><a href="https://polymarket.com/profile/${esc(w.wallet)}" target="_blank" rel="noopener">${esc(w.name || short(w.wallet))}</a></td>
@@ -217,6 +238,48 @@ function renderStatus(s) {
     <td class="r">${cents(p.price)}${p.dca ? `<div class="mut">+DCA ${cents(p.dca.price)}</div>` : ""}</td><td><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc(p.walletName || short(p.wallet))}</a></td>
     <td class="r ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.open ? "open" : p.won == null ? "void" : (p.pnl >= 0 ? "+" : "") + usd(p.pnl)}${p.exit?.reason === "stop" ? '<div class="mut">stop</div>' : ""}</td></tr>`).join("");
   $("tradesEmpty").hidden = rows.length > 0;
+}
+
+// Cumulative paper P&L, one step per settled copy. One series, so no legend box: the title names it.
+function renderCurve(curve) {
+  const box = $("chart");
+  if (!curve?.length) { box.innerHTML = '<p class="empty">The chart starts with SHADOW\'s first settled copy.</p>'; $("curveMeta").textContent = "cumulative, after fees"; return; }
+  let cum = 0;
+  const pts = curve.map((c, i) => ({ ...c, i: i + 1, cum: (cum += c.pnl) }));
+  const W = Math.max(300, Math.round(box.clientWidth - 28) || 600), H = W < 500 ? 200 : 240, L = 44, R = 10, T = 12, B = 22;
+  const lo = Math.min(0, ...pts.map(p => p.cum)), hi = Math.max(0, ...pts.map(p => p.cum));
+  const pad = Math.max(2, (hi - lo) * 0.1), y0 = lo - pad, y1 = hi + pad;
+  const x = i => L + (pts.length === 1 ? (W - L - R) / 2 : (i / pts.length) * (W - L - R));
+  const y = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const step = (() => { const r = y1 - y0, m = 10 ** Math.floor(Math.log10(r / 4)); return [1, 2, 5, 10].map(k => k * m).find(k => r / k <= 5) || m * 10; })();
+  let grid = "";
+  for (let v = Math.ceil(y0 / step) * step; v <= y1; v += step)
+    grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(step < 1 ? 1 : 0)}</text>`;
+  let d = `M${x(0)},${y(0)}`;
+  for (const p of pts) d += ` H${x(p.i)} V${y(p.cum)}`;
+  const dots = pts.map(p => `<circle class="${p.won ? "win" : "loss"}" cx="${x(p.i)}" cy="${y(p.cum)}" r="${p.won ? 4.5 : 3.5}"/>`).join("");
+  const hits = pts.map(p => `<rect class="hit" data-i="${p.i - 1}" x="${x(p.i) - (W - L - R) / pts.length / 2}" y="${T}" width="${Math.max(10, (W - L - R) / pts.length)}" height="${H - T - B}"/>`).join("");
+  const last = pts[pts.length - 1];
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative paper profit: ${usd(last.cum)} after ${pts.length} copies">
+    ${grid}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/>
+    <text class="axis" x="${L}" y="${H - 6}">copy 1</text><text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">copy ${pts.length}</text>
+    <path class="line" d="${d}"/>${dots}<line class="cross" id="cross" y1="${T}" y2="${H - B}" visibility="hidden"/>${hits}</svg><div class="tip" id="tip" hidden></div>`;
+  const wins = pts.filter(p => p.won).length;
+  $("curveMeta").textContent = `${usd(last.cum)} after ${pts.length} copies · ${wins} won, ${pts.length - wins} lost`;
+  const svg = box.querySelector("svg"), tip = $("tip"), cross = $("cross");
+  const show = i => {
+    const p = pts[i], r = svg.getBoundingClientRect(), sx = r.width / W;
+    cross.setAttribute("x1", x(p.i)); cross.setAttribute("x2", x(p.i)); cross.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    tip.innerHTML = `<b>Copy ${p.i}</b> · ${hhmmss(p.t)}<br>${p.family.toUpperCase()} ${esc(p.side)} @ ${cents(p.price)}${p.dca ? ` · DCA, avg ${cents(p.avg)}` : ""} · $${p.staked} in<br>
+      <span class="${p.pnl >= 0 ? "pos" : "neg"}">${p.stop ? "stopped" : p.won ? "won" : "lost"} ${p.pnl >= 0 ? "+" : ""}${usd(p.pnl)}</span> · total ${usd(p.cum)}`;
+    const left = Math.min(Math.max(x(p.i) * sx + 14 - tip.offsetWidth / 2, 4), r.width + 14 - tip.offsetWidth - 4);
+    tip.style.left = `${left}px`; tip.style.top = `${Math.max(0, y(p.cum) * sx - tip.offsetHeight - 6)}px`;
+  };
+  const hide = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
+  svg.addEventListener("pointermove", e => { const h = e.target.closest(".hit"); h ? show(+h.dataset.i) : hide(); });
+  svg.addEventListener("pointerdown", e => { const h = e.target.closest(".hit"); if (h) show(+h.dataset.i); });
+  svg.addEventListener("pointerleave", hide);
 }
 
 let statusBusy = false, statusAgain = false;
@@ -257,6 +320,7 @@ setInterval(() => {
   if (lastPoll) $("hb").textContent = `last checked global trades ${ago(lastPoll)}`;
 }, 1000);
 setInterval(loadStatus, 15000);
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => status && renderCurve(status.curve), 200); });
 loadStatus(true);
 connect();
 </script>
