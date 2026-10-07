@@ -70,6 +70,11 @@ th,td{padding:6px 10px;border-bottom:1px solid var(--phos-faint);text-align:left
 th{font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.04em}
 td.r,th.r{text-align:right}
 .hb{font-size:11px;color:var(--muted)}
+table.trades{table-layout:fixed}
+table.trades th:nth-child(1){width:52px} table.trades th:nth-child(3){width:78px} table.trades th:nth-child(4){width:84px}
+table.trades td{white-space:normal;vertical-align:top}
+table.trades .sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.trades .res{font-weight:600}
 .chart{position:relative;padding:10px 14px 4px}
 .chart svg{display:block;width:100%;height:auto;overflow:visible}
 .chart .grid{stroke:var(--phos-faint);stroke-width:1}
@@ -140,15 +145,15 @@ td.r,th.r{text-align:right}
   </section>
 
   <section>
-    <div class="ph">PAPER TRADES <em>newest first</em></div>
-    <div class="tbl"><table><thead><tr><th>WHEN</th><th>MARKET</th><th>SIDE</th><th class="r">PRICE</th><th>COPIED</th><th class="r">RESULT</th></tr></thead><tbody id="trades"></tbody></table></div>
+    <div class="ph">PAPER TRADES <em>newest first · since the new rules</em></div>
+    <table class="trades"><thead><tr><th>WHEN</th><th>BET</th><th class="r">ENTRY</th><th class="r">RESULT</th></tr></thead><tbody id="trades"></tbody></table>
     <p class="empty" id="tradesEmpty" hidden>No paper copies yet.</p>
   </section>
 
   <section class="about">
     <div class="ph" style="margin:-12px -14px 10px">HOW IT WORKS</div>
     <p>Polymarket US hides other traders, but global Polymarket runs the same BTC 15-minute and hourly Up/Down windows on-chain. SHADOW scores every wallet on those windows after they settle, and trusts only wallets with a long, profitable, recent record that don't trade both sides.</p>
-    <p>When a trusted wallet buys Up or Down, SHADOW makes the same <b>$10 paper bet</b> on the matching Polymarket US window at the US price plus the taker fee, one per window. It skips when the US price is much worse than theirs, above 95¢, or too close to the close.</p>
+    <p>During each window SHADOW adds up what trusted wallets buy on each side. In the <b>last 3 minutes</b>, if they backed a side and that side costs <b>80–95¢</b> on Polymarket US, it makes a <b>$10 paper bet</b> on it (US price plus the taker fee), one per window.</p>
     <p>While it holds a copy, it checks the US price every 5 seconds. If our side dips to <b>58–66¢</b> it adds <b>$20</b> once; if our side falls to <b>22¢</b> it sells everything. After a stop it records whether holding would have won, so you can see if the stop is helping. <b>No real money is used.</b></p>
   </section>
 </main>
@@ -159,6 +164,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const usd = n => n == null ? "—" : `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 const cents = p => p == null ? "—" : `${Math.round(p * 100)}¢`;
 const short = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?";
+const hhmm = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 const hhmmss = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const ago = t => { if (!t) return "—"; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
 const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", error: "sys" };
@@ -217,7 +223,8 @@ function renderStatus(s) {
   status = s;
   if (s.stats?.lastPollAt) lastPoll = Math.max(lastPoll, s.stats.lastPollAt);
   const st = s.stats || {};
-  $("kPnl").textContent = usd(st.pnl ?? 0); $("kPnl").className = (st.pnl || 0) >= 0 ? "pos" : "neg";
+  const pnl = Number.isFinite(st.pnl) ? st.pnl : 0;
+  $("kPnl").textContent = `${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`; $("kPnl").className = pnl >= 0 ? "pos" : "neg";
   $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
   $("kWl").textContent = `${st.wins ?? 0} / ${st.losses ?? 0}`;
   $("kSmart").textContent = st.smartWallets ?? 0;
@@ -234,9 +241,11 @@ function renderStatus(s) {
   $("smartEmpty").textContent = `No wallet qualifies yet: each needs ${s.cfg?.minWindows ?? 20}+ settled windows, ${Math.round((s.cfg?.minWinRate ?? .55) * 100)}%+ wins and ${Math.round((s.cfg?.minRoi ?? .05) * 100)}%+ ROI.${bf}`;
 
   const rows = [...(s.open || []).map(p => ({ ...p, open: true })), ...(s.closed || [])];
-  $("trades").innerHTML = rows.map(p => `<tr><td class="mut">${hhmmss(p.openedAt)}</td><td>${p.family.toUpperCase()}</td><td class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</td>
-    <td class="r">${cents(p.price)}${p.dca ? `<div class="mut">+DCA ${cents(p.dca.price)}</div>` : ""}</td><td><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc(p.walletName || short(p.wallet))}</a></td>
-    <td class="r ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.open ? "open" : p.won == null ? "void" : (p.pnl >= 0 ? "+" : "") + usd(p.pnl)}${p.exit?.reason === "stop" ? '<div class="mut">stop</div>' : ""}</td></tr>`).join("");
+  const res = p => p.open ? "open" : p.won == null || !Number.isFinite(p.pnl) ? "void" : `${p.pnl >= 0 ? "+" : "−"}$${Math.abs(p.pnl).toFixed(2)}`;
+  $("trades").innerHTML = rows.map(p => `<tr><td class="mut">${hhmm(p.openedAt)}</td>
+    <td><span class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</span> ${p.family.toUpperCase()}<div class="sub"><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc((p.walletName || short(p.wallet)).slice(0, 16))}</a></div></td>
+    <td class="r">${cents(p.price)}${p.dca ? `<div class="sub">+DCA ${cents(p.dca.price)}</div>` : ""}</td>
+    <td class="r res ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${res(p)}${p.exit?.reason === "stop" ? '<div class="sub">stopped</div>' : p.won === false ? '<div class="sub">lost</div>' : p.won ? '<div class="sub">won</div>' : ""}</td></tr>`).join("");
   $("tradesEmpty").hidden = rows.length > 0;
 }
 
@@ -255,8 +264,14 @@ function renderCurve(curve) {
   let grid = "";
   for (let v = Math.ceil(y0 / step) * step; v <= y1; v += step)
     grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(step < 1 ? 1 : 0)}</text>`;
-  let d = `M${x(0)},${y(0)}`;
-  for (const p of pts) d += ` H${x(p.i)} V${y(p.cum)}`;
+  // Smooth line through every copy (monotone cubic: bends without overshooting a point).
+  const P = [{ x: x(0), y: y(0) }, ...pts.map(p => ({ x: x(p.i), y: y(p.cum) }))];
+  const n = P.length, dx = [], m = [], tg = [];
+  for (let k = 0; k < n - 1; k++) { dx[k] = P[k + 1].x - P[k].x; m[k] = (P[k + 1].y - P[k].y) / (dx[k] || 1); }
+  tg[0] = m[0] || 0; tg[n - 1] = m[n - 2] || 0;
+  for (let k = 1; k < n - 1; k++) tg[k] = m[k - 1] * m[k] <= 0 ? 0 : 3 * (dx[k - 1] + dx[k]) / ((2 * dx[k] + dx[k - 1]) / m[k - 1] + (dx[k] + 2 * dx[k - 1]) / m[k]);
+  let d = `M${P[0].x},${P[0].y}`;
+  for (let k = 0; k < n - 1; k++) d += ` C${P[k].x + dx[k] / 3},${P[k].y + tg[k] * dx[k] / 3} ${P[k + 1].x - dx[k] / 3},${P[k + 1].y - tg[k + 1] * dx[k] / 3} ${P[k + 1].x},${P[k + 1].y}`;
   const dots = pts.map(p => `<circle class="${p.won ? "win" : "loss"}" cx="${x(p.i)}" cy="${y(p.cum)}" r="${p.won ? 4.5 : 3.5}"/>`).join("");
   const hits = pts.map(p => `<rect class="hit" data-i="${p.i - 1}" x="${x(p.i) - (W - L - R) / pts.length / 2}" y="${T}" width="${Math.max(10, (W - L - R) / pts.length)}" height="${H - T - B}"/>`).join("");
   const last = pts[pts.length - 1];
@@ -265,7 +280,7 @@ function renderCurve(curve) {
     <text class="axis" x="${L}" y="${H - 6}">copy 1</text><text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">copy ${pts.length}</text>
     <path class="line" d="${d}"/>${dots}<line class="cross" id="cross" y1="${T}" y2="${H - B}" visibility="hidden"/>${hits}</svg><div class="tip" id="tip" hidden></div>`;
   const wins = pts.filter(p => p.won).length;
-  $("curveMeta").textContent = `${usd(last.cum)} after ${pts.length} copies · ${wins} won, ${pts.length - wins} lost`;
+  $("curveMeta").textContent = `${last.cum >= 0 ? "+" : "−"}$${Math.abs(last.cum).toFixed(2)} after ${pts.length} copies · ${wins} won, ${pts.length - wins} lost`;
   const svg = box.querySelector("svg"), tip = $("tip"), cross = $("cross");
   const show = i => {
     const p = pts[i], r = svg.getBoundingClientRect(), sx = r.width / W;
