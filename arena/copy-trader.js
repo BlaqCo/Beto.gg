@@ -38,6 +38,12 @@ export const CFG = {
   maxPrice: env("COPY_MAX_PRICE", 0.95),        // don't pay more than this on US
   maxSlippage: env("COPY_MAX_SLIPPAGE", 0.1),   // US ask may be at most this much worse than their price
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
+  // Position management: add once on a dip, cut the whole position at the stop.
+  dcaUsd: env("COPY_DCA_USD", 20),              // paper dollars added on the dip (0 turns DCA off)
+  dcaLow: env("COPY_DCA_LOW", 0.58),            // our side's bid must be inside this band...
+  dcaHigh: env("COPY_DCA_HIGH", 0.66),          // ...to add (a gap straight past it doesn't)
+  stopPrice: env("COPY_STOP_PRICE", 0.22),      // sell everything when our side's bid hits this (0 = off)
+  manageMs: env("COPY_MANAGE_MS", 5000),
   backfill15: env("COPY_BACKFILL_BTC15", 96),   // windows to score on startup (96 = one day)
   backfill60: env("COPY_BACKFILL_BTC60", 24),
   maxTradesPerWindow: env("COPY_MAX_TRADES_PER_WINDOW", 5000),
@@ -253,14 +259,69 @@ function openPaper({ family, trade, us, price, now, judged }) {
   const contracts = CFG.stake / price;
   const fee = takerFee(contracts, price);
   const pos = { id: `${us.slug}`, family, usSlug: us.slug, end: us.end, side: trade.outcome, price, contracts: +contracts.toFixed(4),
-    fee: +fee.toFixed(4), cost: +(CFG.stake + fee).toFixed(4), openedAt: now, wallet: trade.wallet, walletName: trade.name,
+    fee: +fee.toFixed(4), cost: +(CFG.stake + fee).toFixed(4), staked: CFG.stake, avg: price, dca: null, openedAt: now, wallet: trade.wallet, walletName: trade.name,
     theirPrice: trade.price, theirUsd: +(trade.size * trade.price).toFixed(2), why: judged.why };
   book.open.push(pos);
   emit("copy", `COPIED ${short(trade.wallet)} → paper ${pos.side} on US ${family.toUpperCase()} @ ${cents(price)} ($${CFG.stake} + ${usd(fee)} fee). They paid ${cents(trade.price)} for ${usd(pos.theirUsd)}`, { family, pos });
   persistBook();
 }
 
+/** What the position should do at this quote: add on the dip, stop out, or nothing. */
+export function decideManage({ pos, us, now, cfg = CFG }) {
+  if (!us || us.bid == null || us.ask == null) return null;
+  const bid = pos.side === "Up" ? us.bid : +(1 - us.ask).toFixed(4);   // what we could sell for
+  const ask = pos.side === "Up" ? us.ask : +(1 - us.bid).toFixed(4);   // what adding would cost
+  if (cfg.stopPrice > 0 && bid <= cfg.stopPrice) return { stop: true, price: bid };
+  if (!pos.dca && cfg.dcaUsd > 0 && bid >= cfg.dcaLow && bid <= cfg.dcaHigh && pos.end - now >= cfg.minMsLeft)
+    return { dca: true, price: ask, bid };
+  return null;
+}
+
+/** Apply a decision to a paper position (mutates it). Returns the closed record on a stop. */
+export function applyManage(pos, d, now, cfg = CFG) {
+  if (d.dca) {
+    const add = cfg.dcaUsd / d.price, fee = takerFee(add, d.price);
+    pos.dca = { price: d.price, contracts: +add.toFixed(4), fee: +fee.toFixed(4), at: now, bid: d.bid };
+    pos.contracts = +(pos.contracts + add).toFixed(4);
+    pos.cost = +(pos.cost + cfg.dcaUsd + fee).toFixed(4);
+    pos.staked = (pos.staked || cfg.stake) + cfg.dcaUsd;
+    pos.avg = +((pos.staked) / pos.contracts).toFixed(4);
+    return null;
+  }
+  if (d.stop) {
+    const fee = takerFee(pos.contracts, d.price), proceeds = pos.contracts * d.price - fee;
+    return { ...pos, exit: { reason: "stop", price: d.price, fee: +fee.toFixed(4), at: now }, won: false,
+      pnl: +(proceeds - pos.cost).toFixed(2), closedAt: now };
+  }
+  return null;
+}
+
+function managePositions(now) {
+  if (!recorder?.liveQuote || !book.open.length) return;
+  for (const p of [...book.open]) {
+    const d = decideManage({ pos: p, us: recorder.liveQuote(p.family, p.end), now });
+    if (!d) continue;
+    const closed = applyManage(p, d, now);
+    const F = p.family.toUpperCase();
+    if (d.dca) emit("dca", `DCA ${F} ${p.side}: our side dipped to ${cents(d.bid)}, added $${CFG.dcaUsd} @ ${cents(d.price)}. Now ${p.contracts.toFixed(2)} shares, avg ${cents(p.avg)}, $${p.staked} in`, { family: p.family, pos: p });
+    if (closed) {
+      book.open = book.open.filter(x => x !== p);
+      book.closed.push(closed);
+      if (book.closed.length > 500) book.closed = book.closed.slice(-500);
+      emit("stop", `STOP ${F} ${p.side}: bid ${cents(d.price)} hit the ${cents(CFG.stopPrice)} stop, sold ${p.contracts.toFixed(2)} shares: ${usd(closed.pnl)}${p.dca ? " (after DCA)" : ""}`, { family: p.family, trade: closed });
+    }
+    persistBook();
+  }
+}
+
 export function settlePaper(rec) {
+  // Stopped-out copies: record what holding would have done, so the stop can be judged.
+  for (const c of book.closed) {
+    if (c.usSlug !== rec.slug || !c.exit || c.exit.reason !== "stop" || c.holdWouldWin !== undefined) continue;
+    c.holdWouldWin = rec.outcome == null ? null : (rec.outcome === 1) === (c.side === "Up");
+    if (c.holdWouldWin != null) emit("settle", `stop check ${c.family.toUpperCase()} ${c.side}: holding would have ${c.holdWouldWin ? `WON +${usd(c.contracts - c.cost)}` : `lost ${usd(-c.cost)}`}; the stop got ${usd(c.pnl)}`, { family: c.family });
+    persistBook();
+  }
   const hit = book.open.filter(p => p.usSlug === rec.slug);
   if (!hit.length) return;
   book.open = book.open.filter(p => p.usSlug !== rec.slug);
@@ -271,7 +332,7 @@ export function settlePaper(rec) {
     book.closed.push(closed);
     if (book.closed.length > 500) book.closed = book.closed.slice(-500);
     emit("settle", won == null ? `VOID ${p.family.toUpperCase()} ${p.side}: US result unknown, stake returned`
-      : `${won ? "WON" : "LOST"} ${p.family.toUpperCase()} ${p.side} @ ${cents(p.price)}: ${pnl >= 0 ? "+" : ""}${usd(pnl)} (copied ${short(p.wallet)})`, { family: p.family, trade: closed });
+      : `${won ? "WON" : "LOST"} ${p.family.toUpperCase()} ${p.side} @ ${p.dca ? `avg ${cents(p.avg)} (DCA'd)` : cents(p.price)}: ${pnl >= 0 ? "+" : ""}${usd(pnl)} (copied ${short(p.wallet)})`, { family: p.family, trade: closed });
   }
   persistBook();
 }
@@ -477,7 +538,7 @@ export async function startCopyTrader() {
     }
   }
   stats.backfillTotal = toScore.length;
-  emit("start", `SHADOW on (paper only): ${wallets.size} wallets remembered, scoring ${toScore.length} past windows, copying $${CFG.stake} per signal${recorder ? "" : ". Recorder unavailable: can't price US copies"}`, {});
+  emit("start", `SHADOW on (paper only): ${wallets.size} wallets remembered, scoring ${toScore.length} past windows, copying $${CFG.stake} per signal, +$${CFG.dcaUsd} if it dips to ${cents(CFG.dcaLow)}-${cents(CFG.dcaHigh)}, stop at ${cents(CFG.stopPrice)}${recorder ? "" : ". Recorder unavailable: can't price US copies"}`, {});
 
   let busyLive = false, busyScore = false;
   timers.push(setInterval(async () => {
@@ -492,6 +553,7 @@ export async function startCopyTrader() {
     if (busyScore) return; busyScore = true;
     try { await workScoreQueue(Date.now()); } finally { busyScore = false; }
   }, 2500));
+  timers.push(setInterval(() => { try { managePositions(Date.now()); } catch (err) { stats.lastError = `manage: ${err.message}`; } }, CFG.manageMs));
   timers.push(setInterval(() => persistAll().catch(() => {}), 60_000));
   console.log(`👥 Copy trader (SHADOW) on — paper copies of smart global-Polymarket BTC wallets onto Polymarket US, every ${CFG.pollMs / 1000}s`);
 }

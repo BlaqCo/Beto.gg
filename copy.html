@@ -61,7 +61,7 @@ section:last-child{border-bottom:0}
 @keyframes flash{from{background:rgba(56,242,122,.18)}to{background:transparent}}
 .feed time{color:var(--muted);font-variant-numeric:tabular-nums}
 .feed .k{font-family:var(--f-pix);font-size:9px;letter-spacing:.04em;align-self:start;padding:2px 4px;border-radius:3px;text-align:center;border:1px solid currentColor}
-.k.copy{color:var(--amber)} .k.settle{color:var(--phos)} .k.spot{color:var(--cyan)} .k.skip{color:var(--muted)}
+.k.copy,.k.dca{color:var(--amber)} .k.settle{color:var(--phos)} .k.stop{color:var(--red)} .k.spot{color:var(--cyan)} .k.skip{color:var(--muted)}
 .k.score,.k.window,.k.start{color:var(--violet)} .k.error{color:var(--red)}
 .empty{padding:14px;color:var(--muted)}
 .tbl{overflow-x:auto}
@@ -128,7 +128,8 @@ td.r,th.r{text-align:right}
   <section class="about">
     <div class="ph" style="margin:-12px -14px 10px">HOW IT WORKS</div>
     <p>Polymarket US hides other traders, but global Polymarket runs the same BTC 15-minute and hourly Up/Down windows on-chain. SHADOW scores every wallet on those windows after they settle, and trusts only wallets with a long, profitable, recent record that don't trade both sides.</p>
-    <p>When a trusted wallet buys Up or Down, SHADOW makes the same <b>$10 paper bet</b> on the matching Polymarket US window at the US price plus the taker fee, one per window. It skips when the US price is much worse than theirs, above 95¢, or too close to the close. <b>No real money is used.</b></p>
+    <p>When a trusted wallet buys Up or Down, SHADOW makes the same <b>$10 paper bet</b> on the matching Polymarket US window at the US price plus the taker fee, one per window. It skips when the US price is much worse than theirs, above 95¢, or too close to the close.</p>
+    <p>While it holds a copy, it checks the US price every 5 seconds. If our side dips to <b>58–66¢</b> it adds <b>$20</b> once; if our side falls to <b>22¢</b> it sells everything. After a stop it records whether holding would have won, so you can see if the stop is helping. <b>No real money is used.</b></p>
   </section>
 </main>
 
@@ -140,8 +141,8 @@ const cents = p => p == null ? "—" : `${Math.round(p * 100)}¢`;
 const short = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?";
 const hhmmss = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const ago = t => { if (!t) return "—"; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
-const GROUP = { copy: "copy", settle: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", error: "sys" };
-const LABEL = { copy: "COPY", settle: "RESULT", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", error: "ERROR" };
+const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", error: "sys" };
+const LABEL = { copy: "COPY", settle: "RESULT", dca: "DCA", stop: "STOP", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", error: "ERROR" };
 let filter = "all", events = [], status = null, lastPoll = 0;
 
 function liFor(e, fresh) {
@@ -184,7 +185,12 @@ function renderWindow(f, c) {
     <div class="flow" aria-hidden="true"><div class="up" style="width:${up / tot * 100}%"></div><div class="down" style="width:${dn / tot * 100}%"></div></div>
     <div class="row"><span>Smart money</span><span>${sUp + sDn ? `<span class="pos">Up ${usd(sUp)}</span> · <span class="neg">Down ${usd(sDn)}</span>` : '<span class="mut">none yet</span>'}</span></div>
     <div class="row"><span>US price to buy</span><span>${us?.ask != null ? `<span class="pos">Up ${cents(us.ask)}</span> · <span class="neg">Down ${cents(1 - us.bid)}</span>` : '<span class="mut">no US window</span>'}</span></div>
-    ${p ? `<div class="posbox">HOLDING paper ${esc(p.side)} @ ${cents(p.price)} · copied ${esc(short(p.wallet))}</div>` : ""}`;
+    ${p ? (() => {
+      const now = us?.bid != null ? (p.side === "Up" ? us.bid : 1 - us.ask) : null;
+      const val = now != null ? p.contracts * now : null;
+      return `<div class="posbox">HOLDING paper ${esc(p.side)} · ${p.contracts.toFixed(2)} sh · $${p.staked ?? 10} in @ avg ${cents(p.avg ?? p.price)}${p.dca ? ` (DCA'd @ ${cents(p.dca.price)})` : ""}<br>
+        now ${now != null ? `${cents(now)} · worth ${usd(val)}` : "—"} · DCA ${p.dca ? "used" : `at ${cents(status?.cfg?.dcaLow)}-${cents(status?.cfg?.dcaHigh)}`} · stop ${cents(status?.cfg?.stopPrice)} · copied ${esc(short(p.wallet))}</div>`;
+    })() : ""}`;
 }
 
 function renderStatus(s) {
@@ -208,8 +214,8 @@ function renderStatus(s) {
 
   const rows = [...(s.open || []).map(p => ({ ...p, open: true })), ...(s.closed || [])];
   $("trades").innerHTML = rows.map(p => `<tr><td class="mut">${hhmmss(p.openedAt)}</td><td>${p.family.toUpperCase()}</td><td class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</td>
-    <td class="r">${cents(p.price)}</td><td><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc(p.walletName || short(p.wallet))}</a></td>
-    <td class="r ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.open ? "open" : p.won == null ? "void" : (p.pnl >= 0 ? "+" : "") + usd(p.pnl)}</td></tr>`).join("");
+    <td class="r">${cents(p.price)}${p.dca ? `<div class="mut">+DCA ${cents(p.dca.price)}</div>` : ""}</td><td><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc(p.walletName || short(p.wallet))}</a></td>
+    <td class="r ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.open ? "open" : p.won == null ? "void" : (p.pnl >= 0 ? "+" : "") + usd(p.pnl)}${p.exit?.reason === "stop" ? '<div class="mut">stop</div>' : ""}</td></tr>`).join("");
   $("tradesEmpty").hidden = rows.length > 0;
 }
 
