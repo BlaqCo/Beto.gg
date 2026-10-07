@@ -44,7 +44,8 @@ export const CFG = {
 };
 
 const DUR = { btc15: 15 * 60_000, btc60: 60 * 60_000 };
-const KEY_WALLETS = "arena:copy:wallets", KEY_BOOK = "arena:copy:book", KEY_EVENTS = "arena:copy:events";
+// v2: v1 held hourly scores from year-old markets (a slug without a year matched 2025).
+const KEY_WALLETS = "arena:copy:wallets:v2", KEY_BOOK = "arena:copy:book", KEY_EVENTS = "arena:copy:events";
 const MAX_EVENTS = 300, MAX_WALLETS = 3000;   // keeps the saved wallet list well under Redis's 1 MB request limit
 
 // ── State ───────────────────────────────────────────────────────────
@@ -94,7 +95,21 @@ export function globalSlugs(family, startMs) {
   if (family === "btc15") return [`btc-updown-15m-${sec}`];
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "long", day: "numeric", hour: "numeric", hour12: true })
     .formatToParts(new Date(startMs)).map(x => [x.type, x.value]));
-  return [`bitcoin-up-or-down-${p.month.toLowerCase()}-${p.day}-${p.hour}${(p.dayPeriod || "").toLowerCase()}-et`, `btc-updown-1h-${sec}`];
+  const y = new Date(startMs).getUTCFullYear(), md = `${p.month.toLowerCase()}-${p.day}`, h = `${p.hour}${(p.dayPeriod || "").toLowerCase()}`;
+  // Exact-timestamp slug first; the month-day slug has no year, so findMarket checks its dates.
+  return [`btc-updown-1h-${sec}`, `bitcoin-up-or-down-${md}-${y}-${h}-et`, `bitcoin-up-or-down-${md}-${h}-et`];
+}
+
+/**
+ * Does a global market belong to the window ending at endMs? Slugs without a year can
+ * match the same date in another year, so an hourly market's end date must be within
+ * 6 hours of ours. BTC15 slugs are the exact start timestamp, so they always match.
+ */
+export function marketMatchesWindow(family, ev, m, endMs) {
+  if (family === "btc15") return true;   // its slug is the exact start timestamp
+  const d = Date.parse(m?.endDate || ev?.endDate || "");
+  if (!Number.isFinite(d)) return false;
+  return Math.abs(d - endMs) <= 6 * 3600_000;
 }
 
 export function windowStart(family, now) { return Math.floor(now / DUR[family]) * DUR[family]; }
@@ -108,8 +123,12 @@ async function findMarket(family, start) {
   for (const slug of globalSlugs(family, start)) {
     try {
       const evs = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(slug)}`);
-      const m = (Array.isArray(evs) ? evs[0] : evs)?.markets?.[0];
+      const ev = Array.isArray(evs) ? evs[0] : evs, m = ev?.markets?.[0];
       if (!m?.conditionId) continue;
+      if (!marketMatchesWindow(family, ev, m, start + DUR[family])) {
+        stats.lastError = `${slug} is a different window (ends ${m.endDate || ev.endDate}), skipped`;
+        continue;
+      }
       const mk = { family, start, end: start + DUR[family], slug, conditionId: m.conditionId, outcomes: parseArr(m.outcomes) };
       marketCache.set(key, mk);
       if (marketCache.size > 400) marketCache.delete(marketCache.keys().next().value);
@@ -315,7 +334,7 @@ async function pollLive(family, now) {
   for (const t of fresh) { cur.seen.add(t.id); cur.newest = Math.max(cur.newest, t.t); }
   cur.diag.trades += fresh.length;
   // A busy window whose newest trade we see is minutes old means we're reading the wrong end of the feed.
-  if (!cur.warned && now - start > 4 * 60_000 && cur.diag.trades > 50 && now - cur.newest > 3 * 60_000) {
+  if (!cur.warned && now - start > 4 * 60_000 && cur.diag.trades > 50 && cur.newest > 0 && now - cur.newest > 3 * 60_000) {
     cur.warned = true;
     emit("error", `${family.toUpperCase()}: newest trade seen is ${Math.round((now - cur.newest) / 60_000)} min old, the live trade feed may be lagging`, { family });
   }
