@@ -189,8 +189,10 @@ test("smart entry: agreement, fair value, sizing and brakes", () => {
   assert.equal(d3.enter, true); assert.equal(d3.tier, "strong"); assert.equal(d3.stake, 15, "3 wallets, all agree, big edge: $15");
   const noFair = ct.decideSmart({ votes: votes(2), us: { ...us, spot: null }, holding: false, now, cfg: c, safety: okSafety });
   assert.equal(noFair.enter, true); assert.equal(noFair.stake, 10, "2 wallets all agree but no fair value: +1 -1 = normal");
-  const dear = ct.decideSmart({ votes: votes(3), us: { ...us, spot: 100_000 }, holding: false, now, cfg: c, safety: okSafety });
-  assert.equal(dear.enter, false); assert.equal(dear.code, "edge", "80¢ for a coin flip is refused");
+  const dear = ct.decideSmart({ votes: votes(3), us: { ...us, spot: 100_000 }, holding: false, now, cfg: c, safety: okSafety, globalPx: { Up: { px: 0.6, t: now } } });
+  assert.equal(dear.enter, false); assert.equal(dear.code, "edge", "80¢ when the global market says ~55¢ is refused");
+  const mathOnly = ct.decideSmart({ votes: votes(3), us: { ...us, spot: 100_000 }, holding: false, now, cfg: c, safety: okSafety });
+  assert.equal(mathOnly.enter, true); assert.equal(mathOnly.stake, 5, "BTC math alone can't veto, only shrink the bet to $5");
   const split = votes(3); ct.addVote(split, { wallet: "d", outcome: "Down", usd: 10, price: 0.2 }, 0.5);
   assert.equal(ct.decideSmart({ votes: split, us, holding: false, now, cfg: c, safety: okSafety }).code, "split");
   assert.equal(ct.decideSmart({ votes: votes(3), us, holding: false, now, cfg: c, safety: { ok: false, code: "pause", why: "paused" } }).code, "pause");
