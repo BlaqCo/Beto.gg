@@ -131,3 +131,100 @@ test("default rule: last 4 minutes, 72-95¢, DCA $20 at 53-63¢, stop 22¢", () 
   assert.equal(ct.decideEntry({ smartFlow: up, us: { end: now + 250_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }).wait, true, "4:10 left waits");
   assert.match(ct.decideEntry({ smartFlow: up, us: { end: now + 200_000, bid: 0.69, ask: 0.71 }, holding: false, now, cfg: c }).why, /under the 72¢ minimum/);
 });
+
+test("late bets: buys in the last 5 min at 70¢+ are scored separately", () => {
+  const end = 10_000_000, T = (wallet, outcome, size, price, t) => ({ wallet, side: "BUY", outcome, size, price, t, name: null });
+  const r = Object.fromEntries(ct.scoreTrades([
+    T("a", "Up", 10, 0.4, end - 600_000), T("a", "Up", 10, 0.8, end - 120_000),   // early cheap + late 80¢ Up
+    T("b", "Down", 10, 0.85, end - 60_000),                                       // late Down, lost
+    T("c", "Up", 10, 0.6, end - 60_000),                                          // late but under 70¢: not a late bet
+  ], 1, end).map(x => [x.wallet, x]));
+  assert.deepEqual(r.a.late, { won: true, price: 0.8 });
+  assert.deepEqual(r.b.late, { won: false, price: 0.85 });
+  assert.equal(r.c.late, null);
+});
+
+test("recency weighting and late stats feed the vote weight", () => {
+  const m = new Map(), c = { ...ct.CFG, decay: 0.5 };
+  ct.addResult(m, { wallet: "w", pnl: -1, cost: 1, late: { won: false, price: 0.8 } }, 1, c);
+  ct.addResult(m, { wallet: "w", pnl: 1, cost: 1, late: { won: true, price: 0.8 } }, 2, c);
+  const s = m.get("w");
+  assert.equal(s.rw / s.rn, 2 / 3, "the newer win counts double the older loss");
+  const L = ct.lateStats(s);
+  assert.equal(L.winRate, 2 / 3);
+  assert.ok(Math.abs(L.edge - (1 - 1.2) / 4.5) < 1e-9, "edge = wins minus prices, shrunk");
+  const strongLate = { lN: 10, lW: 10, lP: 8 }, weakLate = { lN: 10, lW: 6, lP: 8 };
+  assert.ok(ct.walletWeight(strongLate, { winRate: 0.6 }) > ct.walletWeight({}, { winRate: 0.6 }), "beating the price on late bets adds weight");
+  assert.equal(ct.walletWeight(weakLate, { winRate: 0.6 }), 0, "losing late bets cancel the vote");
+});
+
+test("consensus: counts agreeing wallets and the weight share", () => {
+  const votes = { Up: new Map(), Down: new Map() };
+  ct.addVote(votes, { wallet: "a", outcome: "Up", usd: 50, price: 0.8 }, 0.2);
+  ct.addVote(votes, { wallet: "b", outcome: "Up", usd: 10, price: 0.8 }, 0.1);
+  ct.addVote(votes, { wallet: "c", outcome: "Down", usd: 10, price: 0.2 }, 0.1);
+  ct.addVote(votes, { wallet: "z", outcome: "Down", usd: 10, price: 0.2 }, 0);   // zero weight: not counted
+  const c = ct.consensus(votes);
+  assert.equal(c.side, "Up"); assert.equal(c.agree, 2); assert.equal(c.against, 1);
+  assert.equal(c.share, +((0.3 + 0.11) / (0.3 + 0.11 + 0.11)).toFixed(4));
+});
+
+test("fair value: BTC math from spot vs strike, averaged with the global price", () => {
+  const now = 0, us = { end: 120_000, spot: 100_300, strike: 100_000, pxs: [] };
+  const fv = ct.fairValue({ side: "Up", us, globalPx: { px: 0.9, t: now }, now });
+  assert.ok(fv.model > 0.9 && fv.model < 1, `0.3% above the strike with 2 min left is very likely Up (${fv.model})`);
+  assert.equal(fv.fair, +((fv.model + 0.9) / 2).toFixed(4));
+  assert.ok(ct.fairValue({ side: "Down", us, now }).model < 0.1);
+  assert.equal(ct.fairValue({ side: "Up", us: { end: 1 }, globalPx: { px: 0.9, t: -999_999 }, now }).fair, null, "stale global and no spot: unknown");
+  assert.ok(Math.abs(ct.fairValue({ side: "Up", us: { ...us, spot: 100_000 }, now }).model - 0.5) < 1e-6, "at the strike it's a coin flip");
+});
+
+test("smart entry: agreement, fair value, sizing and brakes", () => {
+  const now = 1_000_000, end = now + 200_000, c = ct.CFG;
+  const votes = n => { const v = { Up: new Map(), Down: new Map() }; for (let i = 0; i < n; i++) ct.addVote(v, { wallet: "w" + i, outcome: "Up", usd: 10, price: 0.8 }, 0.2); return v; };
+  const us = { end, bid: 0.78, ask: 0.80, spot: 100_400, strike: 100_000, pxs: [] };
+  const okSafety = { ok: true };
+  assert.match(ct.decideSmart({ votes: votes(1), us, holding: false, now, cfg: c, safety: okSafety }).why, /only 1 smart wallet/);
+  const d3 = ct.decideSmart({ votes: votes(3), us, holding: false, now, cfg: c, safety: okSafety });
+  assert.equal(d3.enter, true); assert.equal(d3.tier, "strong"); assert.equal(d3.stake, 15, "3 wallets, all agree, big edge: $15");
+  const noFair = ct.decideSmart({ votes: votes(2), us: { ...us, spot: null }, holding: false, now, cfg: c, safety: okSafety });
+  assert.equal(noFair.enter, true); assert.equal(noFair.stake, 10, "2 wallets all agree but no fair value: +1 -1 = normal");
+  const dear = ct.decideSmart({ votes: votes(3), us: { ...us, spot: 100_000 }, holding: false, now, cfg: c, safety: okSafety });
+  assert.equal(dear.enter, false); assert.equal(dear.code, "edge", "80¢ for a coin flip is refused");
+  const split = votes(3); ct.addVote(split, { wallet: "d", outcome: "Down", usd: 10, price: 0.2 }, 0.5);
+  assert.equal(ct.decideSmart({ votes: split, us, holding: false, now, cfg: c, safety: okSafety }).code, "split");
+  assert.equal(ct.decideSmart({ votes: votes(3), us, holding: false, now, cfg: c, safety: { ok: false, code: "pause", why: "paused" } }).code, "pause");
+});
+
+test("brakes: daily loss limit and a pause after 2 losses in a row", () => {
+  const now = Date.UTC(2026, 9, 8, 12), c = ct.CFG;
+  const L = (pnl, mins) => ({ won: pnl > 0, pnl, closedAt: now - mins * 60_000 });
+  assert.equal(ct.safetyCheck({ closed: [L(-10, 50), L(-10, 20)] }, now, c).code, "pause");
+  assert.equal(ct.safetyCheck({ closed: [L(-10, 50), L(-10, 40)] }, now, c).ok, true, "pause is over after 30 min");
+  assert.equal(ct.safetyCheck({ closed: [L(-10, 50), L(2, 30), L(-10, 20)] }, now, c).ok, true, "a win breaks the streak");
+  assert.equal(ct.safetyCheck({ closed: [L(-25, 300), L(1, 200), L(-16, 100)] }, now, c).code, "limit");
+  assert.equal(ct.safetyCheck({ closed: [L(-25, 24 * 60), L(1, 200), L(-16, 100)] }, now, c).ok, true, "yesterday's losses don't count");
+});
+
+test("rules side by side: every rule has its own config and leaderboard rows only once it trades", () => {
+  ct._reset();
+  const ids = ct.VARIANTS.map(v => v.id);
+  assert.deepEqual(ids, ["main", "rule72", "rule80", "nodca", "stop15", "nostop"]);
+  assert.equal(ct.cfgOf(ct.VARIANTS[2]).minPrice, 0.8);
+  assert.equal(ct.cfgOf(ct.VARIANTS[3]).dcaUsd, 0);
+  assert.equal(ct.cfgOf(ct.VARIANTS[5]).stopPrice, 0);
+  assert.match(ct.ruleText(ct.VARIANTS[0]), /last 4 min · 72¢-95¢ · 2\+ smart wallets agree/);
+  assert.equal(ct.leaderboardRows().length, 2, "only SHADOW's rows before the others trade");
+  const st = ct.copyStatus();
+  assert.equal(st.variants.length, 6);
+});
+
+test("sized bets scale the DCA: a $5 bet adds $10, a $15 bet adds $30", () => {
+  const cfg = ct.CFG, now = 0;
+  for (const [stake, add] of [[5, 10], [15, 30]]) {
+    const pos = { side: "Up", end: 300_000, price: 0.8, contracts: stake / 0.8, cost: stake, staked: stake, dcaUsd: cfg.dcaUsd * stake / cfg.stake, avg: 0.8, dca: null };
+    const d = ct.decideManage({ pos, us: { bid: 0.58, ask: 0.59 }, now, cfg });
+    ct.applyManage(pos, d, now, cfg);
+    assert.equal(pos.staked, stake + add);
+  }
+});

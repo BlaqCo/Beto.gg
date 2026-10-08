@@ -192,15 +192,24 @@ const settledListeners = new Set();
 /** Call fn(rec) whenever a window settles (rec.outcome: 1 Up, 0 Down, null unknown). */
 export function onWindowSettled(fn) { settledListeners.add(fn); return () => settledListeners.delete(fn); }
 
-/** The live US window of a family that ends at endMs (±60s), with its latest quote. */
+// Without the listed strike, BTC spot at the window's first tick (within 30s of the open) stands in.
+const openSpot = rec => { const t = rec.ticks.find(x => x[4] != null); return t && t[0] - rec.start <= 30_000 ? t[4] : null; };
+
+/**
+ * The live US window of a family that ends at endMs (±60s), with its latest quote, the
+ * window's strike, the latest BTC spot and the last ~10 minutes of spot ticks as [t, price].
+ */
 export function liveQuote(family, endMs) {
   for (const rec of live.values()) {
     if (rec.family !== family || Math.abs(rec.end - endMs) > 60_000) continue;
+    const pxs = [];
+    for (let i = Math.max(0, rec.ticks.length - 120); i < rec.ticks.length; i++) if (rec.ticks[i][4] != null) pxs.push([rec.ticks[i][0], rec.ticks[i][4]]);
+    const base = { slug: rec.slug, start: rec.start, end: rec.end, strike: rec.strike ?? openSpot(rec), spot: pxs.length ? pxs[pxs.length - 1][1] : null, pxs };
     for (let i = rec.ticks.length - 1; i >= 0; i--) {
       const [t, bid, ask] = rec.ticks[i];
-      if (bid != null && ask != null) return { slug: rec.slug, start: rec.start, end: rec.end, t, bid, ask };
+      if (bid != null && ask != null) return { ...base, t, bid, ask };
     }
-    return { slug: rec.slug, start: rec.start, end: rec.end, t: null, bid: null, ask: null };
+    return { ...base, t: null, bid: null, ask: null };
   }
   return null;
 }
