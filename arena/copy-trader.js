@@ -15,7 +15,8 @@
  *      late 70¢+ bets (the kind SHADOW makes).
  *   4. Entering. In the last 4 minutes, if 2+ smart wallets back a side with 65%+ of the
  *      vote weight, that side costs 72-95¢ on Polymarket US, and the price isn't above
- *      fair value (BTC spot vs strike with time left, and the global Polymarket price),
+ *      fair value (BTC spot vs strike with time left, averaged with the global Polymarket
+ *      price; only a fresh global price can veto, the BTC math alone just shrinks the bet),
  *      it makes a $5 / $10 / $15 paper bet sized by signal strength, adds 2x that once
  *      on a dip to 53-63¢, stops out at 22¢, and otherwise settles on the US result.
  *      Brakes: no new bets after -$40 in a day, and a 30-minute pause after 2 losses
@@ -463,9 +464,13 @@ export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safe
   if (s.price == null) return { enter: false, code: "no-price", why: "no valid US price" };
   if (s.price < cfg.minPrice) return { enter: false, code: "cheap", why: `US ${s.side} is ${cents(s.price)}, under the ${cents(cfg.minPrice)} minimum` };
   if (s.price > cfg.maxPrice) return { enter: false, code: "dear", why: `US ${s.side} is ${cents(s.price)}, over the ${cents(cfg.maxPrice)} cap` };
-  if (s.edge != null && s.edge < cfg.minEdge) return { enter: false, code: "edge", why: `US ${s.side} at ${cents(s.price)} costs more than it's worth (fair ${cents(s.fair)}${fairParts(s)})` };
-  const stake = s.tier === "strong" ? cfg.sizeStrong : s.tier === "weak" ? cfg.sizeWeak : cfg.stake;
-  return { enter: true, side: s.side, price: s.price, stake, tier: s.tier, signal: s };
+  // Only the global Polymarket price can veto a bet. The BTC math alone runs on Coinbase spot
+  // and an estimated strike, and in live use it called two winners overpriced, so on its own
+  // it can only shrink the bet to the weak size.
+  if (s.edge != null && s.edge < cfg.minEdge && s.global != null) return { enter: false, code: "edge", why: `US ${s.side} at ${cents(s.price)} costs more than it's worth (fair ${cents(s.fair)}${fairParts(s)})` };
+  const tier = s.edge != null && s.edge < cfg.minEdge ? "weak" : s.tier;
+  const stake = tier === "strong" ? cfg.sizeStrong : tier === "weak" ? cfg.sizeWeak : cfg.stake;
+  return { enter: true, side: s.side, price: s.price, stake, tier, signal: s };
 }
 const fairParts = s => { const p = [s.model != null && `BTC math ${cents(s.model)}`, s.global != null && `global ${cents(s.global)}`].filter(Boolean); return p.length ? `: ${p.join(", ")}` : ""; };
 
