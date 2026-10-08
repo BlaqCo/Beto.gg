@@ -11,9 +11,9 @@
  *      recent activity, a real profit and win rate, profit not from one lucky window,
  *      and not trading both sides of the same window (market makers / arbitrage bots).
  *   3. Entering. During a live window it polls the newest trades and adds up what smart
- *      wallets buy on each side. In the last 3 minutes, if smart money backed a side and
- *      that side costs 80-95¢ on Polymarket US, it makes a $10 paper bet at the US ask
- *      (after the taker fee), adds $20 once on a dip to 58-66¢, stops out at 22¢, and
+ *      wallets buy on each side. In the last 4 minutes, if smart money backed a side and
+ *      that side costs 72-95¢ on Polymarket US, it makes a $10 paper bet at the US ask
+ *      (after the taker fee), adds $20 once on a dip to 53-63¢, stops out at 22¢, and
  *      otherwise settles on the US result.
  *
  * Everything it does goes to an event feed, streamed to the /copy page.
@@ -38,14 +38,14 @@ export const CFG = {
   activeMs: env("COPY_ACTIVE_HOURS", 24) * 3600_000,
   minSignalUsd: env("COPY_MIN_SIGNAL_USD", 20), // ignore their dust trades
   // Entry: only in the last few minutes, only on a strong favorite that smart money backed.
-  entryWindowMs: env("COPY_ENTRY_SECONDS", 180) * 1000,  // enter only with this much time left or less
-  minPrice: env("COPY_MIN_PRICE", 0.80),        // our side must cost at least this on US...
+  entryWindowMs: env("COPY_ENTRY_SECONDS", 240) * 1000,  // enter only with this much time left or less
+  minPrice: env("COPY_MIN_PRICE", 0.72),        // our side must cost at least this on US...
   maxPrice: env("COPY_MAX_PRICE", 0.95),        // ...and at most this
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
   // Position management: add once on a dip, cut the whole position at the stop.
   dcaUsd: env("COPY_DCA_USD", 20),              // paper dollars added on the dip (0 turns DCA off)
-  dcaLow: env("COPY_DCA_LOW", 0.58),            // our side's bid must be inside this band...
-  dcaHigh: env("COPY_DCA_HIGH", 0.66),          // ...to add (a gap straight past it doesn't)
+  dcaLow: env("COPY_DCA_LOW", 0.53),            // our side's bid must be inside this band...
+  dcaHigh: env("COPY_DCA_HIGH", 0.63),          // ...to add (a gap straight past it doesn't)
   stopPrice: env("COPY_STOP_PRICE", 0.22),      // sell everything when our side's bid hits this (0 = off)
   manageMs: env("COPY_MANAGE_MS", 5000),
   backfill15: env("COPY_BACKFILL_BTC15", 96),   // windows to score on startup (96 = one day)
@@ -55,8 +55,8 @@ export const CFG = {
 
 const DUR = { btc15: 15 * 60_000, btc60: 60 * 60_000 };
 // v2: v1 held hourly scores from year-old markets (a slug without a year matched 2025).
-// book v2: results under the last-3-minutes / 80¢+ entry rule (v1 kept in Redis for reference).
-const KEY_WALLETS = "arena:copy:wallets:v2", KEY_BOOK = "arena:copy:book:v2", KEY_EVENTS = "arena:copy:events";
+// book v3: results under the last-4-minutes / 72¢+ entry rule (v2 = last 3 min / 80¢+, kept in Redis).
+const KEY_WALLETS = "arena:copy:wallets:v2", KEY_BOOK = "arena:copy:book:v3", KEY_EVENTS = "arena:copy:events";
 const MAX_EVENTS = 300, MAX_WALLETS = 3000;   // keeps the saved wallet list well under Redis's 1 MB request limit
 
 // ── State ───────────────────────────────────────────────────────────
@@ -256,15 +256,15 @@ export function smartSide(smartFlow) {
 }
 
 /**
- * Should SHADOW enter now? Rule: in the last 3 minutes of the window, buy the side smart
- * wallets backed this window, only if that side costs 80-95¢ on Polymarket US.
+ * Should SHADOW enter now? Rule: in the last few minutes of the window (cfg.entryWindowMs),
+ * buy the side smart wallets backed this window, only if that side costs minPrice-maxPrice on US.
  * `wait: true` means "not yet" (too early), which isn't worth a feed line.
  */
 export function decideEntry({ smartFlow, us, holding, now, cfg = CFG }) {
   if (holding) return { enter: false, why: "already holding this window" };
   if (!us) return { enter: false, why: "no matching Polymarket US window live" };
   const left = us.end - now;
-  if (left > cfg.entryWindowMs) return { enter: false, wait: true, why: "waiting for the last 3 minutes" };
+  if (left > cfg.entryWindowMs) return { enter: false, wait: true, why: `waiting for the last ${Math.round(cfg.entryWindowMs / 60000)} minutes` };
   if (left < cfg.minMsLeft) return { enter: false, why: "too close to the close" };
   const side = smartSide(smartFlow);
   if (!side) return { enter: false, why: "no smart-wallet side this window" };
@@ -434,7 +434,7 @@ async function pollLive(family, now) {
     if (!best || amt > best.usd) cur.smartBest[t.outcome] = { wallet: t.wallet, name: t.name, usd: amt, price: t.price, size: t.size, outcome: t.outcome, why: j.why };
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
   }
-  // Entry check every poll: last 3 minutes, smart-money side, 80-95¢ on US.
+  // Entry check every poll: last few minutes, smart-money side, inside the US price band.
   const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
   const holding = book.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
   const d = decideEntry({ smartFlow: cur.smartFlow, us, holding, now });
@@ -507,7 +507,10 @@ export function copyStatus(now = Date.now()) {
     return { start: c.start, end: c.end, globalSlug: c.market?.slug || null, flow: c.flow, smartFlow: c.smartFlow, us, position: book.open.find(p => p.family === f && Math.abs(p.end - c.end) < 60_000) || null };
   };
   return {
-    enabled: stats.enabled, paper: true, now, cfg: CFG, stats: { ...stats, trackedWallets: wallets.size, smartWallets: smartAll.length,
+    enabled: stats.enabled, paper: true, now, cfg: CFG, stats: { ...stats, trackedWallets: wallets.size, walletCap: MAX_WALLETS, smartWallets: smartAll.length,
+      // The tracked count sits at the cap once memory is full, so also show what's moving.
+      activeWallets: [...wallets.values()].filter(w => now - w.lastSeen < 86400_000).length,
+      provenWallets: [...wallets.values()].filter(w => w.windows >= CFG.minWindows).length,
       copies: closed.length + book.open.length, open: book.open.length, wins: settled.filter(p => p.won).length, losses: settled.filter(p => !p.won).length,
       pnl: +pnl.toFixed(2), recorderOn: !!recorder?.recorderStatus?.().enabled, queue: toScore.length },
     current: { btc15: cur("btc15"), btc60: cur("btc60") },

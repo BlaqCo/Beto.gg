@@ -121,3 +121,13 @@ test("position management: DCA once in the band, stop at 22¢, numbers match the
   assert.deepEqual(ct.decideManage({ pos: down, us: { bid: 0.38, ask: 0.40 }, now, cfg }), { dca: true, price: 0.62, bid: 0.6 });
   assert.equal(ct.decideManage({ pos: down, us: { bid: 0.76, ask: 0.78 }, now, cfg }).stop, true);
 });
+
+test("default rule: last 4 minutes, 72-95¢, DCA $20 at 53-63¢, stop 22¢", () => {
+  const c = ct.CFG;
+  assert.equal(c.entryWindowMs, 240_000); assert.equal(c.minPrice, 0.72); assert.equal(c.maxPrice, 0.95);
+  assert.equal(c.dcaLow, 0.53); assert.equal(c.dcaHigh, 0.63); assert.equal(c.dcaUsd, 20); assert.equal(c.stopPrice, 0.22);
+  const now = 1_000_000, up = { Up: 100, Down: 0 };
+  assert.deepEqual(ct.decideEntry({ smartFlow: up, us: { end: now + 230_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }), { enter: true, side: "Up", price: 0.74 }, "3:50 left at 74¢ enters");
+  assert.equal(ct.decideEntry({ smartFlow: up, us: { end: now + 250_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }).wait, true, "4:10 left waits");
+  assert.match(ct.decideEntry({ smartFlow: up, us: { end: now + 200_000, bid: 0.69, ask: 0.71 }, holding: false, now, cfg: c }).why, /under the 72¢ minimum/);
+});

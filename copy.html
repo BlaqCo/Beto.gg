@@ -16,6 +16,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{background:var(--void);color:var(--text);margin:0}
 body{font-family:var(--f-mono);font-size:13px;line-height:1.45;padding:16px 16px 40px}
 a{color:var(--cyan)}
@@ -38,6 +39,7 @@ button{font:inherit;color:inherit}
 .kpi{padding:10px 14px;border-right:1px solid var(--phos-faint);border-bottom:1px solid var(--phos-faint)}
 .kpi b{display:block;font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.06em}
 .kpi i{font-style:normal;font-size:18px;font-variant-numeric:tabular-nums}
+.kpi small{display:block;font-size:10px;color:var(--muted)}
 .pos{color:var(--phos)} .neg{color:var(--red)} .amb{color:var(--amber)} .mut{color:var(--muted)}
 section{border-bottom:2px solid var(--phos)}
 section:last-child{border-bottom:0}
@@ -109,7 +111,7 @@ table.trades .res{font-weight:600}
     <div class="kpi"><b>COPIES</b><i id="kCopies">—</i></div>
     <div class="kpi"><b>WON / LOST</b><i id="kWl">—</i></div>
     <div class="kpi"><b>SMART WALLETS</b><i id="kSmart" class="amb">—</i></div>
-    <div class="kpi"><b>WALLETS TRACKED</b><i id="kTracked">—</i></div>
+    <div class="kpi"><b>WALLETS ACTIVE 24H</b><i id="kTracked">—</i><small id="kTrackedSub"></small></div>
   </div>
 
   <section>
@@ -152,9 +154,10 @@ table.trades .res{font-weight:600}
 
   <section class="about">
     <div class="ph" style="margin:-12px -14px 10px">HOW IT WORKS</div>
+    <p><b>Wallets active 24h</b> counts wallets that traded a scored window in the last day. SHADOW remembers up to 3,000 wallets (the ones with the longest records); past that it drops the least useful, so the total stays at 3,000 while the active count moves.</p>
     <p>Polymarket US hides other traders, but global Polymarket runs the same BTC 15-minute and hourly Up/Down windows on-chain. SHADOW scores every wallet on those windows after they settle, and trusts only wallets with a long, profitable, recent record that don't trade both sides.</p>
-    <p>During each window SHADOW adds up what trusted wallets buy on each side. In the <b>last 3 minutes</b>, if they backed a side and that side costs <b>80–95¢</b> on Polymarket US, it makes a <b>$10 paper bet</b> on it (US price plus the taker fee), one per window.</p>
-    <p>While it holds a copy, it checks the US price every 5 seconds. If our side dips to <b>58–66¢</b> it adds <b>$20</b> once; if our side falls to <b>22¢</b> it sells everything. After a stop it records whether holding would have won, so you can see if the stop is helping. <b>No real money is used.</b></p>
+    <p>During each window SHADOW adds up what trusted wallets buy on each side. In the <b>last <span data-c="entry">4</span> minutes</b>, if they backed a side and that side costs <b><span data-c="band">72–95¢</span></b> on Polymarket US, it makes a <b><span data-c="stake">$10</span> paper bet</b> on it (US price plus the taker fee), one per window.</p>
+    <p>While it holds a copy, it checks the US price every 5 seconds. If our side dips to <b><span data-c="dca">53–63¢</span></b> it adds <b><span data-c="dcaUsd">$20</span></b> once; if our side falls to <b><span data-c="stop">22¢</span></b> it sells everything. After a stop it records whether holding would have won, so you can see if the stop is helping. <b>No real money is used.</b></p>
   </section>
 </main>
 
@@ -228,7 +231,13 @@ function renderStatus(s) {
   $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
   $("kWl").textContent = `${st.wins ?? 0} / ${st.losses ?? 0}`;
   $("kSmart").textContent = st.smartWallets ?? 0;
-  $("kTracked").textContent = st.trackedWallets ?? 0;
+  $("kTracked").textContent = st.activeWallets ?? "—";
+  $("kTrackedSub").textContent = `${st.trackedWallets ?? 0}${st.walletCap ? ` / ${st.walletCap}` : ""} kept · ${st.provenWallets ?? 0} with ${s.cfg?.minWindows ?? 20}+ windows`;
+  const c = s.cfg || {}, set = (k, v) => document.querySelectorAll(`[data-c="${k}"]`).forEach(el => { el.textContent = v; });
+  if (c.entryWindowMs) set("entry", Math.round(c.entryWindowMs / 60000));
+  if (c.minPrice != null) set("band", `${cents(c.minPrice)}–${cents(c.maxPrice)}`);
+  if (c.dcaLow != null) set("dca", `${cents(c.dcaLow)}–${cents(c.dcaHigh)}`);
+  if (c.stake) set("stake", `$${c.stake}`); if (c.dcaUsd) set("dcaUsd", `$${c.dcaUsd}`); if (c.stopPrice) set("stop", cents(c.stopPrice));
   renderWindow("btc15", s.current?.btc15); renderWindow("btc60", s.current?.btc60);
   renderCurve(s.curve);
 
