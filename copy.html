@@ -16,6 +16,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{background:var(--void);color:var(--text);margin:0}
 body{font-family:var(--f-mono);font-size:13px;line-height:1.45;padding:16px 16px 40px}
 a{color:var(--cyan)}
@@ -38,6 +39,7 @@ button{font:inherit;color:inherit}
 .kpi{padding:10px 14px;border-right:1px solid var(--phos-faint);border-bottom:1px solid var(--phos-faint)}
 .kpi b{display:block;font-family:var(--f-pix);font-weight:400;font-size:10px;color:var(--muted);letter-spacing:.06em}
 .kpi i{font-style:normal;font-size:18px;font-variant-numeric:tabular-nums}
+.kpi small{display:block;font-size:10px;color:var(--muted)}
 .pos{color:var(--phos)} .neg{color:var(--red)} .amb{color:var(--amber)} .mut{color:var(--muted)}
 section{border-bottom:2px solid var(--phos)}
 section:last-child{border-bottom:0}
@@ -86,6 +88,14 @@ table.trades .res{font-weight:600}
 .chart .hit{fill:transparent;cursor:pointer}
 .chart .cross{stroke:var(--muted);stroke-width:1}
 .tip{position:absolute;pointer-events:none;background:#0b1a14;border:1px solid var(--phos-dim);border-radius:6px;padding:6px 8px;font-size:11px;line-height:1.4;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.chart .ctx{fill:none;stroke:var(--muted);stroke-width:1.5;opacity:.55;stroke-linejoin:round}
+.chart .ctx.hl{stroke:var(--amber);stroke-width:2.5;opacity:1}
+.chart .lbl{font:11px var(--f-mono);fill:var(--muted)} .chart .lbl.main{fill:var(--text)} .chart .lbl.hl{fill:var(--text)}
+table.rules{table-layout:fixed} table.rules th:nth-child(2){width:15%} table.rules th:nth-child(3){width:20%} table.rules th:nth-child(4){width:22%} table.rules th:nth-child(5){width:17%}
+table.rules td{white-space:normal;vertical-align:top} table.rules tr{cursor:pointer} table.rules tr.main-row td{border-bottom:0;padding-bottom:0} table.rules td.rule{padding-top:2px}
+table.rules tr.hl td{background:rgba(255,181,71,.08)} table.rules tr.hl td:first-child{box-shadow:inset 3px 0 var(--amber)}
+table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-space:nowrap}
+.sig{margin-top:6px;padding-top:6px;border-top:1px dashed var(--phos-faint)}
 .chartfoot{display:flex;flex-wrap:wrap;gap:4px 14px;padding:4px 14px 12px;font-size:11px;color:var(--muted)}
 .chartfoot .k-win::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--phos);margin-right:5px;vertical-align:middle}
 .chartfoot .k-loss::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;border:2px solid var(--red);margin-right:5px;vertical-align:middle}
@@ -108,14 +118,22 @@ table.trades .res{font-weight:600}
     <div class="kpi"><b>PAPER P&amp;L</b><i id="kPnl">—</i></div>
     <div class="kpi"><b>COPIES</b><i id="kCopies">—</i></div>
     <div class="kpi"><b>WON / LOST</b><i id="kWl">—</i></div>
+    <div class="kpi"><b>TODAY · BRAKES</b><i id="kToday">—</i><small id="kBrakes"></small></div>
     <div class="kpi"><b>SMART WALLETS</b><i id="kSmart" class="amb">—</i></div>
-    <div class="kpi"><b>WALLETS TRACKED</b><i id="kTracked">—</i></div>
+    <div class="kpi"><b>WALLETS ACTIVE 24H</b><i id="kTracked">—</i><small id="kTrackedSub"></small></div>
   </div>
 
   <section>
     <div class="ph">PAPER P&amp;L OVER TIME <em id="curveMeta">cumulative, after fees</em></div>
     <div class="chart" id="chart"><p class="empty">The chart starts with SHADOW's first settled copy.</p></div>
     <div class="chartfoot"><span class="k-win">won</span><span class="k-loss">lost or stopped</span><span>tap a dot for details</span></div>
+  </section>
+
+  <section>
+    <div class="ph">RULES SIDE BY SIDE <em>same windows, paper, cumulative P&amp;L</em></div>
+    <div class="chart" id="cmp"><p class="empty">Lines appear once a rule settles its first copy.</p></div>
+    <div class="chartfoot"><span>SHADOW is the bright line; tap a rule below to highlight its line</span></div>
+    <div class="tbl"><table class="rules"><thead><tr><th>RULE</th><th class="r">COPIES</th><th class="r">WON / LOST</th><th class="r">P&amp;L</th><th class="r">RETURN</th></tr></thead><tbody id="rules"></tbody></table></div>
   </section>
 
   <section>
@@ -129,32 +147,39 @@ table.trades .res{font-weight:600}
   <section>
     <div class="ph">LIVE FEED <em id="feedCount"></em></div>
     <div class="chips" role="group" aria-label="Filter the feed">
-      <button class="chip" data-f="all" aria-pressed="true">All</button>
+      <button class="chip" data-f="shadow" aria-pressed="true">SHADOW</button>
       <button class="chip" data-f="copy" aria-pressed="false">Copies &amp; results</button>
       <button class="chip" data-f="spot" aria-pressed="false">Smart buys</button>
       <button class="chip" data-f="skip" aria-pressed="false">Skipped</button>
+      <button class="chip" data-f="other" aria-pressed="false">Other rules</button>
       <button class="chip" data-f="sys" aria-pressed="false">System</button>
+      <button class="chip" data-f="all" aria-pressed="false">All</button>
     </div>
     <ul class="feed" id="feed" aria-live="polite"></ul>
   </section>
 
   <section>
-    <div class="ph">SMART WALLETS <em>top 20 by return, needs a long record</em></div>
-    <div class="tbl"><table><thead><tr><th>WALLET</th><th class="r">WINDOWS</th><th class="r">WIN %</th><th class="r">ROI</th><th class="r">P&amp;L</th><th class="r">LAST SEEN</th></tr></thead><tbody id="smart"></tbody></table></div>
+    <div class="ph">SMART WALLETS <em>top 20 by vote weight</em></div>
+    <div class="tbl"><table><thead><tr><th>WALLET</th><th class="r">VOTE</th><th class="r">WIN %</th><th class="r">LATE 70¢+</th><th class="r">WINDOWS</th><th class="r">ROI</th><th class="r">P&amp;L</th><th class="r">LAST SEEN</th></tr></thead><tbody id="smart"></tbody></table></div>
     <p class="empty" id="smartEmpty" hidden></p>
   </section>
 
   <section>
-    <div class="ph">PAPER TRADES <em>newest first · since the new rules</em></div>
+    <div class="ph">SHADOW PAPER TRADES <em>newest first · since the new rules</em></div>
     <table class="trades"><thead><tr><th>WHEN</th><th>BET</th><th class="r">ENTRY</th><th class="r">RESULT</th></tr></thead><tbody id="trades"></tbody></table>
     <p class="empty" id="tradesEmpty" hidden>No paper copies yet.</p>
   </section>
 
   <section class="about">
     <div class="ph" style="margin:-12px -14px 10px">HOW IT WORKS</div>
-    <p>Polymarket US hides other traders, but global Polymarket runs the same BTC 15-minute and hourly Up/Down windows on-chain. SHADOW scores every wallet on those windows after they settle, and trusts only wallets with a long, profitable, recent record that don't trade both sides.</p>
-    <p>During each window SHADOW adds up what trusted wallets buy on each side. In the <b>last 3 minutes</b>, if they backed a side and that side costs <b>80–95¢</b> on Polymarket US, it makes a <b>$10 paper bet</b> on it (US price plus the taker fee), one per window.</p>
-    <p>While it holds a copy, it checks the US price every 5 seconds. If our side dips to <b>58–66¢</b> it adds <b>$20</b> once; if our side falls to <b>22¢</b> it sells everything. After a stop it records whether holding would have won, so you can see if the stop is helping. <b>No real money is used.</b></p>
+    <p>Polymarket US hides other traders, but global Polymarket runs the same BTC 15-minute and hourly Up/Down windows on-chain. SHADOW scores every wallet on those windows after they settle and trusts only wallets with a long, profitable, recent record that don't trade both sides. Recent windows count more than old ones.</p>
+    <p><b>Votes.</b> During a window every smart wallet's buy of $2+ is a vote for that side. A vote counts more when the wallet's recent win rate is high and when its <b>late 70¢+ bets</b> (the same kind of bet SHADOW makes) have beaten the price it paid. A wallet whose late bets lose has no vote.</p>
+    <p><b>Entering.</b> In the <b>last <span data-c="entry">4</span> minutes</b>, SHADOW bets when <b><span data-c="agree">2</span>+ smart wallets</b> back a side with <b><span data-c="share">65%</span>+</b> of the vote weight, that side costs <b><span data-c="band">72–95¢</span></b> on Polymarket US, and the price isn't above <b>fair value</b>. Fair value averages two estimates: the chance BTC finishes on our side of the window's start price given the time left and recent volatility, and the latest global Polymarket price.</p>
+    <p><b>Bet size.</b> <span data-c="sizes">$5 / $10 / $15</span> for a weak / normal / strong signal. Strong means more agreeing wallets, near-unanimous weight and a 5¢+ edge; weak means the edge is under 2¢ or unknown.</p>
+    <p><b>Managing.</b> Every 5 seconds it checks the US price. If our side dips to <b><span data-c="dca">53–63¢</span></b> it adds <b>twice the bet</b> once ($20 on a $10 bet); if our side falls to <b><span data-c="stop">22¢</span></b> it sells everything. After a stop it records whether holding would have won.</p>
+    <p><b>Brakes.</b> No new bets for the rest of the UTC day after <b><span data-c="limit">-$40</span></b>, and a <b><span data-c="pause">30</span>-minute pause</b> after <span data-c="streak">2</span> losses in a row.</p>
+    <p><b>Side by side.</b> The plain 72¢ and 80¢ rules (one $20+ smart buy, no fair-value check, no brakes), SHADOW without DCA, and SHADOW with a 15¢ stop or no stop all trade the same windows on paper, each with its own record. "Return" compares them fairly when bet sizes differ.</p>
+    <p><b>Wallets active 24h</b> counts wallets that traded a scored window in the last day. SHADOW remembers up to 3,000 wallets (the longest records), so that total stays at 3,000 while the active count moves. <b>No real money is used.</b></p>
   </section>
 </main>
 
@@ -169,14 +194,16 @@ const hhmmss = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute
 const ago = t => { if (!t) return "—"; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
 const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", error: "sys" };
 const LABEL = { copy: "COPY", settle: "RESULT", dca: "DCA", stop: "STOP", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", error: "ERROR" };
-let filter = "all", events = [], status = null, lastPoll = 0;
+let filter = "shadow", events = [], status = null, lastPoll = 0, hlRule = null;
+const shows = li => filter === "all" || (filter === "other" ? li.dataset.v === "1" : li.dataset.v !== "1" && (filter === "shadow" || li.dataset.g === filter));
 
 function liFor(e, fresh) {
   const li = document.createElement("li");
   if (fresh) li.className = "new";
   li.dataset.g = GROUP[e.type] || "sys";
+  li.dataset.v = e.variant && e.variant !== "main" ? "1" : "";
   li.innerHTML = `<time>${hhmmss(e.t)}</time><span class="k ${esc(e.type)}">${LABEL[e.type] || esc(e.type).toUpperCase()}</span><span>${esc(e.msg)}</span>`;
-  li.hidden = filter !== "all" && li.dataset.g !== filter;
+  li.hidden = !shows(li);
   return li;
 }
 function renderFeed() {
@@ -204,18 +231,30 @@ function renderWindow(f, c) {
   const mm = Math.floor(left / 60000), ss = String(Math.floor(left % 60000 / 1000)).padStart(2, "0");
   const up = c.flow?.Up || 0, dn = c.flow?.Down || 0, tot = up + dn || 1;
   const sUp = c.smartFlow?.Up || 0, sDn = c.smartFlow?.Down || 0;
-  const us = c.us, p = c.position;
+  const us = c.us, p = c.position, sg = c.signal || {};
+  const pct = x => `${Math.round(x * 100)}%`;
+  const edgeTxt = sg.edge == null ? "unknown" : `${sg.edge >= 0 ? "+" : "−"}${Math.abs(Math.round(sg.edge * 100))}¢`;
+  const voters = side => (sg.voters?.[side] || []).map(v => esc(v.name || short(v.wallet))).join(", ");
+  const sigHtml = sg.side ? `<div class="sig">
+    <div class="row"><span>Smart votes</span><span><span class="pos">Up ${sg.nUp ?? 0}</span> · <span class="neg">Down ${sg.nDown ?? 0}</span> · ${pct(sg.share)} ${esc(sg.side)}</span></div>
+    <div class="row"><span>Fair value (${esc(sg.side)})</span><span>${sg.fair != null ? cents(sg.fair) : "—"} <span class="mut">(${[sg.model != null && `BTC math ${cents(sg.model)}`, sg.global != null && `global ${cents(sg.global)}`].filter(Boolean).join(" · ") || "no spot or global price"})</span></span></div>
+    <div class="row"><span>Edge vs US ${sg.price != null ? cents(sg.price) : ""}</span><span class="${sg.edge == null ? "mut" : sg.edge >= 0 ? "pos" : "neg"}">${edgeTxt}</span></div>
+    <div class="row"><span>Bet if it enters now</span><span>${sg.tier ? `$${sg.stake} · ${esc(sg.tier)}` : "—"}</span></div>
+    ${voters(sg.side) ? `<div class="row"><span>Leading voters</span><span class="mut" style="text-align:right">${voters(sg.side)}</span></div>` : ""}
+  </div>` : `<div class="sig mut">No smart-wallet votes yet this window.</div>`;
   el.innerHTML = `<h3>${name}<span data-end="${c.end}">${mm}:${ss}</span></h3>
     <div class="row"><span>Global market</span><span>${c.globalSlug ? `<a href="https://polymarket.com/event/${esc(c.globalSlug)}" target="_blank" rel="noopener">${esc(c.globalSlug.slice(0, 26))}</a>` : '<span class="neg">not found</span>'}</span></div>
     <div class="row"><span>All buying</span><span><span class="pos">Up ${usd(up)}</span> · <span class="neg">Down ${usd(dn)}</span></span></div>
     <div class="flow" aria-hidden="true"><div class="up" style="width:${up / tot * 100}%"></div><div class="down" style="width:${dn / tot * 100}%"></div></div>
     <div class="row"><span>Smart money</span><span>${sUp + sDn ? `<span class="pos">Up ${usd(sUp)}</span> · <span class="neg">Down ${usd(sDn)}</span>` : '<span class="mut">none yet</span>'}</span></div>
     <div class="row"><span>US price to buy</span><span>${us?.ask != null ? `<span class="pos">Up ${cents(us.ask)}</span> · <span class="neg">Down ${cents(1 - us.bid)}</span>` : '<span class="mut">no US window</span>'}</span></div>
+    ${us?.spot && us?.strike ? `<div class="row"><span>BTC vs start</span><span>$${Math.round(us.spot).toLocaleString()} <span class="${us.spot >= us.strike ? "pos" : "neg"}">${us.spot >= us.strike ? "+" : "−"}$${Math.abs(Math.round(us.spot - us.strike)).toLocaleString()}</span></span></div>` : ""}
+    ${sigHtml}
     ${p ? (() => {
       const now = us?.bid != null ? (p.side === "Up" ? us.bid : 1 - us.ask) : null;
       const val = now != null ? p.contracts * now : null;
-      return `<div class="posbox">HOLDING paper ${esc(p.side)} · ${p.contracts.toFixed(2)} sh · $${p.staked ?? 10} in @ avg ${cents(p.avg ?? p.price)}${p.dca ? ` (DCA'd @ ${cents(p.dca.price)})` : ""}<br>
-        now ${now != null ? `${cents(now)} · worth ${usd(val)}` : "—"} · DCA ${p.dca ? "used" : `at ${cents(status?.cfg?.dcaLow)}-${cents(status?.cfg?.dcaHigh)}`} · stop ${cents(status?.cfg?.stopPrice)} · copied ${esc(short(p.wallet))}</div>`;
+      return `<div class="posbox">HOLDING paper ${esc(p.side)}${p.tier ? ` (${esc(p.tier)})` : ""} · ${p.contracts.toFixed(2)} sh · $${p.staked ?? 10} in @ avg ${cents(p.avg ?? p.price)}${p.dca ? ` (DCA'd @ ${cents(p.dca.price)})` : ""}<br>
+        now ${now != null ? `${cents(now)} · worth ${usd(val)}` : "—"} · DCA ${p.dca ? "used" : `$${p.dcaUsd ?? status?.cfg?.dcaUsd} at ${cents(status?.cfg?.dcaLow)}-${cents(status?.cfg?.dcaHigh)}`} · stop ${cents(status?.cfg?.stopPrice)} · copied ${esc(short(p.wallet))}</div>`;
     })() : ""}`;
 }
 
@@ -228,13 +267,28 @@ function renderStatus(s) {
   $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
   $("kWl").textContent = `${st.wins ?? 0} / ${st.losses ?? 0}`;
   $("kSmart").textContent = st.smartWallets ?? 0;
-  $("kTracked").textContent = st.trackedWallets ?? 0;
+  $("kTracked").textContent = st.activeWallets ?? "—";
+  $("kTrackedSub").textContent = `${st.trackedWallets ?? 0}${st.walletCap ? ` / ${st.walletCap}` : ""} kept · ${st.provenWallets ?? 0} with ${s.cfg?.minWindows ?? 20}+ windows`;
+  const c = s.cfg || {}, set = (k, v) => document.querySelectorAll(`[data-c="${k}"]`).forEach(el => { el.textContent = v; });
+  const sf = s.safety || {}, today = sf.today ?? 0;
+  $("kToday").textContent = `${today >= 0 ? "+" : "−"}$${Math.abs(today).toFixed(2)}`; $("kToday").className = today >= 0 ? "pos" : "neg";
+  $("kBrakes").textContent = sf.ok === false ? sf.why : "brakes off: betting";
+  $("kBrakes").style.color = sf.ok === false ? "var(--amber)" : "";
+  if (c.minAgree) set("agree", c.minAgree); if (c.minShare) set("share", `${Math.round(c.minShare * 100)}%`);
+  if (c.sizeWeak) set("sizes", `$${c.sizeWeak} / $${c.stake} / $${c.sizeStrong}`);
+  if (c.dailyLossLimit) set("limit", `-$${c.dailyLossLimit}`); if (c.pauseMs) set("pause", Math.round(c.pauseMs / 60000)); if (c.lossStreak) set("streak", c.lossStreak);
+  if (c.entryWindowMs) set("entry", Math.round(c.entryWindowMs / 60000));
+  if (c.minPrice != null) set("band", `${cents(c.minPrice)}–${cents(c.maxPrice)}`);
+  if (c.dcaLow != null) set("dca", `${cents(c.dcaLow)}–${cents(c.dcaHigh)}`);
+  if (c.stake) set("stake", `$${c.stake}`); if (c.dcaUsd) set("dcaUsd", `$${c.dcaUsd}`); if (c.stopPrice) set("stop", cents(c.stopPrice));
   renderWindow("btc15", s.current?.btc15); renderWindow("btc60", s.current?.btc60);
   renderCurve(s.curve);
 
   const sm = s.smart || [];
   $("smart").innerHTML = sm.map(w => `<tr><td><a href="https://polymarket.com/profile/${esc(w.wallet)}" target="_blank" rel="noopener">${esc(w.name || short(w.wallet))}</a></td>
-    <td class="r">${w.windows}</td><td class="r">${(w.winRate * 100).toFixed(0)}%</td><td class="r pos">${(w.roi * 100).toFixed(1)}%</td>
+    <td class="r amb">${(w.weight ?? 0).toFixed(2)}</td><td class="r">${(w.winRate * 100).toFixed(0)}%</td>
+    <td class="r">${w.lateN >= 1 ? `${Math.round(w.lateWinRate * 100)}% <span class="mut">of ${Math.round(w.lateN)}</span>` : '<span class="mut">—</span>'}</td>
+    <td class="r">${w.windows}</td><td class="r pos">${(w.roi * 100).toFixed(1)}%</td>
     <td class="r ${w.pnl >= 0 ? "pos" : "neg"}">${usd(w.pnl)}</td><td class="r mut">${ago(w.lastSeen)}</td></tr>`).join("");
   const bf = st.backfillTotal ? ` Scored ${st.backfillDone}/${st.backfillTotal} past windows so far.` : "";
   $("smartEmpty").hidden = sm.length > 0;
@@ -244,9 +298,67 @@ function renderStatus(s) {
   const res = p => p.open ? "open" : p.won == null || !Number.isFinite(p.pnl) ? "void" : `${p.pnl >= 0 ? "+" : "−"}$${Math.abs(p.pnl).toFixed(2)}`;
   $("trades").innerHTML = rows.map(p => `<tr><td class="mut">${hhmm(p.openedAt)}</td>
     <td><span class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</span> ${p.family.toUpperCase()}<div class="sub"><a href="https://polymarket.com/profile/${esc(p.wallet)}" target="_blank" rel="noopener">${esc((p.walletName || short(p.wallet)).slice(0, 16))}</a></div></td>
-    <td class="r">${cents(p.price)}${p.dca ? `<div class="sub">+DCA ${cents(p.dca.price)}</div>` : ""}</td>
+    <td class="r">${cents(p.price)}<div class="sub">$${p.staked ?? 10}${p.tier ? ` ${esc(p.tier)}` : ""}</div>${p.dca ? `<div class="sub">+DCA ${cents(p.dca.price)}</div>` : ""}</td>
     <td class="r res ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${res(p)}${p.exit?.reason === "stop" ? '<div class="sub">stopped</div>' : p.won === false ? '<div class="sub">lost</div>' : p.won ? '<div class="sub">won</div>' : ""}</td></tr>`).join("");
   $("tradesEmpty").hidden = rows.length > 0;
+  renderRules(s.variants || []);
+}
+
+const SHORT = { main: "SHADOW", rule72: "72¢ plain", rule80: "80¢ plain", nodca: "No DCA", stop15: "15¢ stop", nostop: "No stop" };
+// Rules side by side: a table (the exact numbers) and a time chart, SHADOW bright, the rest muted.
+function renderRules(vs) {
+  const signed = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  $("rules").innerHTML = vs.map(v => `<tr data-id="${esc(v.id)}" class="main-row ${hlRule === v.id ? "hl" : ""}" tabindex="0">
+    <td><b class="${v.id === "main" ? "pos" : ""}">${esc(SHORT[v.id] || v.name)}</b></td>
+    <td class="r">${v.copies}${v.open ? `<div class="sub">${v.open} open</div>` : ""}</td>
+    <td class="r">${v.wins} / ${v.losses}${v.settled ? `<div class="sub">${Math.round(v.wins / v.settled * 100)}% won</div>` : ""}</td>
+    <td class="r ${v.pnl >= 0 ? "pos" : "neg"}">${signed(v.pnl)}${v.avg != null ? `<div class="sub">${signed(v.avg)}/bet</div>` : ""}</td>
+    <td class="r ${v.pnl >= 0 ? "pos" : "neg"}">${v.staked ? `${v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl / v.staked * 100).toFixed(1)}%` : "—"}</td></tr>
+    <tr data-id="${esc(v.id)}" class="${hlRule === v.id ? "hl" : ""}"><td colspan="5" class="rule sub">${esc(v.rule)}${v.safety?.ok === false ? ` · <span class="amb">${esc(v.safety.why)}</span>` : ""}</td></tr>`).join("");
+  renderCmp(vs);
+}
+function renderCmp(vs) {
+  const box = $("cmp");
+  const series = vs.filter(v => v.curve?.length).map(v => { let c = 0; return { id: v.id, name: v.name, pts: v.curve.map(([t, p]) => [t, (c += p)]) }; });
+  if (!series.length) { box.innerHTML = '<p class="empty">Lines appear once a rule settles its first copy.</p>'; return; }
+  const W = Math.max(300, Math.round(box.clientWidth - 28) || 600), H = W < 500 ? 200 : 240, L = 44, R = 76, T = 12, B = 22;
+  const ts = series.flatMap(s => s.pts.map(p => p[0])), t0 = Math.min(...ts) - 60_000, t1 = Math.max(Date.now(), Math.max(...ts));
+  const vals = series.flatMap(s => s.pts.map(p => p[1]));
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), pad = Math.max(2, (hi - lo) * 0.1), y0 = lo - pad, y1 = hi + pad;
+  const x = t => L + (t - t0) / (t1 - t0 || 1) * (W - L - R), y = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const step = (() => { const r = y1 - y0, m = 10 ** Math.floor(Math.log10(r / 4)); return [1, 2, 5, 10].map(k => k * m).find(k => r / k <= 5) || m * 10; })();
+  let grid = "";
+  for (let v = Math.ceil(y0 / step) * step; v <= y1; v += step)
+    grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(step < 1 ? 1 : 0)}</text>`;
+  // Each line starts at $0 just before its first result and runs flat to now.
+  const path = s => `M${x(s.pts[0][0] - 60_000)},${y(0)} ` + s.pts.map(([t, v]) => `L${x(t)},${y(v)}`).join(" ") + ` L${x(t1)},${y(s.pts[s.pts.length - 1][1])}`;
+  const order = [...series].sort((a, b) => (a.id === "main") - (b.id === "main") || (a.id === hlRule) - (b.id === hlRule));
+  const lines = order.map(s => `<path class="${s.id === "main" ? "line" : `ctx${s.id === hlRule ? " hl" : ""}`}" d="${path(s)}"/>`).join("");
+  // Direct labels at the right edge for SHADOW and the highlighted rule only; nudge apart if they collide.
+  const lab = series.filter(s => s.id === "main" || s.id === hlRule).map(s => ({ s, yy: y(s.pts[s.pts.length - 1][1]) })).sort((a, b) => a.yy - b.yy);
+  for (let i = 1; i < lab.length; i++) if (lab[i].yy - lab[i - 1].yy < 13) lab[i].yy = lab[i - 1].yy + 13;
+  const labels = lab.map(({ s, yy }) => `<text class="lbl ${s.id === "main" ? "main" : "hl"}" x="${W - R + 6}" y="${yy + 4}">${esc(SHORT[s.id] || s.name)}</text>`).join("");
+  const tick = t => new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative paper P&L of each rule over time">
+    ${grid}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/>
+    <text class="axis" x="${L}" y="${H - 6}">${tick(t0)}</text><text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">now</text>
+    ${lines}${labels}<line class="cross" id="cmpCross" y1="${T}" y2="${H - B}" visibility="hidden"/>
+    <rect class="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"/></svg><div class="tip" id="cmpTip" hidden></div>`;
+  const svg = box.querySelector("svg"), tip = $("cmpTip"), cross = $("cmpCross");
+  const at = (s, t) => { let v = null; for (const p of s.pts) { if (p[0] <= t) v = p[1]; else break; } return v; };
+  const show = e => {
+    const r = svg.getBoundingClientRect(), sx = r.width / W, px = (e.clientX - r.left) / sx;
+    if (px < L || px > W - R) return hide();
+    const t = t0 + (px - L) / (W - L - R) * (t1 - t0);
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+    const rows = series.map(s => ({ s, v: at(s, t) })).filter(r => r.v != null).sort((a, b) => b.v - a.v);
+    tip.hidden = false;
+    tip.innerHTML = `<b>${tick(t)}</b>` + (rows.length ? rows.map(({ s, v }) => `<br><span class="${s.id === "main" ? "pos" : s.id === hlRule ? "amb" : ""}">${esc(s.name)}</span> ${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`).join("") : "<br>no results yet");
+    const left = Math.min(Math.max(px * sx + 14 - tip.offsetWidth / 2, 4), r.width + 14 - tip.offsetWidth - 4);
+    tip.style.left = `${left}px`; tip.style.top = `4px`;
+  };
+  const hide = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
+  svg.addEventListener("pointermove", show); svg.addEventListener("pointerdown", show); svg.addEventListener("pointerleave", hide);
 }
 
 // Cumulative paper P&L, one step per settled copy. One series, so no legend box: the title names it.
@@ -324,7 +436,7 @@ document.querySelector(".chips").addEventListener("click", e => {
   const b = e.target.closest(".chip"); if (!b) return;
   filter = b.dataset.f;
   document.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === b));
-  for (const li of $("feed").children) li.hidden = filter !== "all" && li.dataset.g && li.dataset.g !== filter;
+  for (const li of $("feed").children) li.hidden = li.dataset.g ? !shows(li) : false;
 });
 
 setInterval(() => {
@@ -335,7 +447,10 @@ setInterval(() => {
   if (lastPoll) $("hb").textContent = `last checked global trades ${ago(lastPoll)}`;
 }, 1000);
 setInterval(loadStatus, 15000);
-let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => status && renderCurve(status.curve), 200); });
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (status) { renderCurve(status.curve); renderCmp(status.variants || []); } }, 200); });
+const pickRule = e => { const tr = e.target.closest("tr[data-id]"); if (!tr) return; hlRule = hlRule === tr.dataset.id || tr.dataset.id === "main" ? null : tr.dataset.id; if (status) renderRules(status.variants || []); };
+$("rules").addEventListener("click", pickRule);
+$("rules").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRule(e); } });
 loadStatus(true);
 connect();
 </script>
