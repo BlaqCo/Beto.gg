@@ -48,6 +48,8 @@ export const CFG = {
   // Smart rule: votes, fair value, sizing, brakes.
   minVoteUsd: env("COPY_MIN_VOTE_USD", 2),      // smart buys this big count as votes
   minAgree: env("COPY_MIN_AGREE", 2),           // smart wallets needed on our side
+  soloLateN: 0,                                 // >0: one wallet is enough if it has this many late bets...
+  soloLateWin: 0.9,                             // ...with at least this win rate (the "1 strong wallet" rule)
   minShare: env("COPY_MIN_SHARE", 0.65),        // share of smart vote weight on our side
   minEdge: env("COPY_MIN_EDGE", 0),             // fair value minus price minus fee, per share
   defaultVol: env("COPY_DEFAULT_VOL", 0.5),     // BTC yearly volatility when spot ticks are thin
@@ -366,9 +368,9 @@ export function consensus(votes) {
 }
 
 /** Add a smart wallet's buy to the votes. Its weight grows a little with size, up to 2x. */
-export function addVote(votes, { wallet, name, outcome, usd: amt, price }, weight) {
+export function addVote(votes, { wallet, name, outcome, usd: amt, price, lateN = 0, lateWinRate = null }, weight) {
   const v = votes[outcome].get(wallet) || { usd: 0, weight: 0, name, price };
-  v.usd += amt; v.price = price;
+  v.usd += amt; v.price = price; v.lateN = lateN; v.lateWinRate = lateWinRate;
   v.weight = +(weight * Math.min(2, 1 + v.usd / 100)).toFixed(4);
   votes[outcome].set(wallet, v);
 }
@@ -459,7 +461,9 @@ export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safe
   if (safety && !safety.ok) return { enter: false, code: safety.code, why: safety.why };
   const s = signalOf({ votes, us, globalPx, now, cfg });
   if (!s.side) return { enter: false, code: "no-side", why: "no smart-wallet side this window" };
-  if (s.agree < cfg.minAgree) return { enter: false, code: "agree", why: `only ${s.agree} smart wallet${s.agree === 1 ? "" : "s"} on ${s.side}, need ${cfg.minAgree}` };
+  const strongSolo = cfg.soloLateN > 0 && [...(votes?.[s.side]?.values() || [])]
+    .some(v => v.weight > 0 && v.lateN >= cfg.soloLateN && v.lateWinRate >= cfg.soloLateWin);
+  if (s.agree < cfg.minAgree && !strongSolo) return { enter: false, code: "agree", why: `only ${s.agree} smart wallet${s.agree === 1 ? "" : "s"} on ${s.side}, need ${cfg.minAgree}` };
   if (s.share < cfg.minShare) return { enter: false, code: "split", why: `smart money split: ${Math.round(s.share * 100)}% on ${s.side}, need ${Math.round(cfg.minShare * 100)}%` };
   if (s.price == null) return { enter: false, code: "no-price", why: "no valid US price" };
   if (s.price < cfg.minPrice) return { enter: false, code: "cheap", why: `US ${s.side} is ${cents(s.price)}, under the ${cents(cfg.minPrice)} minimum` };
@@ -487,6 +491,7 @@ export const VARIANTS = [
   { id: "nodca", name: "SHADOW, no DCA", smart: true, over: { dcaUsd: 0 } },
   { id: "stop15", name: "SHADOW, 15¢ stop", smart: true, over: { stopPrice: 0.15 } },
   { id: "nostop", name: "SHADOW, no stop", smart: true, over: { stopPrice: 0 } },
+  { id: "solo", name: "SHADOW, 1 strong wallet", smart: true, over: { soloLateN: 10, soloLateWin: 0.9 } },
 ];
 export const cfgOf = v => ({ ...CFG, ...v.over });
 const activeVariants = () => VARIANTS.filter(v => v.id === "main" || CFG.variants);
@@ -494,7 +499,7 @@ const tagOf = v => (v.id === "main" ? "" : `[${v.name}] `);
 export function ruleText(v) {
   const c = cfgOf(v);
   return [`last ${Math.round(c.entryWindowMs / 60000)} min`, `${cents(c.minPrice)}-${cents(c.maxPrice)}`,
-    v.smart ? `${c.minAgree}+ smart wallets agree, not above fair value, $${c.sizeWeak}/$${c.stake}/$${c.sizeStrong} by signal` : `one $${c.minSignalUsd}+ smart buy, $${c.stake}`,
+    v.smart ? `${c.minAgree}+ smart wallets agree${c.soloLateN > 0 ? ` (or 1 with ${c.soloLateN}+ late bets, ${Math.round(c.soloLateWin * 100)}%+ won)` : ""}, not above fair value, $${c.sizeWeak}/$${c.stake}/$${c.sizeStrong} by signal` : `one $${c.minSignalUsd}+ smart buy, $${c.stake}`,
     c.dcaUsd > 0 ? `DCA at ${cents(c.dcaLow)}-${cents(c.dcaHigh)}` : "no DCA", c.stopPrice > 0 ? `stop ${cents(c.stopPrice)}` : "no stop",
     v.smart && c.dailyLossLimit > 0 ? `brakes: -$${c.dailyLossLimit}/day, pause after ${c.lossStreak} losses` : null].filter(Boolean).join(" · ");
 }
@@ -679,7 +684,8 @@ async function pollLive(family, now) {
     if (amt < CFG.minVoteUsd) { cur.diag.smartSmall++; continue; }
     // Every smart buy of $2+ is a vote, weighted by the wallet's record (the smart rule).
     const before = cur.votes[t.outcome].has(t.wallet);
-    addVote(cur.votes, { wallet: t.wallet, name: t.name, outcome: t.outcome, usd: amt, price: t.price }, walletWeight(s, j));
+    const late = lateStats(s);
+    addVote(cur.votes, { wallet: t.wallet, name: t.name, outcome: t.outcome, usd: amt, price: t.price, lateN: late.n, lateWinRate: late.winRate }, walletWeight(s, j));
     if (!before) cur.diag.voters++;
     // The plain rules only count single buys of $20+.
     if (amt < CFG.minSignalUsd) continue;

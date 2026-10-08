@@ -211,14 +211,14 @@ test("brakes: daily loss limit and a pause after 2 losses in a row", () => {
 test("rules side by side: every rule has its own config and leaderboard rows only once it trades", () => {
   ct._reset();
   const ids = ct.VARIANTS.map(v => v.id);
-  assert.deepEqual(ids, ["main", "rule72", "rule80", "nodca", "stop15", "nostop"]);
+  assert.deepEqual(ids, ["main", "rule72", "rule80", "nodca", "stop15", "nostop", "solo"]);
   assert.equal(ct.cfgOf(ct.VARIANTS[2]).minPrice, 0.8);
   assert.equal(ct.cfgOf(ct.VARIANTS[3]).dcaUsd, 0);
   assert.equal(ct.cfgOf(ct.VARIANTS[5]).stopPrice, 0);
   assert.match(ct.ruleText(ct.VARIANTS[0]), /last 4 min · 72¢-95¢ · 2\+ smart wallets agree/);
   assert.equal(ct.leaderboardRows().length, 2, "only SHADOW's rows before the others trade");
   const st = ct.copyStatus();
-  assert.equal(st.variants.length, 6);
+  assert.equal(st.variants.length, 7);
 });
 
 test("sized bets scale the DCA: a $5 bet adds $10, a $15 bet adds $30", () => {
@@ -229,4 +229,14 @@ test("sized bets scale the DCA: a $5 bet adds $10, a $15 bet adds $30", () => {
     ct.applyManage(pos, d, now, cfg);
     assert.equal(pos.staked, stake + add);
   }
+});
+
+test("1 strong wallet rule: one wallet is enough only with 10+ late bets at 90%+", () => {
+  const now = 1_000_000, us = { end: now + 200_000, bid: 0.78, ask: 0.80, pxs: [] }, ok = { ok: true };
+  const solo = ct.cfgOf(ct.VARIANTS.find(v => v.id === "solo")), main = ct.cfgOf(ct.VARIANTS[0]);
+  const one = (lateN, lateWinRate) => { const v = { Up: new Map(), Down: new Map() }; ct.addVote(v, { wallet: "a", outcome: "Up", usd: 50, price: 0.8, lateN, lateWinRate }, 0.3); return v; };
+  assert.equal(ct.decideSmart({ votes: one(12, 0.95), us, holding: false, now, cfg: solo, safety: ok }).enter, true, "strong single wallet enters");
+  assert.equal(ct.decideSmart({ votes: one(12, 0.95), us, holding: false, now, cfg: main, safety: ok }).code, "agree", "SHADOW itself still needs 2");
+  assert.equal(ct.decideSmart({ votes: one(6, 1), us, holding: false, now, cfg: solo, safety: ok }).code, "agree", "too few late bets");
+  assert.equal(ct.decideSmart({ votes: one(20, 0.85), us, holding: false, now, cfg: solo, safety: ok }).code, "agree", "win rate under 90%");
 });
