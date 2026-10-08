@@ -487,7 +487,7 @@ const fairParts = s => { const p = [s.model != null && `BTC math ${cents(s.model
 export const VARIANTS = [
   { id: "main", name: "SHADOW", smart: true, over: {} },
   { id: "rule72", name: "72¢ rule, plain", smart: false, over: { dailyLossLimit: 0, lossStreak: 0 } },
-  { id: "rule80", name: "80¢ rule, plain", smart: false, over: { entryWindowMs: 180_000, minPrice: 0.80, dcaLow: 0.58, dcaHigh: 0.66, dailyLossLimit: 0, lossStreak: 0 } },
+  { id: "rule80", name: "80¢ rule, plain", smart: false, over: { stake: 25, entryWindowMs: 180_000, minPrice: 0.80, dcaLow: 0.58, dcaHigh: 0.66, dailyLossLimit: 0, lossStreak: 0 } },
   { id: "nodca", name: "SHADOW, no DCA", smart: true, over: { dcaUsd: 0 } },
   { id: "stop15", name: "SHADOW, 15¢ stop", smart: true, over: { stopPrice: 0.15 } },
   { id: "nostop", name: "SHADOW, no stop", smart: true, over: { stopPrice: 0 } },

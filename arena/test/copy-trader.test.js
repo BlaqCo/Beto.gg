@@ -213,6 +213,8 @@ test("rules side by side: every rule has its own config and leaderboard rows onl
   const ids = ct.VARIANTS.map(v => v.id);
   assert.deepEqual(ids, ["main", "rule72", "rule80", "nodca", "stop15", "nostop", "solo"]);
   assert.equal(ct.cfgOf(ct.VARIANTS[2]).minPrice, 0.8);
+  assert.equal(ct.cfgOf(ct.VARIANTS[2]).stake, 25, "80¢ plain bets $25");
+  assert.equal(ct.cfgOf(ct.VARIANTS[2]).dcaUsd, 20, "its DCA stays $20");
   assert.equal(ct.cfgOf(ct.VARIANTS[3]).dcaUsd, 0);
   assert.equal(ct.cfgOf(ct.VARIANTS[5]).stopPrice, 0);
   assert.match(ct.ruleText(ct.VARIANTS[0]), /last 4 min · 72¢-95¢ · 2\+ smart wallets agree/);
