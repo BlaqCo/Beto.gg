@@ -485,7 +485,7 @@ const fairParts = s => { const p = [s.model != null && `BTC math ${cents(s.model
  * safety brakes, so they show what the bare rule does.
  */
 export const VARIANTS = [
-  { id: "main", name: "SHADOW", smart: true, over: {} },
+  { id: "main", name: "SHADOW", smart: true, over: { stake: 20, sizeWeak: 10, sizeStrong: 30, dcaUsd: 40, dailyLossLimit: 80 } },
   { id: "rule72", name: "72¢ rule, plain", smart: false, over: { dailyLossLimit: 0, lossStreak: 0 } },
   { id: "rule80", name: "80¢ rule, plain", smart: false, over: { stake: 25, entryWindowMs: 180_000, minPrice: 0.80, dcaLow: 0.58, dcaHigh: 0.66, dailyLossLimit: 0, lossStreak: 0 } },
   { id: "nodca", name: "SHADOW, no DCA", smart: true, over: { dcaUsd: 0 } },
