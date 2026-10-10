@@ -29,7 +29,7 @@
  */
 import { EventEmitter } from "events";
 import { takerFee } from "../fees.js";
-import { saveJSON, loadJSON } from "./state.js";
+import { saveJSON, loadJSON, claimOnce } from "./state.js";
 
 const GAMMA = process.env.COPY_GAMMA_URL || "https://gamma-api.polymarket.com";
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
@@ -858,6 +858,10 @@ async function maybeLive({ family, us, d, now }) {
   if (liveTried.size > 200) liveTried.delete(liveTried.values().next().value);
   const safe = liveSafety(now);
   if (!safe.ok) { emit("live", `REAL bet skipped: ${safe.why}`, { family, live: true }); return; }
+  // During a deploy the old and new server overlap for a few seconds; only one may bet a window.
+  try {
+    if (!(await claimOnce(`arena:copy:live:claim:${family}:${us.end}`, 3600))) { emit("live", "REAL bet skipped: another running copy of the bot already bet this window", { family, live: true }); return; }
+  } catch (err) { emit("live", `REAL bet skipped: couldn't confirm no other copy of the bot is betting (${err.message})`, { family, live: true }); return; }
   liveBusy = true;
   try {
     const pm = await getPm(), size = liveSize(d.tier);
@@ -884,6 +888,9 @@ async function manageLive(now) {
       if (d.dca) {
         p.dca = { pending: true, at: now };   // one attempt, filled or not
         liveDirty = true;
+        let mine = false;
+        try { mine = await claimOnce(`arena:copy:live:dca:${p.usSlug}`, 3600); } catch { mine = false; }
+        if (!mine) { p.dca = { skipped: true, at: now }; continue; }
         const r = await pm.buyOutcomeFOK({ slug: p.usSlug, side: p.side, sizeUsd: p.dcaUsd, price: d.price, slip: CFG.liveSlip, adding: true });
         if (!r.filled) { p.dca = { failed: true, at: now, error: r.error }; emit("live", `REAL DCA $${p.dcaUsd} didn't fill (${r.error})`, { family: p.family, live: true }); continue; }
         const fee = takerFee(r.qty, r.fillPrice);
