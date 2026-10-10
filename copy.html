@@ -128,7 +128,9 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
   </header>
 
   <div class="kpis">
-    <div class="kpi"><b>PAPER P&amp;L</b><i id="kPnl">—</i></div>
+    <div class="kpi" id="kRealTile" hidden><b>REAL P&amp;L</b><i id="kReal">—</i><small id="kRealSub"></small></div>
+    <div class="kpi" id="kCashTile" hidden><b>POLYMARKET CASH</b><i id="kCash">—</i><small id="kCashSub"></small></div>
+    <div class="kpi"><b id="kPnlLabel">PAPER P&amp;L</b><i id="kPnl">—</i></div>
     <div class="kpi"><b>COPIES</b><i id="kCopies">—</i></div>
     <div class="kpi"><b>WON / LOST</b><i id="kWl">—</i></div>
     <div class="kpi"><b>TODAY · BRAKES</b><i id="kToday">—</i><small id="kBrakes"></small></div>
@@ -285,6 +287,17 @@ function renderStatus(s) {
   const st = s.stats || {};
   const pnl = Number.isFinite(st.pnl) ? st.pnl : 0;
   $("kPnl").textContent = `${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`; $("kPnl").className = pnl >= 0 ? "pos" : "neg";
+  // Real money first when it's on; the paper number is then labelled as practice.
+  const L = s.live, liveOn = !!L?.enabled;
+  $("kRealTile").hidden = !liveOn; $("kCashTile").hidden = !liveOn;
+  $("kPnlLabel").textContent = liveOn ? "PAPER P&L (PRACTICE)" : "PAPER P&L";
+  if (liveOn) {
+    const rp = L.pnl + (L.unrealized || 0), sg = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+    $("kReal").textContent = sg(rp); $("kReal").className = rp >= 0 ? "pos" : "neg";
+    $("kRealSub").textContent = `${L.bets} bets · ${L.wins}W ${L.losses}L · today ${sg(L.today)}${L.open?.length ? ` · open ${sg(L.unrealized)}` : ""}`;
+    $("kCash").textContent = L.cash != null ? `$${L.cash.toFixed(2)}` : "—";
+    $("kCashSub").textContent = L.cashError ? "couldn't read the account" : L.cashAt ? `checked ${ago(L.cashAt)}` : "checking…";
+  }
   $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
   $("kWl").textContent = `${st.wins ?? 0} / ${st.losses ?? 0}`;
   $("kSmart").textContent = st.smartWallets ?? 0;
@@ -336,14 +349,14 @@ function renderReal(L) {
     : '<button class="stopbtn" id="liveBtn" data-halt="true" type="button">STOP REAL MONEY</button>') : "";
   const why = !L.enabled ? "Real money is off. Turn it on with COPY_LIVE=true in Railway."
     : L.halted ? esc(L.halted) : L.safety && !L.safety.ok && L.safety.code !== "open" ? esc(L.safety.why) : "Betting when SHADOW bets on BTC15.";
-  const open = (L.open || []).map(p => `<div class="posbox">HOLDING real ${esc(p.side)} BTC15 · ${p.contracts} sh · $${(+p.staked).toFixed(2)} in @ avg ${cents(p.avg)}${p.dca?.price ? " (DCA'd)" : ""}</div>`).join("");
+  const open = (L.open || []).map(p => `<div class="posbox">HOLDING real ${esc(p.side)} BTC15 · ${p.contracts} sh · $${(+p.staked).toFixed(2)} in @ avg ${cents(p.avg)}${p.dca?.price ? " (DCA'd)" : ""}${p.mark ? ` · now ${cents(p.mark.bid)}, worth $${p.mark.value.toFixed(2)} (${signed(p.mark.pnl)})` : ""}</div>`).join("");
   const rows = (L.recent || []).map(p => `<tr><td class="mut">${hhmm(p.closedAt || p.openedAt)}</td><td><span class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</span> BTC15${p.tier ? `<div class="sub">${esc(p.tier)}</div>` : ""}</td>
     <td class="r">${cents(p.price)}<div class="sub">$${(+p.staked).toFixed(2)}</div></td>
     <td class="r res ${p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.won == null ? "?" : signed(p.pnl)}<div class="sub">${p.exit?.reason === "stop" ? "stopped" : p.won ? "won" : p.won === false ? "lost" : ""}</div></td></tr>`).join("");
   el.innerHTML = `<div class="head">${state}<span class="big ${L.pnl >= 0 ? "pos" : "neg"}">${signed(L.pnl)}</span>
-      <span class="mut">${L.bets} bets · ${L.wins} won / ${L.losses} lost · today ${signed(L.today)}</span>${btn}</div>
+      <span class="mut">${L.bets} bets · ${L.wins} won / ${L.losses} lost · today ${signed(L.today)}${L.cash != null ? ` · Polymarket cash $${L.cash.toFixed(2)}` : ""}${L.missed ? ` · ${L.missed} orders didn't fill` : ""}</span>${btn}</div>
     <p class="mut" style="margin:6px 0 0">${why}</p>
-    <p class="mut" style="margin:4px 0 0;font-size:11px">Bets $${L.sizes.join(" / $")} by signal · DCA ${L.dcaMult}× the bet · stop ${cents(status?.cfg?.stopPrice)} · no new bets after −$${L.dailyLoss} in a day · switches off at −$${L.maxLoss} total</p>
+    <p class="mut" style="margin:4px 0 0;font-size:11px">Bets $${L.sizes.join(" / $")} by signal · pays up to ${Math.round((L.slip ?? 0.01) * 100)}¢ over the quote · DCA ${L.dcaMult}× the bet · stop ${cents(status?.cfg?.stopPrice)} · no new bets after −$${L.dailyLoss} in a day · switches off at −$${L.maxLoss} total</p>
     ${open}
     ${rows ? `<table class="trades" style="margin-top:8px"><thead><tr><th>WHEN</th><th>BET</th><th class="r">ENTRY</th><th class="r">RESULT</th></tr></thead><tbody>${rows}</tbody></table>` : ""}`;
   const b = $("liveBtn");
