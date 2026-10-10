@@ -78,6 +78,8 @@ export const CFG = {
   // Entry: only in the last few minutes, only on a strong favorite that smart money backed.
   entryWindowMs: env("COPY_ENTRY_SECONDS", 210) * 1000,  // enter only with this much time left or less
   minPrice: env("COPY_MIN_PRICE", 0.72),        // our side must cost at least this on US...
+  preferMax: env("COPY_PREFER_MAX", 0.85),      // target band is minPrice-preferMax; above it SHADOW waits...
+  fallbackMs: env("COPY_FALLBACK_SECONDS", 75) * 1000,  // ...and only pays up to maxPrice in this last stretch, one size smaller
   maxPrice: env("COPY_MAX_PRICE", 0.95),        // ...and at most this
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
   // Position management: add once on a dip, cut the whole position at the stop.
@@ -469,6 +471,17 @@ export function safetyCheck(bk, now, cfg = CFG) {
  * must not be above fair value, the safety brakes must be off, and the bet is sized
  * $5 / $10 / $15 by the signal's tier.
  */
+/**
+ * Price preference: 72-85¢ is the target. Above 85¢ (up to the 95¢ cap) SHADOW holds off for
+ * a better price and only takes it in the last fallbackMs of the window, one size smaller.
+ */
+export function pricePref(side, price, us, now, cfg = CFG) {
+  if (price <= cfg.preferMax) return { ok: true, fallback: false };
+  if (us.end - now > cfg.fallbackMs) return { ok: false, code: "pricey", why: `US ${side} is ${cents(price)}; waiting for ${cents(cfg.preferMax)} or less (up to ${cents(cfg.maxPrice)} only in the last ${mmss(cfg.fallbackMs)})` };
+  return { ok: true, fallback: true };
+}
+const tierDown = t => (t === "strong" ? "normal" : "weak");
+
 /** The side the primary wallets backed this window: more net dollars, latest buy breaks a tie. */
 export function primarySide(primary) {
   if (!primary) return null;
@@ -490,13 +503,16 @@ function decidePrimary({ side, votes, us, now, cfg, globalPx }) {
   if (price == null) return { enter: false, code: "no-price", why: "no valid US price" };
   if (price < cfg.minPrice) return { enter: false, code: "cheap", why: `primary wallet is on ${side}, but US ${side} is ${cents(price)}, under the ${cents(cfg.minPrice)} minimum` };
   if (price > cfg.maxPrice) return { enter: false, code: "dear", why: `primary wallet is on ${side}, but US ${side} is ${cents(price)}, over the ${cents(cfg.maxPrice)} cap` };
+  const pp = pricePref(side, price, us, now, cfg);
+  if (!pp.ok) return { enter: false, code: pp.code, why: `primary wallet is on ${side}, but ${pp.why}` };
   const fv = fairValue({ side, us, globalPx: globalPx?.[side], now, cfg });
   const edge = fv.fair == null ? null : +(fv.fair - price - takerFee(1, price)).toFixed(4);
   if (edge != null && edge < cfg.minEdge && fv.global != null) return { enter: false, code: "edge", why: `primary wallet is on ${side}, but US ${side} at ${cents(price)} costs more than it's worth (global ${cents(fv.global)})` };
   const agree = c.side === side ? c.agree : (side === "Up" ? c.nUp : c.nDown);
-  const tier = c.side === side && c.agree >= 3 && c.share >= 0.75 ? "strong" : c.side && c.side !== side && c.share >= cfg.minShare ? "weak" : "normal";
+  const base = c.side === side && c.agree >= 3 && c.share >= 0.75 ? "strong" : c.side && c.side !== side && c.share >= cfg.minShare ? "weak" : "normal";
+  const tier = pp.fallback ? tierDown(base) : base;
   const stake = tier === "strong" ? cfg.sizeStrong : tier === "weak" ? cfg.sizeWeak : cfg.stake;
-  return { enter: true, side, price, stake, tier, primary: true,
+  return { enter: true, side, price, stake, tier, primary: true, fallback: pp.fallback,
     signal: { ...c, agree, against: side === "Up" ? c.nDown : c.nUp, share: c.side === side ? c.share : +(1 - c.share).toFixed(4), price, ...fv, edge, tier } };
 }
 
@@ -515,12 +531,14 @@ export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safe
   if (s.price == null) return { enter: false, code: "no-price", why: "no valid US price" };
   if (s.price < cfg.minPrice) return { enter: false, code: "cheap", why: `US ${s.side} is ${cents(s.price)}, under the ${cents(cfg.minPrice)} minimum` };
   if (s.price > cfg.maxPrice) return { enter: false, code: "dear", why: `US ${s.side} is ${cents(s.price)}, over the ${cents(cfg.maxPrice)} cap` };
+  const pp = pricePref(s.side, s.price, us, now, cfg);
+  if (!pp.ok) return { enter: false, code: pp.code, why: pp.why };
   // Only the global Polymarket price can veto a bet. The BTC math alone runs on Coinbase spot
   // and an estimated strike and has been wrong too often live, so it never vetoes or sizes.
   if (s.edge != null && s.edge < cfg.minEdge && s.global != null) return { enter: false, code: "edge", why: `US ${s.side} at ${cents(s.price)} costs more than it's worth (fair ${cents(s.fair)}${fairParts(s)})` };
-  const tier = s.tier;
+  const tier = pp.fallback ? tierDown(s.tier) : s.tier;
   const stake = tier === "strong" ? cfg.sizeStrong : tier === "weak" ? cfg.sizeWeak : cfg.stake;
-  return { enter: true, side: s.side, price: s.price, stake, tier, signal: s };
+  return { enter: true, side: s.side, price: s.price, stake, tier, fallback: pp.fallback, signal: s };
 }
 const fairParts = s => { const p = [s.model != null && `BTC math ${cents(s.model)}`, s.global != null && `global ${cents(s.global)}`].filter(Boolean); return p.length ? `: ${p.join(", ")}` : ""; };
 
@@ -567,7 +585,7 @@ function openPaper({ v, family, trade, us, price, now, stake, extra = {} }) {
   const sig = extra.signal;
   const head = extra.primary ? `PRIMARY wallet ${short(trade.wallet)} (${sig.agree} other smart wallet${sig.agree === 1 ? "" : "s"} on this side)`
     : sig ? `${sig.agree} smart wallet${sig.agree === 1 ? "" : "s"} (${Math.round(sig.share * 100)}% of smart weight)` : short(trade.wallet);
-  const tail = sig ? ` · ${extra.tier} signal${sig.fair != null ? `, fair ${cents(sig.fair)}${fairParts(sig)}, edge ${sig.edge >= 0 ? "+" : ""}${Math.round(sig.edge * 100)}¢` : ", no fair value available"}`
+  const tail = sig ? ` · ${extra.tier} signal${extra.fallback ? ` (late, over ${cents(cfg.preferMax)}: one size smaller)` : ""}${sig.fair != null ? `, fair ${cents(sig.fair)}${fairParts(sig)}, edge ${sig.edge >= 0 ? "+" : ""}${Math.round(sig.edge * 100)}¢` : ", no fair value available"}`
     : `. They paid ${cents(trade.price)} for ${usd(pos.theirUsd)}`;
   emit("copy", `${tagOf(v)}COPIED ${head} → paper ${pos.side} on US ${family.toUpperCase()} @ ${cents(price)} ($${stake} + ${usd(fee)} fee)${tail}`, { family, variant: v.id, pos });
   persistBook(v.id);
@@ -764,7 +782,7 @@ async function pollLive(family, now) {
           : [...cur.votes[d.side].entries()].sort((a, b) => b[1].weight - a[1].weight)[0];
         openPaper({ v, family, us, price: d.price, now, stake: d.stake,
           trade: { wallet, name: top.name, outcome: d.side, price: top.price, usd: top.usd, why: d.primary ? "primary wallet" : judge(wallets.get(wallet), now).why },
-          extra: { tier: d.tier, primary: !!d.primary, signal: { agree: d.signal.agree, against: d.signal.against, share: d.signal.share, model: d.signal.model, global: d.signal.global, fair: d.signal.fair, edge: d.signal.edge } } });
+          extra: { tier: d.tier, primary: !!d.primary, fallback: !!d.fallback, signal: { agree: d.signal.agree, against: d.signal.against, share: d.signal.share, model: d.signal.model, global: d.signal.global, fair: d.signal.fair, edge: d.signal.edge } } });
       } else {
         openPaper({ v, family, us, price: d.price, now, stake: cfg.stake, trade: cur.smartBest[d.side] });
       }

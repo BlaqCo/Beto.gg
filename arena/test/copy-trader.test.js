@@ -302,3 +302,20 @@ test("primary wallet: locked in by default, SHADOW follows its side", () => {
   // Without the primary, the normal vote rule applies (1 wallet is not enough).
   assert.equal(ct.decideSmart({ votes: votes("Down", 1), us, holding: false, now, cfg: c, safety: ok, primary: { Up: 0, Down: 0 } }).code, "agree");
 });
+
+test("price preference: 72-85¢ right away, 86-95¢ only in the last 1:15 and one size smaller", () => {
+  const c = ct.CFG, ok = { ok: true };
+  assert.equal(c.preferMax, 0.85); assert.equal(c.fallbackMs, 75_000);
+  const votes = () => { const v = { Up: new Map(), Down: new Map() }; for (let i = 0; i < 6; i++) ct.addVote(v, { wallet: "w" + i, outcome: "Up", usd: 10, price: 0.8 }, 0.2); return v; };
+  const at = (ask, left) => ct.decideSmart({ votes: votes(), us: { end: left, bid: ask - 0.02, ask, pxs: [] }, holding: false, now: 0, cfg: c, safety: ok });
+  let d = at(0.80, 200_000);
+  assert.equal(d.enter, true); assert.equal(d.tier, "strong"); assert.equal(d.fallback, false, "80¢ with 3:20 left: bet now, full size");
+  d = at(0.92, 200_000);
+  assert.equal(d.enter, false); assert.equal(d.code, "pricey", "92¢ with 3:20 left: wait for a better price");
+  d = at(0.92, 60_000);
+  assert.equal(d.enter, true); assert.equal(d.fallback, true); assert.equal(d.tier, "normal", "92¢ with 1:00 left: take it, one size smaller");
+  assert.equal(at(0.97, 60_000).code, "dear", "still never over 95¢");
+  // Same for the primary wallet.
+  const p = ct.decideSmart({ votes: { Up: new Map(), Down: new Map() }, us: { end: 200_000, bid: 0.90, ask: 0.92, pxs: [] }, holding: false, now: 0, cfg: c, safety: ok, primary: { Up: 100 } });
+  assert.equal(p.code, "pricey");
+});
