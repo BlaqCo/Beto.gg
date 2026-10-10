@@ -13,7 +13,7 @@
  *   3. Voting. During a live window it polls the newest trades. Every smart wallet's buy
  *      is a vote for that side, weighted by the wallet's recent win rate and its edge on
  *      late 70¢+ bets (the kind SHADOW makes).
- *   4. Entering. In the last 4 minutes, if 2+ smart wallets back a side with 65%+ of the
+ *   4. Entering. In the last 3:30, if 2+ smart wallets back a side with 65%+ of the
  *      vote weight, that side costs 72-95¢ on Polymarket US, and the price isn't above
  *      fair value (BTC spot vs strike with time left, averaged with the global Polymarket
  *      price; only a fresh global price can veto, the BTC math alone just shrinks the bet),
@@ -63,7 +63,7 @@ export const CFG = {
   families: (process.env.COPY_FAMILIES || "btc15").split(",").map(x => x.trim()).filter(f => f === "btc15" || f === "btc60"),
   // REAL MONEY. Off unless COPY_LIVE=true. Mirrors SHADOW's BTC15 entries with small bets.
   live: process.env.COPY_LIVE === "true",
-  liveWeak: env("COPY_LIVE_WEAK", 1), liveStake: env("COPY_LIVE_STAKE", 3), liveStrong: env("COPY_LIVE_STRONG", 5),
+  liveWeak: env("COPY_LIVE_WEAK", 2), liveStake: env("COPY_LIVE_STAKE", 3), liveStrong: env("COPY_LIVE_STRONG", 5),
   liveDcaMult: env("COPY_LIVE_DCA_MULT", 2),    // DCA = this x the bet, like SHADOW ($2 / $6 / $10)
   liveDailyLoss: env("COPY_LIVE_DAILY_LOSS", 10),// no new real bets after this much lost in a UTC day
   liveMaxLoss: env("COPY_LIVE_MAX_LOSS", 15),   // real trading switches itself off at this total loss
@@ -72,7 +72,7 @@ export const CFG = {
   latePrice: env("COPY_LATE_PRICE", 0.70),      // ...at this price or more
   decay: env("COPY_DECAY", 0.97),               // each older window counts this much as the next
   // Entry: only in the last few minutes, only on a strong favorite that smart money backed.
-  entryWindowMs: env("COPY_ENTRY_SECONDS", 240) * 1000,  // enter only with this much time left or less
+  entryWindowMs: env("COPY_ENTRY_SECONDS", 210) * 1000,  // enter only with this much time left or less
   minPrice: env("COPY_MIN_PRICE", 0.72),        // our side must cost at least this on US...
   maxPrice: env("COPY_MAX_PRICE", 0.95),        // ...and at most this
   minMsLeft: env("COPY_MIN_SECONDS_LEFT", 30) * 1000,
@@ -114,6 +114,7 @@ export function _reset() { events = []; wallets = new Map(); books.clear(); scor
 const short = a => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?");
 const usd = n => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 const cents = p => `${Math.round(p * 100)}¢`;
+const mmss = ms => `${Math.floor(ms / 60000)}:${String(Math.round(ms % 60000 / 1000)).padStart(2, "0")}`;   // 210000 -> "3:30"
 
 export function emit(type, msg, data = {}) {
   const e = { t: Date.now(), type, msg, ...data };
@@ -340,7 +341,7 @@ function sidePrice(side, us) {
 function timeGate(us, now, cfg) {
   if (!us) return { enter: false, code: "no-us", why: "no matching Polymarket US window live" };
   const left = us.end - now;
-  if (left > cfg.entryWindowMs) return { enter: false, wait: true, code: "early", why: `waiting for the last ${Math.round(cfg.entryWindowMs / 60000)} minutes` };
+  if (left > cfg.entryWindowMs) return { enter: false, wait: true, code: "early", why: `waiting for the last ${mmss(cfg.entryWindowMs)}` };
   if (left < cfg.minMsLeft) return { enter: false, code: "late", why: "too close to the close" };
   return null;
 }
@@ -506,7 +507,7 @@ const activeVariants = () => VARIANTS.filter(v => v.id === "main" || CFG.variant
 const tagOf = v => (v.id === "main" ? "" : `[${v.name}] `);
 export function ruleText(v) {
   const c = cfgOf(v);
-  return [`last ${Math.round(c.entryWindowMs / 60000)} min`, `${cents(c.minPrice)}-${cents(c.maxPrice)}`,
+  return [`last ${mmss(c.entryWindowMs)}`, `${cents(c.minPrice)}-${cents(c.maxPrice)}`,
     v.smart ? `${c.minAgree}+ smart wallets agree${c.soloLateN > 0 ? ` (or 1 with ${c.soloLateN}+ late bets, ${Math.round(c.soloLateWin * 100)}%+ won)` : ""}, not above fair value, $${c.sizeWeak}/$${c.stake}/$${c.sizeStrong} by signal` : `one $${c.minSignalUsd}+ smart buy, $${c.stake}`,
     c.dcaUsd > 0 ? `DCA at ${cents(c.dcaLow)}-${cents(c.dcaHigh)}` : "no DCA", c.stopPrice > 0 ? `stop ${cents(c.stopPrice)}` : "no stop",
     v.smart && c.dailyLossLimit > 0 ? `brakes: -$${c.dailyLossLimit}/day, pause after ${c.lossStreak} losses` : null].filter(Boolean).join(" · ");
