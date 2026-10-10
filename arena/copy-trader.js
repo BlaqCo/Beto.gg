@@ -17,7 +17,7 @@
  *      vote weight, that side costs 72-95¢ on Polymarket US, and the price isn't above
  *      fair value (BTC spot vs strike with time left, averaged with the global Polymarket
  *      price; only a fresh global price can veto, the BTC math alone just shrinks the bet),
- *      it makes a $5 / $10 / $15 paper bet sized by signal strength, adds 2x that once
+ *      it makes a $5 / $10 / $15 paper bet sized by how strongly smart money agrees, adds 2x that once
  *      on a dip to 53-63¢, stops out at 22¢, and otherwise settles on the US result.
  *      Brakes: no new bets after -$40 in a day, and a 30-minute pause after 2 losses
  *      in a row.
@@ -425,8 +425,9 @@ export function fairValue({ side, us, globalPx, now, cfg = CFG }) {
 /**
  * Everything the smart rule knows about a window right now: consensus, our price, fair
  * value, edge (fair minus price minus the taker fee, per share) and the bet-size tier.
- * Tier points: +1 for 3+ agreeing wallets, +1 for 85%+ of the vote weight, +1 for 5¢+ edge,
- * -1 when the edge is under 2¢ or unknown. 2+ is strong, below 0 is weak.
+ * The bet-size tier comes from how strongly the smart wallets agree: strong with 5+ wallets
+ * and 90%+ of the vote weight, weak with fewer than 3 wallets or under 75%, normal otherwise.
+ * The BTC math is shown but doesn't size bets: live, it called nearly every winner overpriced.
  */
 export function signalOf({ votes, us, globalPx, now, cfg = CFG }) {
   const c = consensus(votes);
@@ -436,8 +437,8 @@ export function signalOf({ votes, us, globalPx, now, cfg = CFG }) {
   if (price == null) return out;
   const fv = fairValue({ side: c.side, us, globalPx: globalPx?.[c.side], now, cfg });
   const edge = fv.fair == null ? null : +(fv.fair - price - takerFee(1, price)).toFixed(4);
-  const pts = (c.agree >= 3) + (c.share >= 0.85) + (edge != null && edge >= 0.05) - (edge == null || edge < 0.02);
-  return { ...out, price, ...fv, edge, tier: pts >= 2 ? "strong" : pts < 0 ? "weak" : "normal" };
+  const tier = c.agree >= 5 && c.share >= 0.9 ? "strong" : c.agree < 3 || c.share < 0.75 ? "weak" : "normal";
+  return { ...out, price, ...fv, edge, tier };
 }
 
 /**
@@ -478,10 +479,9 @@ export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safe
   if (s.price < cfg.minPrice) return { enter: false, code: "cheap", why: `US ${s.side} is ${cents(s.price)}, under the ${cents(cfg.minPrice)} minimum` };
   if (s.price > cfg.maxPrice) return { enter: false, code: "dear", why: `US ${s.side} is ${cents(s.price)}, over the ${cents(cfg.maxPrice)} cap` };
   // Only the global Polymarket price can veto a bet. The BTC math alone runs on Coinbase spot
-  // and an estimated strike, and in live use it called two winners overpriced, so on its own
-  // it can only shrink the bet to the weak size.
+  // and an estimated strike and has been wrong too often live, so it never vetoes or sizes.
   if (s.edge != null && s.edge < cfg.minEdge && s.global != null) return { enter: false, code: "edge", why: `US ${s.side} at ${cents(s.price)} costs more than it's worth (fair ${cents(s.fair)}${fairParts(s)})` };
-  const tier = s.edge != null && s.edge < cfg.minEdge ? "weak" : s.tier;
+  const tier = s.tier;
   const stake = tier === "strong" ? cfg.sizeStrong : tier === "weak" ? cfg.sizeWeak : cfg.stake;
   return { enter: true, side: s.side, price: s.price, stake, tier, signal: s };
 }

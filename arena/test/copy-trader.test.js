@@ -186,13 +186,15 @@ test("smart entry: agreement, fair value, sizing and brakes", () => {
   const okSafety = { ok: true };
   assert.match(ct.decideSmart({ votes: votes(1), us, holding: false, now, cfg: c, safety: okSafety }).why, /only 1 smart wallet/);
   const d3 = ct.decideSmart({ votes: votes(3), us, holding: false, now, cfg: c, safety: okSafety });
-  assert.equal(d3.enter, true); assert.equal(d3.tier, "strong"); assert.equal(d3.stake, 15, "3 wallets, all agree, big edge: $15");
-  const noFair = ct.decideSmart({ votes: votes(2), us: { ...us, spot: null }, holding: false, now, cfg: c, safety: okSafety });
-  assert.equal(noFair.enter, true); assert.equal(noFair.stake, 10, "2 wallets all agree but no fair value: +1 -1 = normal");
+  assert.equal(d3.enter, true); assert.equal(d3.tier, "normal"); assert.equal(d3.stake, 10, "3 wallets, all agree: normal");
+  const d5 = ct.decideSmart({ votes: votes(5), us, holding: false, now, cfg: c, safety: okSafety });
+  assert.equal(d5.tier, "strong"); assert.equal(d5.stake, 15, "5+ wallets with 90%+ of the weight: strong");
+  const two = ct.decideSmart({ votes: votes(2), us: { ...us, spot: null }, holding: false, now, cfg: c, safety: okSafety });
+  assert.equal(two.enter, true); assert.equal(two.stake, 5, "only 2 wallets: weak");
   const dear = ct.decideSmart({ votes: votes(3), us: { ...us, spot: 100_000 }, holding: false, now, cfg: c, safety: okSafety, globalPx: { Up: { px: 0.6, t: now } } });
   assert.equal(dear.enter, false); assert.equal(dear.code, "edge", "80¢ when the global market says ~55¢ is refused");
   const mathOnly = ct.decideSmart({ votes: votes(3), us: { ...us, spot: 100_000 }, holding: false, now, cfg: c, safety: okSafety });
-  assert.equal(mathOnly.enter, true); assert.equal(mathOnly.stake, 5, "BTC math alone can't veto, only shrink the bet to $5");
+  assert.equal(mathOnly.enter, true); assert.equal(mathOnly.stake, 10, "BTC math alone neither vetoes nor shrinks the bet");
   const split = votes(3); ct.addVote(split, { wallet: "d", outcome: "Down", usd: 10, price: 0.2 }, 0.5);
   assert.equal(ct.decideSmart({ votes: split, us, holding: false, now, cfg: c, safety: okSafety }).code, "split");
   assert.equal(ct.decideSmart({ votes: votes(3), us, holding: false, now, cfg: c, safety: { ok: false, code: "pause", why: "paused" } }).code, "pause");
@@ -267,4 +269,15 @@ test("real-money sizes: $2 / $3 / $5 by signal, DCA 2x", () => {
   assert.equal(ct.CFG.liveDcaMult, 2);
   const st = ct.liveStatus();
   assert.deepEqual(st.sizes, [2, 3, 5]); assert.equal(st.enabled, false); assert.equal(st.bets, 0);
+});
+
+test("bet size follows smart-money agreement (cases from the live log)", () => {
+  const now = 0, us = { end: 200_000, bid: 0.80, ask: 0.82, pxs: [] };
+  const mk = (n, againstWeight) => { const v = { Up: new Map(), Down: new Map() };
+    for (let i = 0; i < n; i++) ct.addVote(v, { wallet: "w" + i, outcome: "Up", usd: 10, price: 0.8 }, 0.1);
+    if (againstWeight) ct.addVote(v, { wallet: "x", outcome: "Down", usd: 10, price: 0.2 }, againstWeight);
+    return ct.signalOf({ votes: v, us, now }).tier; };
+  assert.equal(mk(23, 0.07), "strong", "23 wallets, ~94%");
+  assert.equal(mk(3, 0.04), "normal", "3 wallets, ~88%");
+  assert.equal(mk(8, 0.45), "weak", "8 wallets but only ~65%");
 });
