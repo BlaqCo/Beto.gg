@@ -1074,9 +1074,16 @@ async function loadBots() {
     }
   }
 
+  // Which bots run. Only SHADOW (BTC15) runs by default; the others need an explicit
+  // RUN_SPORTS=true / RUN_BTC60=true / RUN_BTC15_BOT=true to start their scan loops.
+  const RUN_SPORTS = process.env.RUN_SPORTS === "true";
+  const RUN_BTC60 = process.env.RUN_BTC60 === "true";
+  const RUN_BTC15_BOT = process.env.RUN_BTC15_BOT === "true";
+  console.log(`[INFO] Bots: sports ${RUN_SPORTS ? "ON" : "off"} · BTC hourly ${RUN_BTC60 ? "ON" : "off"} · BTC15 trend bot ${RUN_BTC15_BOT ? "ON" : "off"} · SHADOW (BTC15) on`);
+
   // Sports scanner — 3s interval
   let scanCount = 0;
-  setInterval(async () => {
+  if (RUN_SPORTS) setInterval(async () => {
     try {
       scanCount++;
       if (scanCount % 10 === 1) {
@@ -1102,7 +1109,7 @@ async function loadBots() {
   // BTC60 scanner — its own interval, its own error boundary. A crash here
   // is caught right here and never reaches the sports scan loop above.
   let btc60ScanCount = 0;
-  setInterval(async () => {
+  if (RUN_BTC60) setInterval(async () => {
     try {
       btc60ScanCount++;
       if (btc60Bot?.runBTC60ScanCycle) {
@@ -1117,7 +1124,7 @@ async function loadBots() {
 
   // BTC15 scanner — same pattern, own interval, own error boundary.
   let btc15ScanCount = 0;
-  setInterval(async () => {
+  if (RUN_BTC15_BOT) setInterval(async () => {
     try {
       btc15ScanCount++;
       if (btc15Bot?.runBTC15ScanCycle) {
@@ -1130,7 +1137,7 @@ async function loadBots() {
     }
   }, 20_000);
 
-  console.log("[INFO] Sports scanner started — crypto disabled (CA)");
+  if (RUN_SPORTS) console.log("[INFO] Sports scanner started — crypto disabled (CA)");
 
   // Scalp lab runs on its own interval, cannot place orders, and stays off
   // unless SCALP_PAPER=true. A failure here never affects the live bot.

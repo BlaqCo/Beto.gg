@@ -59,7 +59,14 @@ export const CFG = {
   dailyLossLimit: env("COPY_DAILY_LOSS_LIMIT", 40),
   lossStreak: env("COPY_LOSS_STREAK", 2),
   pauseMs: env("COPY_PAUSE_MINUTES", 30) * 60_000,
-  variants: process.env.COPY_VARIANTS !== "false",  // run the comparison rules too
+  variants: process.env.COPY_VARIANTS === "true",   // run the paper comparison rules too (off: SHADOW only)
+  families: (process.env.COPY_FAMILIES || "btc15").split(",").map(x => x.trim()).filter(f => f === "btc15" || f === "btc60"),
+  // REAL MONEY. Off unless COPY_LIVE=true. Mirrors SHADOW's BTC15 entries with small bets.
+  live: process.env.COPY_LIVE === "true",
+  liveWeak: env("COPY_LIVE_WEAK", 1), liveStake: env("COPY_LIVE_STAKE", 3), liveStrong: env("COPY_LIVE_STRONG", 5),
+  liveDcaMult: env("COPY_LIVE_DCA_MULT", 2),    // DCA = this x the bet, like SHADOW ($2 / $6 / $10)
+  liveDailyLoss: env("COPY_LIVE_DAILY_LOSS", 10),// no new real bets after this much lost in a UTC day
+  liveMaxLoss: env("COPY_LIVE_MAX_LOSS", 15),   // real trading switches itself off at this total loss
   // Wallet scoring.
   lateMs: env("COPY_LATE_SECONDS", 300) * 1000, // a "late" buy: this close to the end...
   latePrice: env("COPY_LATE_PRICE", 0.70),      // ...at this price or more
@@ -84,6 +91,7 @@ const DUR = { btc15: 15 * 60_000, btc60: 60 * 60_000 };
 // wallets v3 adds recency-weighted and late-bet stats (v2 lacked them; v1 had year-old hourly markets).
 // Books: one per rule at arena:copy:book:v4:<rule>. v2 = last 3 min / 80¢+ results, kept in Redis.
 const KEY_WALLETS = "arena:copy:wallets:v3", KEY_BOOK = "arena:copy:book:v4", KEY_EVENTS = "arena:copy:events";
+const KEY_LIVE = "arena:copy:live:v1";   // real-money record; never cleared by a new session
 const MAX_EVENTS = 300, MAX_WALLETS = 3000;   // keeps the saved wallet list well under Redis's 1 MB request limit
 
 // ── State ───────────────────────────────────────────────────────────
@@ -101,7 +109,7 @@ let recorder = null;
 let timers = [];
 
 export function _setFetch(fn) { fetchImpl = fn; }               // tests
-export function _reset() { events = []; wallets = new Map(); books.clear(); scored.clear(); marketCache.clear(); live.btc15 = live.btc60 = null; toScore.length = 0; }
+export function _reset() { events = []; wallets = new Map(); books.clear(); scored.clear(); marketCache.clear(); live.btc15 = live.btc60 = null; toScore.length = 0; liveBook = { open: [], closed: [], halted: null }; liveTried.clear(); }
 
 const short = a => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?");
 const usd = n => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
@@ -564,6 +572,7 @@ function closeInto(bk, rec) {
 
 function managePositions(now) {
   if (!recorder?.liveQuote) return;
+  if (liveBook.open.length) manageLive(now).catch(err => emit("error", `LIVE manage: ${err.message}`, { live: true }));
   for (const v of activeVariants()) {
     const bk = bookOf(v.id), cfg = cfgOf(v);
     for (const p of [...bk.open]) {
@@ -583,6 +592,7 @@ function managePositions(now) {
 }
 
 export function settlePaper(rec) {
+  settleLive(rec);
   for (const v of VARIANTS) {
     const bk = books.get(v.id);
     if (!bk) continue;
@@ -703,7 +713,7 @@ async function pollLive(family, now) {
       ? decideSmart({ votes: cur.votes, us, holding, now, cfg, globalPx: cur.lastPx, safety: safetyCheck(bk, now, cfg) })
       : decideEntry({ smartFlow: cur.smartFlow, us, holding, now, cfg });
     if (d.enter) {
-      if (v.id === "main") cur.diag.copies++;
+      if (v.id === "main") { cur.diag.copies++; if (CFG.live) maybeLive({ family, us, d, now }).catch(err => emit("error", `LIVE: ${err.message}`, { family, live: true })); }
       if (v.smart) {
         // Name the heaviest smart voter on our side as the wallet "copied".
         const [wallet, top] = [...cur.votes[d.side].entries()].sort((a, b) => b[1].weight - a[1].weight)[0];
@@ -744,6 +754,130 @@ async function workScoreQueue(now) {
   }
 }
 
+// ── Real money (COPY_LIVE=true) ─────────────────────────────────────
+/**
+ * A small live mirror of SHADOW on BTC15: when SHADOW's paper rule enters, place a real
+ * fill-or-kill order on Polymarket US sized $1 / $3 / $5 by the same signal tier, add
+ * the same DCA (2x the bet) on the dip, sell at the same stop, otherwise hold to
+ * settlement. Its own brakes on top of SHADOW's: one real bet at a time, a daily loss
+ * limit, and a total loss at which it switches itself off (HALTED) until resumed.
+ */
+let liveBook = { open: [], closed: [], halted: null }, liveDirty = false, liveBusy = false;
+const liveTried = new Set();
+let pmMod = null;
+const getPm = async () => pmMod || (pmMod = await import("../polymarket-us.js"));
+export function _setPm(m) { pmMod = m; }                       // tests
+
+export const liveSize = tier => (tier === "strong" ? CFG.liveStrong : tier === "weak" ? CFG.liveWeak : CFG.liveStake);
+
+export function liveSafety(now = Date.now()) {
+  if (!CFG.live) return { ok: false, code: "off", why: "real money is off (COPY_LIVE is not true)" };
+  if (liveBook.halted) return { ok: false, code: "halted", why: `real money halted: ${liveBook.halted}` };
+  const settled = liveBook.closed.filter(p => p.won != null && Number.isFinite(p.pnl));
+  const total = settled.reduce((a, p) => a + p.pnl, 0);
+  if (total <= -CFG.liveMaxLoss) return { ok: false, code: "max", why: `total real loss ${usd(total)} reached the -$${CFG.liveMaxLoss} limit` };
+  const s = safetyCheck(liveBook, now, { ...CFG, dailyLossLimit: CFG.liveDailyLoss });
+  if (!s.ok) return s;
+  if (liveBook.open.length) return { ok: false, code: "open", why: "already holding a real bet" };
+  return { ok: true, total, today: s.today };
+}
+
+async function maybeLive({ family, us, d, now }) {
+  if (family !== "btc15" || liveBusy) return;
+  const key = `${family}:${us.end}`;
+  if (liveTried.has(key)) return;
+  liveTried.add(key);
+  if (liveTried.size > 200) liveTried.delete(liveTried.values().next().value);
+  const safe = liveSafety(now);
+  if (!safe.ok) { emit("live", `REAL bet skipped: ${safe.why}`, { family, live: true }); return; }
+  liveBusy = true;
+  try {
+    const pm = await getPm(), size = liveSize(d.tier);
+    const bp = await pm.getBuyingPower();
+    if (!(bp.buyingPower >= size)) { emit("live", `REAL bet skipped: buying power $${(bp.buyingPower || 0).toFixed(2)} is under $${size}`, { family, live: true }); return; }
+    const r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price });
+    if (!r.filled) { emit("live", `REAL order for ${d.side} @ ${cents(d.price)} didn't fill (${r.error}); no real bet this window`, { family, live: true }); return; }
+    const fee = takerFee(r.qty, r.fillPrice);
+    const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, price: r.fillPrice, contracts: r.qty, fee: +fee.toFixed(4),
+      cost: +(r.cost + fee).toFixed(4), staked: r.cost, dcaUsd: size * CFG.liveDcaMult, avg: r.fillPrice, dca: null, openedAt: now, orderId: r.orderId || null };
+    liveBook.open.push(pos); liveDirty = true;
+    emit("live", `REAL BUY ${d.side} BTC15: ${r.qty} shares at up to ${cents(r.fillPrice)} = $${r.cost.toFixed(2)} (${d.tier} signal)${r.viaPositions ? " (fill confirmed from positions)" : ""}`, { family, live: true, pos });
+  } finally { liveBusy = false; }
+}
+
+async function manageLive(now) {
+  if (liveBusy || !recorder?.liveQuote) return;
+  liveBusy = true;
+  try {
+    for (const p of [...liveBook.open]) {
+      const d = decideManage({ pos: p, us: recorder.liveQuote(p.family, p.end), now, cfg: CFG });
+      if (!d) continue;
+      const pm = await getPm();
+      if (d.dca) {
+        p.dca = { pending: true, at: now };   // one attempt, filled or not
+        liveDirty = true;
+        const r = await pm.buyOutcomeFOK({ slug: p.usSlug, side: p.side, sizeUsd: p.dcaUsd, price: d.price, adding: true });
+        if (!r.filled) { p.dca = { failed: true, at: now, error: r.error }; emit("live", `REAL DCA $${p.dcaUsd} didn't fill (${r.error})`, { family: p.family, live: true }); continue; }
+        const fee = takerFee(r.qty, r.fillPrice);
+        p.dca = { price: r.fillPrice, usd: r.cost, contracts: r.qty, fee: +fee.toFixed(4), at: now, bid: d.bid };
+        p.contracts = +(p.contracts + r.qty).toFixed(4); p.cost = +(p.cost + r.cost + fee).toFixed(4);
+        p.staked = +(p.staked + r.cost).toFixed(2); p.avg = +(p.staked / p.contracts).toFixed(4);
+        emit("live", `REAL DCA ${p.side} BTC15: our side dipped to ${cents(d.bid)}, added $${r.cost.toFixed(2)}. Now ${p.contracts} shares, avg ${cents(p.avg)}`, { family: p.family, live: true, pos: p });
+      } else if (d.stop) {
+        const r = await pm.closePositionLive(p.usSlug);
+        if (!r.ok) { emit("error", `REAL STOP failed to sell (${r.error}); will retry`, { family: p.family, live: true }); continue; }
+        const fee = takerFee(p.contracts, d.price), pnl = +(p.contracts * d.price - fee - p.cost).toFixed(2);
+        liveBook.open = liveBook.open.filter(x => x !== p);
+        liveBook.closed.push({ ...p, exit: { reason: "stop", price: d.price, at: now }, won: false, pnl, closedAt: now });
+        liveDirty = true;
+        emit("live", `REAL STOP ${p.side} BTC15: sold at about ${cents(d.price)}: about ${usd(pnl)}`, { family: p.family, live: true });
+        checkLiveMax();
+      }
+    }
+  } finally { liveBusy = false; }
+}
+
+function settleLive(rec) {
+  const hit = liveBook.open.filter(p => p.usSlug === rec.slug);
+  if (!hit.length) return;
+  liveBook.open = liveBook.open.filter(p => p.usSlug !== rec.slug);
+  for (const p of hit) {
+    const won = rec.outcome == null ? null : (rec.outcome === 1) === (p.side === "Up");
+    const pnl = won == null ? 0 : +((won ? p.contracts : 0) - p.cost).toFixed(2);
+    liveBook.closed.push({ ...p, outcome: rec.outcome, won, pnl, closedAt: Date.now() });
+    emit("live", won == null ? `REAL ${p.side} BTC15: result unknown yet; check the Polymarket app` : `REAL ${won ? "WON" : "LOST"} ${p.side} BTC15: ${pnl >= 0 ? "+" : ""}${usd(pnl)}`, { family: p.family, live: true });
+  }
+  if (liveBook.closed.length > 1000) liveBook.closed = liveBook.closed.slice(-1000);
+  liveDirty = true;
+  checkLiveMax();
+}
+
+function checkLiveMax() {
+  const total = liveBook.closed.filter(p => p.won != null).reduce((a, p) => a + p.pnl, 0);
+  if (!liveBook.halted && total <= -CFG.liveMaxLoss) {
+    liveBook.halted = `total real loss ${usd(total)} reached -$${CFG.liveMaxLoss}`; liveDirty = true;
+    emit("live", `REAL MONEY HALTED: ${liveBook.halted}. Resume from /copy only if you mean to.`, { live: true });
+  }
+}
+
+/** Stop or resume real betting from /copy (admin). Stopping never sells an open bet. */
+export function setLiveHalted(halt, why = "stopped from /copy") {
+  liveBook.halted = halt ? why : null; liveDirty = true;
+  emit("live", halt ? `REAL MONEY STOPPED: ${why}. Any open real bet is held to settlement.` : "REAL MONEY resumed from /copy", { live: true });
+  return liveStatus();
+}
+
+export function liveStatus(now = Date.now()) {
+  const settled = liveBook.closed.filter(p => p.won != null && Number.isFinite(p.pnl));
+  const day = new Date(now).toISOString().slice(0, 10);
+  return { enabled: CFG.live, halted: liveBook.halted, safety: CFG.live ? liveSafety(now) : null,
+    sizes: [CFG.liveWeak, CFG.liveStake, CFG.liveStrong], dcaMult: CFG.liveDcaMult, dailyLoss: CFG.liveDailyLoss, maxLoss: CFG.liveMaxLoss,
+    bets: settled.length, open: liveBook.open, wins: settled.filter(p => p.won).length, losses: settled.filter(p => !p.won).length,
+    pnl: +settled.reduce((a, p) => a + p.pnl, 0).toFixed(2),
+    today: +settled.filter(p => new Date(p.closedAt || 0).toISOString().slice(0, 10) === day).reduce((a, p) => a + p.pnl, 0).toFixed(2),
+    recent: liveBook.closed.slice(-20).reverse() };
+}
+
 // ── Persistence ─────────────────────────────────────────────────────
 let walletsSavedAt = 0, walletsSavedScored = 0, eventsSavedAt = 0, eventsSavedLen = -1;
 const dirtyBooks = new Set();
@@ -753,6 +887,7 @@ const r2 = n => Math.round(n * 100) / 100;
 async function persistAll() {
   const now = Date.now();
   for (const id of [...dirtyBooks]) { dirtyBooks.delete(id); await saveJSON(`${KEY_BOOK}:${id}`, bookOf(id)); }
+  if (liveDirty) { liveDirty = false; await saveJSON(KEY_LIVE, liveBook); }
   if (stats.windowsScored !== walletsSavedScored && now - walletsSavedAt >= 10 * 60_000) {
     pruneWallets(now);
     walletsSavedAt = now; walletsSavedScored = stats.windowsScored;
@@ -814,6 +949,7 @@ export function copyStatus(now = Date.now()) {
     smart, open: bk.open, closed: bk.closed.slice(-25).reverse(),
     // Every settled copy in order, for the P&L chart.
     curve: curveOf(bk, mcfg),
+    live: liveStatus(now),
     variants: activeVariants().map(v => {
       const c = cfgOf(v), b = bookOf(v.id);
       return { id: v.id, name: v.name, smart: v.smart, rule: ruleText(v), ...bookSummary(b, now, c),
@@ -896,13 +1032,19 @@ export async function startCopyTrader() {
     for (const c of b.closed) if (!Number.isFinite(c.pnl)) { c.pnl = 0; c.won = null; }
     books.set(v.id, b);
   }
+  const savedLive = await loadJSON(KEY_LIVE);
+  if (savedLive?.closed) liveBook = { open: savedLive.open || [], closed: savedLive.closed, halted: savedLive.halted || null };
+  if (CFG.live) {
+    try { const bp = await (await getPm()).getBuyingPower(); emit("live", `REAL MONEY on: BTC15 only, $${CFG.liveWeak}/$${CFG.liveStake}/$${CFG.liveStrong} by signal, DCA ${CFG.liveDcaMult}x, stop ${cents(CFG.stopPrice)}, -$${CFG.liveDailyLoss}/day, switches off at -$${CFG.liveMaxLoss}. Buying power $${bp.buyingPower.toFixed(2)}${liveBook.halted ? `. HALTED: ${liveBook.halted}` : ""}`, { live: true }); }
+    catch (err) { emit("error", `REAL MONEY on, but the Polymarket US account can't be read: ${err.message}. No real bets until it can.`, { live: true }); }
+  }
   const savedEvents = await loadJSON(KEY_EVENTS);
   if (Array.isArray(savedEvents)) events = savedEvents;
 
   // Score recent history so there are wallets to judge from the start. Oldest first, so
   // the recency weighting sees windows in time order.
   const now = Date.now();
-  for (const [family, n] of [["btc15", CFG.backfill15], ["btc60", CFG.backfill60]]) {
+  for (const [family, n] of [["btc15", CFG.backfill15], ["btc60", CFG.backfill60]].filter(([f]) => CFG.families.includes(f))) {
     const cur = windowStart(family, now);
     for (let i = n; i >= 1; i--) {
       const start = cur - i * DUR[family];
@@ -917,7 +1059,7 @@ export async function startCopyTrader() {
   let busyLive = false, busyScore = false;
   timers.push(setInterval(async () => {
     if (busyLive) return; busyLive = true; stats.polls++;
-    for (const f of ["btc15", "btc60"]) {
+    for (const f of CFG.families) {
       try { await pollLive(f, Date.now()); }
       catch (err) { stats.apiErrors++; stats.lastError = err.message; emit("error", `${f.toUpperCase()} live poll failed: ${err.message}`, { family: f }); }
     }

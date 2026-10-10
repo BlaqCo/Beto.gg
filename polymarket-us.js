@@ -1111,6 +1111,66 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
   }
 }
 
+// ── buyOutcomeFOK ─────────────────────────────────────────────────
+// Fill-or-kill buy of either side of a market (Up = long, Down = short) for
+// SHADOW's small live mode. It has its own tripwire, separate from the sports
+// sizes above: $0.50-$5 per order, never more. Polymarket US always takes
+// price.value as the LONG (Up) price, so a Down buy at X sends 1 - X.
+// `price` is what our side costs now; we pay at most price + slip.
+// `adding` = we already hold this market (a DCA add), so a position showing up
+// in the portfolio can't be taken as proof that THIS order filled.
+const SMALL_ORDER_MIN_USD = 0.5, SMALL_ORDER_MAX_USD = 5;
+export async function buyOutcomeFOK({ slug, side, sizeUsd, price, slip = 0.01, minQty = 0.01, adding = false }) {
+  if (!(sizeUsd >= SMALL_ORDER_MIN_USD && sizeUsd <= SMALL_ORDER_MAX_USD)) {
+    console.log(`🛑 [TRIPWIRE] small order $${sizeUsd} outside $${SMALL_ORDER_MIN_USD}-$${SMALL_ORDER_MAX_USD} REFUSED | ${slug}`);
+    return { filled: false, error: `order size $${sizeUsd} outside $${SMALL_ORDER_MIN_USD}-$${SMALL_ORDER_MAX_USD}` };
+  }
+  if (side !== "Up" && side !== "Down") return { filled: false, error: `unknown side ${side}` };
+  const limit = Math.min(0.99, Math.round((price + slip) * 100) / 100);
+  if (!(limit >= 0.02)) return { filled: false, error: `bad price ${price}` };
+  let qty = Math.floor(sizeUsd / limit / minQty) * minQty;
+  qty = Math.round(qty * 1000) / 1000;
+  while (qty > minQty && qty * limit > sizeUsd + 1e-9) qty = Math.round((qty - minQty) * 1000) / 1000;
+  if (!(qty > 0)) return { filled: false, error: `size $${sizeUsd} too small @ ${limit.toFixed(2)}` };
+  const longPx = side === "Up" ? limit : Math.round((1 - limit) * 100) / 100;
+  try {
+    const order = await signedRequest("POST", "/v1/orders", {
+      marketSlug: slug,
+      intent:     side === "Up" ? "ORDER_INTENT_BUY_LONG" : "ORDER_INTENT_BUY_SHORT",
+      type:       "ORDER_TYPE_LIMIT",
+      price:      { value: longPx.toFixed(2), currency: "USD" },
+      quantity:   qty,
+      tif:        "TIME_IN_FORCE_FILL_OR_KILL",
+    });
+    let state = order?.state ?? order?.orderState ?? order?.status;
+    const id = order?.id ?? order?.orderId;
+    const filledOf = o => { const q = parseFloat(o?.filledQuantity ?? o?.filledQty ?? o?.cumQty ?? o?.executedQuantity ?? 0); return Number.isFinite(q) ? q : 0; };
+    let filledQty = filledOf(order);
+    if (!/FILLED/i.test(String(state)) && filledQty <= 0 && id) {
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 900));
+        try { const o = await signedRequest("GET", `/v1/order/${id}`); state = o?.state ?? o?.orderState ?? o?.status ?? state; filledQty = filledOf(o) || filledQty; } catch {}
+        if (/FILLED/i.test(String(state)) || filledQty > 0) break;
+        if (/CANCEL|REJECT|EXPIRED|KILL/i.test(String(state))) break;
+      }
+    }
+    if (/FILLED/i.test(String(state)) || filledQty > 0) {
+      const q = filledQty > 0 ? filledQty : qty;
+      return { filled: true, qty: q, fillPrice: limit, cost: +(q * limit).toFixed(2), orderId: id };
+    }
+    if (!adding) {
+      try {
+        const pos = await getOpenPositions();
+        if (pos?.[slug]?.qtyBought > 0) return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id, viaPositions: true };
+      } catch {}
+    }
+    if (!state) console.log(`  🔎 Order response had no state: ${JSON.stringify(order).slice(0, 220)}`);
+    return { filled: false, error: `order ${state || "unknown"}`, orderId: id };
+  } catch (err) {
+    return { filled: false, error: err.message };
+  }
+}
+
 // ── closePositionLive ─────────────────────────────────────────────
 export async function closePositionLive(slug) {
   try {
