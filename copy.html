@@ -32,6 +32,14 @@ button{font:inherit;color:inherit}
 .session{font-size:11px;color:var(--muted)}
 .resetbtn{font-family:var(--f-pix);font-size:10px;letter-spacing:.06em;padding:4px 8px;border:1px solid var(--amber);border-radius:4px;background:transparent;color:var(--amber);cursor:pointer}
 .resetbtn:disabled{opacity:.5;cursor:wait}
+.real{padding:10px 14px}
+.real .head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.real .big{font-size:22px;font-variant-numeric:tabular-nums}
+.real .state{font-family:var(--f-pix);font-size:10px;letter-spacing:.06em;padding:2px 6px;border-radius:3px}
+.real .state.on{background:var(--phos);color:var(--void)} .real .state.off{background:var(--phos-faint);color:var(--muted)} .real .state.halt{background:var(--red);color:var(--void)}
+.stopbtn{margin-left:auto;font-family:var(--f-pix);font-size:10px;letter-spacing:.06em;padding:6px 10px;border-radius:4px;border:1px solid var(--red);background:transparent;color:var(--red);cursor:pointer}
+.stopbtn.resume{border-color:var(--phos);color:var(--phos)}
+.k.live{color:var(--red)}
 .conn{display:flex;align-items:center;gap:6px;margin-left:auto;font-family:var(--f-pix);font-size:10px;color:var(--muted)}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--red)}
 .conn.on .dot{background:var(--phos);box-shadow:0 0 8px var(--phos);animation:pulse 2s infinite}
@@ -128,6 +136,11 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
     <div class="kpi"><b>WALLETS ACTIVE 24H</b><i id="kTracked">—</i><small id="kTrackedSub"></small></div>
   </div>
 
+  <section id="realSec">
+    <div class="ph">REAL MONEY <em>BTC15 · SHADOW's bets mirrored small</em></div>
+    <div class="real" id="real"><p class="mut">Loading…</p></div>
+  </section>
+
   <section>
     <div class="ph">PAPER P&amp;L OVER TIME <em id="curveMeta">cumulative, after fees</em></div>
     <div class="chart" id="chart"><p class="empty">The chart starts with SHADOW's first settled copy.</p></div>
@@ -197,8 +210,8 @@ const short = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?";
 const hhmm = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 const hhmmss = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const ago = t => { if (!t) return "—"; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
-const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", reset: "sys", error: "sys" };
-const LABEL = { copy: "COPY", settle: "RESULT", dca: "DCA", stop: "STOP", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", reset: "RESET", error: "ERROR" };
+const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", reset: "sys", live: "copy", error: "sys" };
+const LABEL = { copy: "COPY", settle: "RESULT", dca: "DCA", stop: "STOP", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", reset: "RESET", live: "REAL $", error: "ERROR" };
 let filter = "shadow", events = [], status = null, lastPoll = 0, hlRule = null;
 const shows = li => filter === "all" || (filter === "other" ? li.dataset.v === "1" : li.dataset.v !== "1" && (filter === "shadow" || li.dataset.g === filter));
 
@@ -226,7 +239,7 @@ function addEvent(e) {
   ul.prepend(liFor(e, true));
   while (ul.children.length > 300) ul.lastChild.remove();
   $("feedCount").textContent = `${events.length} events`;
-  if (["copy", "settle", "score", "window", "spot"].includes(e.type)) loadStatus();
+  if (["copy", "settle", "score", "window", "spot", "live"].includes(e.type)) loadStatus();
 }
 
 function renderWindow(f, c) {
@@ -309,6 +322,38 @@ function renderStatus(s) {
     <td class="r res ${p.open ? "amb" : p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${res(p)}${p.exit?.reason === "stop" ? '<div class="sub">stopped</div>' : p.won === false ? '<div class="sub">lost</div>' : p.won ? '<div class="sub">won</div>' : ""}</td></tr>`).join("");
   $("tradesEmpty").hidden = rows.length > 0;
   renderRules(s.variants || []);
+  renderReal(s.live);
+}
+
+function renderReal(L) {
+  const el = $("real");
+  if (!L) { el.innerHTML = '<p class="mut">Not available on this server version.</p>'; return; }
+  const signed = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  const state = !L.enabled ? '<span class="state off">OFF</span>' : L.halted ? '<span class="state halt">STOPPED</span>' : '<span class="state on">ON</span>';
+  const btn = L.enabled ? (L.halted ? '<button class="stopbtn resume" id="liveBtn" data-halt="false" type="button">RESUME REAL MONEY</button>'
+    : '<button class="stopbtn" id="liveBtn" data-halt="true" type="button">STOP REAL MONEY</button>') : "";
+  const why = !L.enabled ? "Real money is off. Turn it on with COPY_LIVE=true in Railway."
+    : L.halted ? esc(L.halted) : L.safety && !L.safety.ok && L.safety.code !== "open" ? esc(L.safety.why) : "Betting when SHADOW bets on BTC15.";
+  const open = (L.open || []).map(p => `<div class="posbox">HOLDING real ${esc(p.side)} BTC15 · ${p.contracts} sh · $${(+p.staked).toFixed(2)} in @ avg ${cents(p.avg)}${p.dca?.price ? " (DCA'd)" : ""}</div>`).join("");
+  const rows = (L.recent || []).map(p => `<tr><td class="mut">${hhmm(p.closedAt || p.openedAt)}</td><td><span class="${p.side === "Up" ? "pos" : "neg"}">${esc(p.side)}</span> BTC15${p.tier ? `<div class="sub">${esc(p.tier)}</div>` : ""}</td>
+    <td class="r">${cents(p.price)}<div class="sub">$${(+p.staked).toFixed(2)}</div></td>
+    <td class="r res ${p.won == null ? "mut" : p.pnl >= 0 ? "pos" : "neg"}">${p.won == null ? "?" : signed(p.pnl)}<div class="sub">${p.exit?.reason === "stop" ? "stopped" : p.won ? "won" : p.won === false ? "lost" : ""}</div></td></tr>`).join("");
+  el.innerHTML = `<div class="head">${state}<span class="big ${L.pnl >= 0 ? "pos" : "neg"}">${signed(L.pnl)}</span>
+      <span class="mut">${L.bets} bets · ${L.wins} won / ${L.losses} lost · today ${signed(L.today)}</span>${btn}</div>
+    <p class="mut" style="margin:6px 0 0">${why}</p>
+    <p class="mut" style="margin:4px 0 0;font-size:11px">Bets $${L.sizes.join(" / $")} by signal · DCA ${L.dcaMult}× the bet · stop ${cents(status?.cfg?.stopPrice)} · no new bets after −$${L.dailyLoss} in a day · switches off at −$${L.maxLoss} total</p>
+    ${open}
+    ${rows ? `<table class="trades" style="margin-top:8px"><thead><tr><th>WHEN</th><th>BET</th><th class="r">ENTRY</th><th class="r">RESULT</th></tr></thead><tbody>${rows}</tbody></table>` : ""}`;
+  const b = $("liveBtn");
+  if (b) b.onclick = async () => {
+    const halt = b.dataset.halt === "true";
+    if (!confirm(halt ? "Stop real-money bets now? An open real bet is kept until it settles." : "Resume real-money bets?")) return;
+    let tok = ""; try { tok = localStorage.getItem("betoAdminToken") || ""; } catch {}
+    if (!tok) { tok = prompt("Admin token (ADMIN_TOKEN):") || ""; if (!tok) return; try { localStorage.setItem("betoAdminToken", tok); } catch {} }
+    const r = await fetch("/api/copy/live", { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": tok }, body: JSON.stringify({ halt }) });
+    if (r.status === 401) { try { localStorage.removeItem("betoAdminToken"); } catch {} alert("Wrong or missing admin token. Nothing changed."); return; }
+    loadStatus();
+  };
 }
 
 const SHORT = { main: "SHADOW", rule72: "72¢ plain", rule80: "80¢ plain", nodca: "No DCA", stop15: "15¢ stop", nostop: "No stop", solo: "1 strong" };

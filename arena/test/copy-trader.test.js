@@ -220,7 +220,7 @@ test("rules side by side: every rule has its own config and leaderboard rows onl
   assert.match(ct.ruleText(ct.VARIANTS[0]), /last 4 min · 72¢-95¢ · 2\+ smart wallets agree/);
   assert.equal(ct.leaderboardRows().length, 2, "only SHADOW's rows before the others trade");
   const st = ct.copyStatus();
-  assert.equal(st.variants.length, 7);
+  assert.equal(st.variants.length, ct.CFG.variants ? 7 : 1, "comparison rules run only with COPY_VARIANTS=true");
 });
 
 test("sized bets scale the DCA: a $5 bet adds $10, a $15 bet adds $30", () => {
@@ -253,4 +253,18 @@ test("new session: clears every rule's record and the feed, keeps wallet scores"
   assert.equal(st.sessionStartedAt, 1234);
   assert.ok(st.variants.every(v => v.copies === 0));
   assert.deepEqual(ct.recentEvents().map(e => e.type), ["reset"]);
+});
+
+test("defaults: SHADOW only, BTC15 only, real money off", () => {
+  assert.equal(ct.CFG.variants, false);
+  assert.deepEqual(ct.CFG.families, ["btc15"]);
+  assert.equal(ct.CFG.live, false);
+  assert.equal(ct.liveSafety().code, "off");
+});
+
+test("real-money sizes: $1 / $3 / $5 by signal, DCA 2x", () => {
+  assert.deepEqual(["weak", "normal", "strong"].map(ct.liveSize), [1, 3, 5]);
+  assert.equal(ct.CFG.liveDcaMult, 2);
+  const st = ct.liveStatus();
+  assert.deepEqual(st.sizes, [1, 3, 5]); assert.equal(st.enabled, false); assert.equal(st.bets, 0);
 });
