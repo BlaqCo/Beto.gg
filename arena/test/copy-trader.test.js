@@ -213,7 +213,7 @@ test("rules side by side: every rule has its own config and leaderboard rows onl
   const ids = ct.VARIANTS.map(v => v.id);
   assert.deepEqual(ids, ["main", "rule72", "rule80", "nodca", "stop15", "nostop", "solo"]);
   assert.equal(ct.cfgOf(ct.VARIANTS[2]).minPrice, 0.8);
-  assert.equal(ct.cfgOf(ct.VARIANTS[2]).stake, 25, "80¢ plain bets $25");
+  assert.equal(ct.cfgOf(ct.VARIANTS[2]).stake, 35, "80¢ plain bets $35");
   assert.equal(ct.cfgOf(ct.VARIANTS[2]).dcaUsd, 20, "its DCA stays $20");
   assert.equal(ct.cfgOf(ct.VARIANTS[3]).dcaUsd, 0);
   assert.equal(ct.cfgOf(ct.VARIANTS[5]).stopPrice, 0);
@@ -241,4 +241,16 @@ test("1 strong wallet rule: one wallet is enough only with 10+ late bets at 90%+
   assert.equal(ct.decideSmart({ votes: one(12, 0.95), us, holding: false, now, cfg: main, safety: ok }).code, "agree", "SHADOW itself still needs 2");
   assert.equal(ct.decideSmart({ votes: one(6, 1), us, holding: false, now, cfg: solo, safety: ok }).code, "agree", "too few late bets");
   assert.equal(ct.decideSmart({ votes: one(20, 0.85), us, holding: false, now, cfg: solo, safety: ok }).code, "agree", "win rate under 90%");
+});
+
+test("new session: clears every rule's record and the feed, keeps wallet scores", async () => {
+  ct._reset();
+  const m = new Map(); ct.addResult(m, { wallet: "w", pnl: 1, cost: 1 }, 1);
+  ct.emit("copy", "old copy");
+  const r = await ct.resetSession(1234);
+  assert.equal(r.ok, true);
+  const st = ct.copyStatus();
+  assert.equal(st.sessionStartedAt, 1234);
+  assert.ok(st.variants.every(v => v.copies === 0));
+  assert.deepEqual(ct.recentEvents().map(e => e.type), ["reset"]);
 });
