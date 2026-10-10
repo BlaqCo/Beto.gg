@@ -1120,6 +1120,14 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
 // `adding` = we already hold this market (a DCA add), so a position showing up
 // in the portfolio can't be taken as proof that THIS order filled.
 const SMALL_ORDER_MIN_USD = 0.5, SMALL_ORDER_MAX_USD = 5;
+const absNum = v => { const n = Math.abs(parseFloat(v?.value ?? v)); return Number.isFinite(n) ? n : 0; };
+/** How many contracts we hold in a market, long or short (raw portfolio, any quantity field). */
+export async function heldQty(slug) {
+  const data = await signedRequest("GET", "/v1/portfolio/positions");
+  const p = data?.positions?.[slug];
+  if (!p) return 0;
+  return Math.max(...["qtyBoughtDecimal", "netPositionDecimal", "qtyBought", "netPosition", "qtySoldDecimal", "qtySold", "quantity"].map(k => absNum(p[k])));
+}
 export async function buyOutcomeFOK({ slug, side, sizeUsd, price, slip = 0.01, minQty = 0.01, adding = false }) {
   if (!(sizeUsd >= SMALL_ORDER_MIN_USD && sizeUsd <= SMALL_ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] small order $${sizeUsd} outside $${SMALL_ORDER_MIN_USD}-$${SMALL_ORDER_MAX_USD} REFUSED | ${slug}`);
@@ -1133,6 +1141,8 @@ export async function buyOutcomeFOK({ slug, side, sizeUsd, price, slip = 0.01, m
   while (qty > minQty && qty * limit > sizeUsd + 1e-9) qty = Math.round((qty - minQty) * 1000) / 1000;
   if (!(qty > 0)) return { filled: false, error: `size $${sizeUsd} too small @ ${limit.toFixed(2)}` };
   const longPx = side === "Up" ? limit : Math.round((1 - limit) * 100) / 100;
+  let before = null;
+  try { before = await heldQty(slug); } catch {}
   try {
     const order = await signedRequest("POST", "/v1/orders", {
       marketSlug: slug,
@@ -1142,29 +1152,41 @@ export async function buyOutcomeFOK({ slug, side, sizeUsd, price, slip = 0.01, m
       quantity:   qty,
       tif:        "TIME_IN_FORCE_FILL_OR_KILL",
     });
-    let state = order?.state ?? order?.orderState ?? order?.status;
-    const id = order?.id ?? order?.orderId;
-    const filledOf = o => { const q = parseFloat(o?.filledQuantity ?? o?.filledQty ?? o?.cumQty ?? o?.executedQuantity ?? 0); return Number.isFinite(q) ? q : 0; };
+    // The order may come back bare or wrapped ({ order: {...} }), with fills as a quantity
+    // field or as an executions list, so all of those are read.
+    const un = o => o?.order ?? o;
+    const stateOf = o => un(o)?.state ?? un(o)?.orderState ?? un(o)?.status;
+    const filledOf = o => {
+      const x = un(o);
+      const q = absNum(x?.filledQuantity ?? x?.filledQty ?? x?.cumQuantity ?? x?.cumQty ?? x?.executedQuantity ?? 0);
+      const ex = [...(Array.isArray(o?.executions) ? o.executions : []), ...(Array.isArray(x?.executions) && x !== o ? x.executions : [])]
+        .reduce((a, e) => a + absNum(e?.quantity ?? e?.qty ?? e?.lastShares ?? e?.filledQuantity ?? e?.trade?.qty ?? 0), 0);
+      return Math.max(q, ex);
+    };
+    let state = stateOf(order), last = order;
+    const id = order?.id ?? order?.orderId ?? un(order)?.id;
     let filledQty = filledOf(order);
     if (!/FILLED/i.test(String(state)) && filledQty <= 0 && id) {
       for (let i = 0; i < 3; i++) {
         await new Promise(r => setTimeout(r, 900));
-        try { const o = await signedRequest("GET", `/v1/order/${id}`); state = o?.state ?? o?.orderState ?? o?.status ?? state; filledQty = filledOf(o) || filledQty; } catch {}
+        try { last = await signedRequest("GET", `/v1/order/${id}`); state = stateOf(last) ?? state; filledQty = filledOf(last) || filledQty; } catch {}
         if (/FILLED/i.test(String(state)) || filledQty > 0) break;
         if (/CANCEL|REJECT|EXPIRED|KILL/i.test(String(state))) break;
       }
     }
     if (/FILLED/i.test(String(state)) || filledQty > 0) {
-      const q = filledQty > 0 ? filledQty : qty;
+      const q = filledQty > 0 ? Math.min(filledQty, qty) : qty;
       return { filled: true, qty: q, fillPrice: limit, cost: +(q * limit).toFixed(2), orderId: id };
     }
-    if (!adding) {
-      try {
-        const pos = await getOpenPositions();
-        if (pos?.[slug]?.qtyBought > 0) return { filled: true, qty, fillPrice: limit, cost: +(qty * limit).toFixed(2), orderId: id, viaPositions: true };
-      } catch {}
-    }
-    if (!state) console.log(`  🔎 Order response had no state: ${JSON.stringify(order).slice(0, 220)}`);
+    // Ground truth: did our holding in this market (long or short) grow?
+    try {
+      const after = await heldQty(slug);
+      if (before != null && after > before + 1e-6) {
+        const q = Math.min(qty, +(after - before).toFixed(3));
+        return { filled: true, qty: q, fillPrice: limit, cost: +(q * limit).toFixed(2), orderId: id, viaPositions: true };
+      }
+    } catch {}
+    console.log(`  🔎 ${side} order ${id || "?"} not seen filled; last response: ${JSON.stringify(last).slice(0, 300)}`);
     return { filled: false, error: `order ${state || "unknown"}`, orderId: id };
   } catch (err) {
     return { filled: false, error: err.message };
