@@ -329,3 +329,19 @@ test("real orders may pay up to 3¢ over the quote, never past the band's top", 
   const st = ct.liveStatus();
   assert.equal(st.missed, 0); assert.equal(st.unrealized, 0); assert.equal(st.slip, 0.03);
 });
+
+test("entries use the live order book, not the market list's price", async () => {
+  const us = { slug: "x", end: 200_000, bid: 0.57, ask: 0.59, pxs: [] };   // market list said Up 59¢
+  ct._setPm({ getBBO: async () => ({ bid: 0.31, ask: 0.33 }) });          // the book said 33¢
+  const fresh = await ct.withBook(us);
+  assert.equal(fresh.ask, 0.33); assert.equal(fresh.src, "book");
+  const cfg = { ...ct.CFG, minPrice: 0.54, maxPrice: 0.73, preferMax: 0.73 };
+  const votes = { Up: new Map(), Down: new Map() };
+  for (let i = 0; i < 4; i++) ct.addVote(votes, { wallet: "w" + i, outcome: "Up", usd: 10, price: 0.6 }, 0.2);
+  assert.equal(ct.decideSmart({ votes, us: fresh, holding: false, now: 0, cfg, safety: { ok: true } }).code, "cheap", "33¢ is outside 54-73¢: no bet");
+  ct._setPm({ getBBO: async () => null });
+  const none = await ct.withBook(us);
+  assert.equal(none.ask, null, "no book: no price");
+  assert.equal(ct.decideSmart({ votes, us: none, holding: false, now: 0, cfg, safety: { ok: true } }).code, "no-price");
+  ct._setPm(null);
+});
