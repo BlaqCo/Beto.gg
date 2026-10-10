@@ -48,6 +48,10 @@ export const CFG = {
   // Smart rule: votes, fair value, sizing, brakes.
   minVoteUsd: env("COPY_MIN_VOTE_USD", 2),      // smart buys this big count as votes
   minAgree: env("COPY_MIN_AGREE", 2),           // smart wallets needed on our side
+  // Primary wallets: when one of these bets in a window, SHADOW follows its side (net dollars)
+  // instead of waiting for the smart-money vote. Comma-separated; COPY_PRIMARY_WALLETS="" clears it.
+  primaryWallets: (process.env.COPY_PRIMARY_WALLETS ?? "0x424eb20fcd25113e3b98f42522a54580350b263b")
+    .split(",").map(a => a.trim().toLowerCase()).filter(a => /^0x[0-9a-f]{40}$/.test(a)),
   soloLateN: 0,                                 // >0: one wallet is enough if it has this many late bets...
   soloLateWin: 0.9,                             // ...with at least this win rate (the "1 strong wallet" rule)
   minShare: env("COPY_MIN_SHARE", 0.65),        // share of smart vote weight on our side
@@ -465,10 +469,43 @@ export function safetyCheck(bk, now, cfg = CFG) {
  * must not be above fair value, the safety brakes must be off, and the bet is sized
  * $5 / $10 / $15 by the signal's tier.
  */
-export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safety }) {
+/** The side the primary wallets backed this window: more net dollars, latest buy breaks a tie. */
+export function primarySide(primary) {
+  if (!primary) return null;
+  const up = primary.Up || 0, down = primary.Down || 0;
+  if (up > down) return "Up";
+  if (down > up) return "Down";
+  return up > 0 ? primary.lastSide || null : null;
+}
+
+/**
+ * Following a primary wallet: our side is its side. The price band, time window, brakes and
+ * global-price veto still apply. The bet size comes from whether the other smart wallets
+ * agree: strong if they back the same side (3+ wallets, 75%+), weak if they lean the other
+ * way, normal otherwise.
+ */
+function decidePrimary({ side, votes, us, now, cfg, globalPx }) {
+  const c = consensus(votes);
+  const price = sidePrice(side, us);
+  if (price == null) return { enter: false, code: "no-price", why: "no valid US price" };
+  if (price < cfg.minPrice) return { enter: false, code: "cheap", why: `primary wallet is on ${side}, but US ${side} is ${cents(price)}, under the ${cents(cfg.minPrice)} minimum` };
+  if (price > cfg.maxPrice) return { enter: false, code: "dear", why: `primary wallet is on ${side}, but US ${side} is ${cents(price)}, over the ${cents(cfg.maxPrice)} cap` };
+  const fv = fairValue({ side, us, globalPx: globalPx?.[side], now, cfg });
+  const edge = fv.fair == null ? null : +(fv.fair - price - takerFee(1, price)).toFixed(4);
+  if (edge != null && edge < cfg.minEdge && fv.global != null) return { enter: false, code: "edge", why: `primary wallet is on ${side}, but US ${side} at ${cents(price)} costs more than it's worth (global ${cents(fv.global)})` };
+  const agree = c.side === side ? c.agree : (side === "Up" ? c.nUp : c.nDown);
+  const tier = c.side === side && c.agree >= 3 && c.share >= 0.75 ? "strong" : c.side && c.side !== side && c.share >= cfg.minShare ? "weak" : "normal";
+  const stake = tier === "strong" ? cfg.sizeStrong : tier === "weak" ? cfg.sizeWeak : cfg.stake;
+  return { enter: true, side, price, stake, tier, primary: true,
+    signal: { ...c, agree, against: side === "Up" ? c.nDown : c.nUp, share: c.side === side ? c.share : +(1 - c.share).toFixed(4), price, ...fv, edge, tier } };
+}
+
+export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safety, primary }) {
   if (holding) return { enter: false, code: "holding", why: "already holding this window" };
   const g = timeGate(us, now, cfg); if (g) return g;
   if (safety && !safety.ok) return { enter: false, code: safety.code, why: safety.why };
+  const pSide = primarySide(primary);
+  if (pSide) return decidePrimary({ side: pSide, votes, us, now, cfg, globalPx });
   const s = signalOf({ votes, us, globalPx, now, cfg });
   if (!s.side) return { enter: false, code: "no-side", why: "no smart-wallet side this window" };
   const strongSolo = cfg.soloLateN > 0 && [...(votes?.[s.side]?.values() || [])]
@@ -528,7 +565,8 @@ function openPaper({ v, family, trade, us, price, now, stake, extra = {} }) {
     wallet: trade.wallet, walletName: trade.name, theirPrice: trade.price, theirUsd: +(trade.usd ?? 0).toFixed(2), why: trade.why, ...extra };
   bk.open.push(pos);
   const sig = extra.signal;
-  const head = sig ? `${sig.agree} smart wallet${sig.agree === 1 ? "" : "s"} (${Math.round(sig.share * 100)}% of smart weight)` : short(trade.wallet);
+  const head = extra.primary ? `PRIMARY wallet ${short(trade.wallet)} (${sig.agree} other smart wallet${sig.agree === 1 ? "" : "s"} on this side)`
+    : sig ? `${sig.agree} smart wallet${sig.agree === 1 ? "" : "s"} (${Math.round(sig.share * 100)}% of smart weight)` : short(trade.wallet);
   const tail = sig ? ` · ${extra.tier} signal${sig.fair != null ? `, fair ${cents(sig.fair)}${fairParts(sig)}, edge ${sig.edge >= 0 ? "+" : ""}${Math.round(sig.edge * 100)}¢` : ", no fair value available"}`
     : `. They paid ${cents(trade.price)} for ${usd(pos.theirUsd)}`;
   emit("copy", `${tagOf(v)}COPIED ${head} → paper ${pos.side} on US ${family.toUpperCase()} @ ${cents(price)} ($${stake} + ${usd(fee)} fee)${tail}`, { family, variant: v.id, pos });
@@ -664,7 +702,7 @@ async function pollLive(family, now) {
     if (cur) { toScore.unshift({ family, start: cur.start, tries: 0 }); windowSummary(family, cur); }   // score the window that just closed first
     const market = await findMarket(family, start);
     cur = live[family] = { key, start, end: start + DUR[family], market, seen: new Set(), flow: { Up: 0, Down: 0 }, smartFlow: { Up: 0, Down: 0 }, smartBest: { Up: null, Down: null },
-      votes: { Up: new Map(), Down: new Map() }, lastPx: { Up: null, Down: null },
+      votes: { Up: new Map(), Down: new Map() }, lastPx: { Up: null, Down: null }, primary: { Up: 0, Down: 0, lastSide: null },
       skips: new Set(), order: null, nextOffset: 0, newest: 0, warned: false, diag: { trades: 0, smartBuys: 0, smartSmall: 0, voters: 0, copies: 0 } };
     emit("window", market ? `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: watching global market ${market.slug}`
       : `new ${family.toUpperCase()} window ${new Date(start).toISOString().slice(11, 16)}Z: global market not found yet (tried ${globalSlugs(family, start).join(", ")})`, { family });
@@ -690,6 +728,10 @@ async function pollLive(family, now) {
     cur.flow[t.outcome] += amt;
     const s = wallets.get(t.wallet);
     const j = judge(s, now);
+    if (CFG.primaryWallets.includes(t.wallet)) {
+      cur.primary[t.outcome] += amt; cur.primary.lastSide = t.outcome;
+      emit("spot", `PRIMARY wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()}. Its net this window: Up ${usd(cur.primary.Up)} · Down ${usd(cur.primary.Down)}`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price, primary: true });
+    }
     if (!j.smart) continue;
     cur.diag.smartBuys++;
     if (amt < CFG.minVoteUsd) { cur.diag.smartSmall++; continue; }
@@ -711,16 +753,18 @@ async function pollLive(family, now) {
     const cfg = cfgOf(v), bk = bookOf(v.id);
     const holding = bk.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
     const d = v.smart
-      ? decideSmart({ votes: cur.votes, us, holding, now, cfg, globalPx: cur.lastPx, safety: safetyCheck(bk, now, cfg) })
+      ? decideSmart({ votes: cur.votes, us, holding, now, cfg, globalPx: cur.lastPx, safety: safetyCheck(bk, now, cfg), primary: cur.primary })
       : decideEntry({ smartFlow: cur.smartFlow, us, holding, now, cfg });
     if (d.enter) {
       if (v.id === "main") { cur.diag.copies++; if (CFG.live) maybeLive({ family, us, d, now }).catch(err => emit("error", `LIVE: ${err.message}`, { family, live: true })); }
       if (v.smart) {
-        // Name the heaviest smart voter on our side as the wallet "copied".
-        const [wallet, top] = [...cur.votes[d.side].entries()].sort((a, b) => b[1].weight - a[1].weight)[0];
+        // The wallet "copied": the primary wallet when following it, else the heaviest smart voter on our side.
+        const [wallet, top] = d.primary
+          ? [CFG.primaryWallets[0], { name: wallets.get(CFG.primaryWallets[0])?.name || null, price: null, usd: cur.primary[d.side] }]
+          : [...cur.votes[d.side].entries()].sort((a, b) => b[1].weight - a[1].weight)[0];
         openPaper({ v, family, us, price: d.price, now, stake: d.stake,
-          trade: { wallet, name: top.name, outcome: d.side, price: top.price, usd: top.usd, why: judge(wallets.get(wallet), now).why },
-          extra: { tier: d.tier, signal: { agree: d.signal.agree, against: d.signal.against, share: d.signal.share, model: d.signal.model, global: d.signal.global, fair: d.signal.fair, edge: d.signal.edge } } });
+          trade: { wallet, name: top.name, outcome: d.side, price: top.price, usd: top.usd, why: d.primary ? "primary wallet" : judge(wallets.get(wallet), now).why },
+          extra: { tier: d.tier, primary: !!d.primary, signal: { agree: d.signal.agree, against: d.signal.against, share: d.signal.share, model: d.signal.model, global: d.signal.global, fair: d.signal.fair, edge: d.signal.edge } } });
       } else {
         openPaper({ v, family, us, price: d.price, now, stake: cfg.stake, trade: cur.smartBest[d.side] });
       }
@@ -935,6 +979,7 @@ export function copyStatus(now = Date.now()) {
       .map(([w, v]) => ({ wallet: w, name: v.name, usd: +v.usd.toFixed(2), weight: v.weight }));
     return { start: c.start, end: c.end, globalSlug: c.market?.slug || null, flow: c.flow, smartFlow: c.smartFlow,
       us: us ? { slug: us.slug, end: us.end, t: us.t, bid: us.bid, ask: us.ask, spot: us.spot, strike: us.strike } : null,
+      primary: c.primary, primaryWallets: CFG.primaryWallets,
       signal: { ...sig, stake: sig.tier === "strong" ? mcfg.sizeStrong : sig.tier === "weak" ? mcfg.sizeWeak : mcfg.stake, voters: { Up: voters("Up"), Down: voters("Down") } },
       position: bk.open.find(p => p.family === f && Math.abs(p.end - c.end) < 60_000) || null };
   };

@@ -281,3 +281,24 @@ test("bet size follows smart-money agreement (cases from the live log)", () => {
   assert.equal(mk(3, 0.04), "normal", "3 wallets, ~88%");
   assert.equal(mk(8, 0.45), "weak", "8 wallets but only ~65%");
 });
+
+test("primary wallet: locked in by default, SHADOW follows its side", () => {
+  assert.deepEqual(ct.CFG.primaryWallets, ["0x424eb20fcd25113e3b98f42522a54580350b263b"]);
+  assert.equal(ct.primarySide({ Up: 40, Down: 120 }), "Down", "more net dollars wins");
+  assert.equal(ct.primarySide({ Up: 0, Down: 0 }), null, "not in this window");
+  assert.equal(ct.primarySide({ Up: 50, Down: 50, lastSide: "Up" }), "Up", "a tie goes to its latest buy");
+  const now = 0, us = { end: 200_000, bid: 0.15, ask: 0.17, pxs: [] }, c = ct.CFG, ok = { ok: true };   // Down costs 85¢
+  const votes = (side, n, w = 0.2) => { const v = { Up: new Map(), Down: new Map() }; for (let i = 0; i < n; i++) ct.addVote(v, { wallet: side + i, outcome: side, usd: 10, price: 0.8 }, w); return v; };
+  // No other smart wallet at all: the primary alone is enough.
+  let d = ct.decideSmart({ votes: votes("Down", 0), us, holding: false, now, cfg: c, safety: ok, primary: { Up: 0, Down: 120 } });
+  assert.equal(d.enter, true); assert.equal(d.side, "Down"); assert.equal(d.primary, true); assert.equal(d.tier, "normal");
+  // Others agree: strong. Others lean the other way: weak, but still follows the primary.
+  assert.equal(ct.decideSmart({ votes: votes("Down", 4), us, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } }).tier, "strong");
+  d = ct.decideSmart({ votes: votes("Up", 4), us, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } });
+  assert.equal(d.side, "Down"); assert.equal(d.tier, "weak");
+  // Price band and time window still apply.
+  assert.equal(ct.decideSmart({ votes: votes("Down", 0), us: { ...us, bid: 0.40, ask: 0.42 }, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } }).code, "cheap");
+  assert.equal(ct.decideSmart({ votes: votes("Down", 0), us: { ...us, end: 600_000 }, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } }).wait, true);
+  // Without the primary, the normal vote rule applies (1 wallet is not enough).
+  assert.equal(ct.decideSmart({ votes: votes("Down", 1), us, holding: false, now, cfg: c, safety: ok, primary: { Up: 0, Down: 0 } }).code, "agree");
+});
