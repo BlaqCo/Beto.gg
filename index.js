@@ -884,6 +884,11 @@ app.get("/api/copy", async (req, res) => {
     res.json({ ...ct.copyStatus(), events: ct.recentEvents(150) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Start a new SHADOW session (clears every rule's paper record and the feed). POST, so ADMIN_TOKEN applies.
+app.post("/api/copy/reset", async (req, res) => {
+  try { res.json(await (await import("./arena/copy-trader.js")).resetSession()); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 app.get("/api/copy/stream", async (req, res) => {
   let ct;
   try { ct = await import("./arena/copy-trader.js"); } catch (e) { return res.status(500).end(); }

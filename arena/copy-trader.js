@@ -487,7 +487,7 @@ const fairParts = s => { const p = [s.model != null && `BTC math ${cents(s.model
 export const VARIANTS = [
   { id: "main", name: "SHADOW", smart: true, over: {} },
   { id: "rule72", name: "72¢ rule, plain", smart: false, over: { dailyLossLimit: 0, lossStreak: 0 } },
-  { id: "rule80", name: "80¢ rule, plain", smart: false, over: { stake: 25, entryWindowMs: 180_000, minPrice: 0.80, dcaLow: 0.58, dcaHigh: 0.66, dailyLossLimit: 0, lossStreak: 0 } },
+  { id: "rule80", name: "80¢ rule, plain", smart: false, over: { stake: 35, entryWindowMs: 180_000, minPrice: 0.80, dcaLow: 0.58, dcaHigh: 0.66, dailyLossLimit: 0, lossStreak: 0 } },
   { id: "nodca", name: "SHADOW, no DCA", smart: true, over: { dcaUsd: 0 } },
   { id: "stop15", name: "SHADOW, 15¢ stop", smart: true, over: { stopPrice: 0.15 } },
   { id: "nostop", name: "SHADOW, no stop", smart: true, over: { stopPrice: 0 } },
@@ -809,6 +809,7 @@ export function copyStatus(now = Date.now()) {
       provenWallets: [...wallets.values()].filter(w => w.windows >= CFG.minWindows).length,
       ...sum, recorderOn: !!recorder?.recorderStatus?.().enabled, queue: toScore.length },
     safety: safetyCheck(bk, now, mcfg),
+    sessionStartedAt: bk.startedAt || null,
     current: { btc15: cur("btc15"), btc60: cur("btc60") },
     smart, open: bk.open, closed: bk.closed.slice(-25).reverse(),
     // Every settled copy in order, for the P&L chart.
@@ -821,6 +822,30 @@ export function copyStatus(now = Date.now()) {
   };
 }
 export function recentEvents(n = 120) { return events.slice(-n); }
+
+/**
+ * Start a new session: every rule's paper record (open and settled) and the event feed
+ * are cleared. The old records are archived in Redis first (one key per rule), and the
+ * wallet scores are kept, so SHADOW keeps trading without re-learning.
+ */
+export async function resetSession(now = Date.now()) {
+  let archived = 0;
+  for (const [id, b] of books) {
+    if (!b.open.length && !b.closed.length) continue;
+    await saveJSON(`${KEY_BOOK}:archive:${now}:${id}`, { archivedAt: now, ...b });
+    archived += b.open.length + b.closed.length;
+  }
+  for (const v of VARIANTS) {
+    books.set(v.id, { open: [], closed: [], startedAt: now });
+    dirtyBooks.delete(v.id);
+    await saveJSON(`${KEY_BOOK}:${v.id}`, bookOf(v.id));
+  }
+  for (const f of ["btc15", "btc60"]) live[f]?.skips?.clear();
+  events = [];
+  await saveJSON(KEY_EVENTS, []);
+  emit("reset", `New session started: paper records for all ${VARIANTS.length} rules cleared (${archived} old trades archived). Wallet scores kept.`, {});
+  return { ok: true, startedAt: now, archived };
+}
 
 /**
  * SHADOW's settled paper copies as /colony leaderboard rows, one per family, in the
@@ -865,7 +890,7 @@ export async function startCopyTrader() {
   if (saved?.wallets) { wallets = new Map(saved.wallets); for (const k of saved.scored || []) scored.add(k); }
   for (const v of activeVariants()) {
     const sb = await loadJSON(`${KEY_BOOK}:${v.id}`);
-    const b = { open: sb?.open || [], closed: sb?.closed || [] };
+    const b = { open: sb?.open || [], closed: sb?.closed || [], startedAt: sb?.startedAt || null };
     // Never let a bad number (e.g. a 0¢ quote) poison the totals.
     b.open = b.open.filter(p => Number.isFinite(p.contracts) && Number.isFinite(p.cost) && p.price > 0);
     for (const c of b.closed) if (!Number.isFinite(c.pnl)) { c.pnl = 0; c.won = null; }

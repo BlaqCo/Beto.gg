@@ -29,6 +29,9 @@ button{font:inherit;color:inherit}
 .logo span{color:var(--phos)}
 .tag{font-family:var(--f-pix);font-size:10px;padding:2px 6px;border-radius:3px;letter-spacing:.06em}
 .tag.paper{color:var(--void);background:var(--amber)}
+.session{font-size:11px;color:var(--muted)}
+.resetbtn{font-family:var(--f-pix);font-size:10px;letter-spacing:.06em;padding:4px 8px;border:1px solid var(--amber);border-radius:4px;background:transparent;color:var(--amber);cursor:pointer}
+.resetbtn:disabled{opacity:.5;cursor:wait}
 .conn{display:flex;align-items:center;gap:6px;margin-left:auto;font-family:var(--f-pix);font-size:10px;color:var(--muted)}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--red)}
 .conn.on .dot{background:var(--phos);box-shadow:0 0 8px var(--phos);animation:pulse 2s infinite}
@@ -111,6 +114,8 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
   <header class="bar">
     <div class="logo">SHADOW<span>//</span>COPY</div>
     <span class="tag paper">PAPER</span>
+    <span class="session" id="session"></span>
+    <button class="resetbtn" id="resetBtn" type="button" title="Clear every rule's paper record and the feed, and start counting from now">NEW SESSION</button>
     <div class="conn" id="conn" role="status"><span class="dot"></span><span id="connTxt">CONNECTING</span></div>
   </header>
 
@@ -192,8 +197,8 @@ const short = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?";
 const hhmm = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 const hhmmss = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const ago = t => { if (!t) return "—"; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
-const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", error: "sys" };
-const LABEL = { copy: "COPY", settle: "RESULT", dca: "DCA", stop: "STOP", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", error: "ERROR" };
+const GROUP = { copy: "copy", settle: "copy", dca: "copy", stop: "copy", spot: "spot", skip: "skip", score: "sys", window: "sys", start: "sys", reset: "sys", error: "sys" };
+const LABEL = { copy: "COPY", settle: "RESULT", dca: "DCA", stop: "STOP", spot: "SMART", skip: "SKIP", score: "SCORE", window: "WINDOW", start: "START", reset: "RESET", error: "ERROR" };
 let filter = "shadow", events = [], status = null, lastPoll = 0, hlRule = null;
 const shows = li => filter === "all" || (filter === "other" ? li.dataset.v === "1" : li.dataset.v !== "1" && (filter === "shadow" || li.dataset.g === filter));
 
@@ -214,6 +219,7 @@ function renderFeed() {
 }
 function addEvent(e) {
   if (e.type === "poll") { lastPoll = e.t; return; }
+  if (e.type === "reset") { events = [e]; renderFeed(); loadStatus(); return; }
   events.push(e); if (events.length > 300) events.shift();
   const ul = $("feed");
   if (events.length === 1) ul.textContent = "";
@@ -267,6 +273,7 @@ function renderStatus(s) {
   $("kCopies").textContent = `${st.copies ?? 0}${st.open ? ` (${st.open} open)` : ""}`;
   $("kWl").textContent = `${st.wins ?? 0} / ${st.losses ?? 0}`;
   $("kSmart").textContent = st.smartWallets ?? 0;
+  $("session").textContent = s.sessionStartedAt ? `session since ${new Date(s.sessionStartedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}` : "";
   $("kTracked").textContent = st.activeWallets ?? "—";
   $("kTrackedSub").textContent = `${st.trackedWallets ?? 0}${st.walletCap ? ` / ${st.walletCap}` : ""} kept · ${st.provenWallets ?? 0} with ${s.cfg?.minWindows ?? 20}+ windows`;
   const c = s.cfg || {}, set = (k, v) => document.querySelectorAll(`[data-c="${k}"]`).forEach(el => { el.textContent = v; });
@@ -431,6 +438,20 @@ function connect() {
   es.onerror = () => { $("conn").classList.remove("on"); $("connTxt").textContent = "RECONNECTING"; };
   es.onmessage = m => { try { addEvent(JSON.parse(m.data)); } catch {} };
 }
+
+// New session: same admin token as /colony (ADMIN_TOKEN in Railway), kept in this browser only.
+$("resetBtn").addEventListener("click", async () => {
+  if (!confirm("Start a new session?\n\nThis clears the paper P&L, trades and feed for SHADOW and every comparison rule, and starts counting from now. The old records are archived on the server; wallet scores are kept.")) return;
+  let tok = ""; try { tok = localStorage.getItem("betoAdminToken") || ""; } catch {}
+  if (!tok) { tok = prompt("Admin token (ADMIN_TOKEN) to start a new session:") || ""; if (!tok) return; try { localStorage.setItem("betoAdminToken", tok); } catch {} }
+  const btn = $("resetBtn"); btn.disabled = true; btn.textContent = "RESETTING…";
+  try {
+    const r = await fetch("/api/copy/reset", { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": tok }, body: "{}" });
+    if (r.status === 401) { try { localStorage.removeItem("betoAdminToken"); } catch {} alert("Wrong or missing admin token. Nothing was reset."); }
+    else { const d = await r.json(); if (!d.ok) alert(`Reset failed: ${d.error || r.status}`); else { events = []; renderFeed(); await loadStatus(); } }
+  } catch (err) { alert(`Reset failed: ${err.message}`); }
+  btn.disabled = false; btn.textContent = "NEW SESSION";
+});
 
 document.querySelector(".chips").addEventListener("click", e => {
   const b = e.target.closest(".chip"); if (!b) return;
