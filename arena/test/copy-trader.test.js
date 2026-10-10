@@ -319,3 +319,13 @@ test("price preference: 72-85¢ right away, 86-95¢ only in the last 1:15 and on
   const p = ct.decideSmart({ votes: { Up: new Map(), Down: new Map() }, us: { end: 200_000, bid: 0.90, ask: 0.92, pxs: [] }, holding: false, now: 0, cfg: c, safety: ok, primary: { Up: 100 } });
   assert.equal(p.code, "pricey");
 });
+
+test("real orders may pay up to 3¢ over the quote, never past the band's top", () => {
+  assert.equal(ct.CFG.liveSlip, 0.03);
+  const top = ct.CFG.maxPrice;
+  assert.equal(ct.liveSlipFor(+(top - 0.10).toFixed(2)), 0.03);
+  assert.equal(ct.liveSlipFor(+(top - 0.01).toFixed(2)), 0.01);
+  assert.equal(ct.liveSlipFor(top), 0);
+  const st = ct.liveStatus();
+  assert.equal(st.missed, 0); assert.equal(st.unrealized, 0); assert.equal(st.slip, 0.03);
+});

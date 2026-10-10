@@ -71,6 +71,7 @@ export const CFG = {
   liveDcaMult: env("COPY_LIVE_DCA_MULT", 2),    // DCA = this x the bet, like SHADOW ($2 / $6 / $10)
   liveDailyLoss: env("COPY_LIVE_DAILY_LOSS", 10),// no new real bets after this much lost in a UTC day
   liveMaxLoss: env("COPY_LIVE_MAX_LOSS", 15),   // real trading switches itself off at this total loss
+  liveSlip: env("COPY_LIVE_SLIP", 0.03),        // real orders may pay this much over the quote (never over maxPrice)
   // Wallet scoring.
   lateMs: env("COPY_LATE_SECONDS", 300) * 1000, // a "late" buy: this close to the end...
   latePrice: env("COPY_LATE_PRICE", 0.70),      // ...at this price or more
@@ -630,6 +631,7 @@ function closeInto(bk, rec) {
 function managePositions(now) {
   if (!recorder?.liveQuote) return;
   if (liveBook.open.length) manageLive(now).catch(err => emit("error", `LIVE manage: ${err.message}`, { live: true }));
+  refreshLiveAccount(now).catch(() => {});
   for (const v of activeVariants()) {
     const bk = bookOf(v.id), cfg = cfgOf(v);
     for (const p of [...bk.open]) {
@@ -831,6 +833,9 @@ let pmMod = null;
 const getPm = async () => pmMod || (pmMod = await import("../polymarket-us.js"));
 export function _setPm(m) { pmMod = m; }                       // tests
 
+/** How much over the quote a real entry may pay: CFG.liveSlip, but never past the band's top. */
+export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.round((CFG.maxPrice - price) * 100) / 100));
+
 export const liveSize = tier => (tier === "strong" ? CFG.liveStrong : tier === "weak" ? CFG.liveWeak : CFG.liveStake);
 
 export function liveSafety(now = Date.now()) {
@@ -858,8 +863,8 @@ async function maybeLive({ family, us, d, now }) {
     const pm = await getPm(), size = liveSize(d.tier);
     const bp = await pm.getBuyingPower();
     if (!(bp.buyingPower >= size)) { emit("live", `REAL bet skipped: buying power $${(bp.buyingPower || 0).toFixed(2)} is under $${size}`, { family, live: true }); return; }
-    const r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price });
-    if (!r.filled) { emit("live", `REAL order for ${d.side} @ ${cents(d.price)} didn't fill (${r.error}); no real bet this window`, { family, live: true }); return; }
+    const r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price, slip: liveSlipFor(d.price) });
+    if (!r.filled) { liveBook.missed = (liveBook.missed || 0) + 1; liveDirty = true; emit("live", `REAL order for ${d.side} at up to ${cents(Math.min(0.99, d.price + liveSlipFor(d.price)))} didn't fill (${r.error}); no real bet this window`, { family, live: true }); return; }
     const fee = takerFee(r.qty, r.fillPrice);
     const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, price: r.fillPrice, contracts: r.qty, fee: +fee.toFixed(4),
       cost: +(r.cost + fee).toFixed(4), staked: r.cost, dcaUsd: size * CFG.liveDcaMult, avg: r.fillPrice, dca: null, openedAt: now, orderId: r.orderId || null };
@@ -879,7 +884,7 @@ async function manageLive(now) {
       if (d.dca) {
         p.dca = { pending: true, at: now };   // one attempt, filled or not
         liveDirty = true;
-        const r = await pm.buyOutcomeFOK({ slug: p.usSlug, side: p.side, sizeUsd: p.dcaUsd, price: d.price, adding: true });
+        const r = await pm.buyOutcomeFOK({ slug: p.usSlug, side: p.side, sizeUsd: p.dcaUsd, price: d.price, slip: CFG.liveSlip, adding: true });
         if (!r.filled) { p.dca = { failed: true, at: now, error: r.error }; emit("live", `REAL DCA $${p.dcaUsd} didn't fill (${r.error})`, { family: p.family, live: true }); continue; }
         const fee = takerFee(r.qty, r.fillPrice);
         p.dca = { price: r.fillPrice, usd: r.cost, contracts: r.qty, fee: +fee.toFixed(4), at: now, bid: d.bid };
@@ -930,12 +935,33 @@ export function setLiveHalted(halt, why = "stopped from /copy") {
   return liveStatus();
 }
 
+// The real Polymarket US account, read once a minute while real money is on (ground truth for /copy).
+let liveAcct = { cash: null, buyingPower: null, at: 0, error: null };
+async function refreshLiveAccount(now = Date.now()) {
+  if (!CFG.live || now - liveAcct.at < 60_000) return;
+  liveAcct.at = now;
+  try { const b = await (await getPm()).getBuyingPower(); liveAcct = { cash: b.currentBalance, buyingPower: b.buyingPower, at: now, error: null }; }
+  catch (err) { liveAcct = { ...liveAcct, at: now, error: err.message }; }
+}
+
+/** An open real bet marked at what it could sell for now (our side's bid), or null with no quote. */
+function liveMark(p) {
+  const q = recorder?.liveQuote ? recorder.liveQuote(p.family, p.end) : null;
+  if (!q || q.bid == null || q.ask == null) return null;
+  const bid = p.side === "Up" ? q.bid : +(1 - q.ask).toFixed(4);
+  return { bid, value: +(p.contracts * bid).toFixed(2), pnl: +(p.contracts * bid - p.cost).toFixed(2) };
+}
+
 export function liveStatus(now = Date.now()) {
   const settled = liveBook.closed.filter(p => p.won != null && Number.isFinite(p.pnl));
   const day = new Date(now).toISOString().slice(0, 10);
+  const open = liveBook.open.map(p => ({ ...p, mark: liveMark(p) }));
+  const unrealized = +open.reduce((a, p) => a + (p.mark?.pnl || 0), 0).toFixed(2);
   return { enabled: CFG.live, halted: liveBook.halted, safety: CFG.live ? liveSafety(now) : null,
+    cash: liveAcct.cash, buyingPower: liveAcct.buyingPower, cashAt: liveAcct.at || null, cashError: liveAcct.error,
+    unrealized, missed: liveBook.missed || 0, slip: CFG.liveSlip,
     sizes: [CFG.liveWeak, CFG.liveStake, CFG.liveStrong], dcaMult: CFG.liveDcaMult, dailyLoss: CFG.liveDailyLoss, maxLoss: CFG.liveMaxLoss,
-    bets: settled.length, open: liveBook.open, wins: settled.filter(p => p.won).length, losses: settled.filter(p => !p.won).length,
+    bets: settled.length, open, wins: settled.filter(p => p.won).length, losses: settled.filter(p => !p.won).length,
     pnl: +settled.reduce((a, p) => a + p.pnl, 0).toFixed(2),
     today: +settled.filter(p => new Date(p.closedAt || 0).toISOString().slice(0, 10) === day).reduce((a, p) => a + p.pnl, 0).toFixed(2),
     recent: liveBook.closed.slice(-20).reverse() };
@@ -1097,7 +1123,7 @@ export async function startCopyTrader() {
     books.set(v.id, b);
   }
   const savedLive = await loadJSON(KEY_LIVE);
-  if (savedLive?.closed) liveBook = { open: savedLive.open || [], closed: savedLive.closed, halted: savedLive.halted || null };
+  if (savedLive?.closed) liveBook = { open: savedLive.open || [], closed: savedLive.closed, halted: savedLive.halted || null, missed: savedLive.missed || 0 };
   if (CFG.live) {
     try { const bp = await (await getPm()).getBuyingPower(); emit("live", `REAL MONEY on: BTC15 only, $${CFG.liveWeak}/$${CFG.liveStake}/$${CFG.liveStrong} by signal, DCA ${CFG.liveDcaMult}x, stop ${cents(CFG.stopPrice)}, -$${CFG.liveDailyLoss}/day, switches off at -$${CFG.liveMaxLoss}. Buying power $${bp.buyingPower.toFixed(2)}${liveBook.halted ? `. HALTED: ${liveBook.halted}` : ""}`, { live: true }); }
     catch (err) { emit("error", `REAL MONEY on, but the Polymarket US account can't be read: ${err.message}. No real bets until it can.`, { live: true }); }
