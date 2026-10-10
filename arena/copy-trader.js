@@ -29,7 +29,7 @@
  */
 import { EventEmitter } from "events";
 import { takerFee } from "../fees.js";
-import { saveJSON, loadJSON } from "./state.js";
+import { saveJSON, loadJSON, claimOnce } from "./state.js";
 
 const GAMMA = process.env.COPY_GAMMA_URL || "https://gamma-api.polymarket.com";
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
@@ -768,7 +768,10 @@ async function pollLive(family, now) {
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
   }
   // Entry check every poll, for every rule.
-  const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
+  // The market list's prices can be minutes old (21:57 UTC: it said Up 59¢, the book was 33¢), so
+  // inside the entry window every decision uses the live order book. No book = no bet this poll.
+  let us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
+  if (us && us.end - now <= CFG.entryWindowMs && us.end - now >= CFG.minMsLeft) us = await withBook(us);
   for (const v of activeVariants()) {
     const cfg = cfgOf(v), bk = bookOf(v.id);
     const holding = bk.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
@@ -833,6 +836,15 @@ let pmMod = null;
 const getPm = async () => pmMod || (pmMod = await import("../polymarket-us.js"));
 export function _setPm(m) { pmMod = m; }                       // tests
 
+/** A US quote replaced by the live order book's best bid/ask (Up side); bid/ask null if unavailable. */
+export async function withBook(us) {
+  try {
+    const b = await (await getPm()).getBBO(us.slug);
+    if (b && b.bid > 0 && b.ask > 0 && b.ask < 1 && b.ask >= b.bid) return { ...us, bid: b.bid, ask: b.ask, t: Date.now(), src: "book" };
+  } catch { /* fall through */ }
+  return { ...us, bid: null, ask: null, src: "no-book" };
+}
+
 /** How much over the quote a real entry may pay: CFG.liveSlip, but never past the band's top. */
 export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.round((CFG.maxPrice - price) * 100) / 100));
 
@@ -858,6 +870,10 @@ async function maybeLive({ family, us, d, now }) {
   if (liveTried.size > 200) liveTried.delete(liveTried.values().next().value);
   const safe = liveSafety(now);
   if (!safe.ok) { emit("live", `REAL bet skipped: ${safe.why}`, { family, live: true }); return; }
+  // During a deploy the old and new server overlap for a few seconds; only one may bet a window.
+  try {
+    if (!(await claimOnce(`arena:copy:live:claim:${family}:${us.end}`, 3600))) { emit("live", "REAL bet skipped: another running copy of the bot already bet this window", { family, live: true }); return; }
+  } catch (err) { emit("live", `REAL bet skipped: couldn't confirm no other copy of the bot is betting (${err.message})`, { family, live: true }); return; }
   liveBusy = true;
   try {
     const pm = await getPm(), size = liveSize(d.tier);
@@ -865,12 +881,25 @@ async function maybeLive({ family, us, d, now }) {
     if (!(bp.buyingPower >= size)) { emit("live", `REAL bet skipped: buying power $${(bp.buyingPower || 0).toFixed(2)} is under $${size}`, { family, live: true }); return; }
     const r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price, slip: liveSlipFor(d.price) });
     if (!r.filled) { liveBook.missed = (liveBook.missed || 0) + 1; liveDirty = true; emit("live", `REAL order for ${d.side} at up to ${cents(Math.min(0.99, d.price + liveSlipFor(d.price)))} didn't fill (${r.error}); no real bet this window`, { family, live: true }); return; }
-    const fee = takerFee(r.qty, r.fillPrice);
-    const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, price: r.fillPrice, contracts: r.qty, fee: +fee.toFixed(4),
-      cost: +(r.cost + fee).toFixed(4), staked: r.cost, dcaUsd: size * CFG.liveDcaMult, avg: r.fillPrice, dca: null, openedAt: now, orderId: r.orderId || null };
+    // The order can fill better than its limit; the portfolio's cost is what was really paid.
+    const paid = await actualCost(pm, us.slug, r.qty, r.cost);
+    const price = +(paid / r.qty).toFixed(4);
+    const fee = takerFee(r.qty, price);
+    const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, price, contracts: r.qty, fee: +fee.toFixed(4),
+      cost: +(paid + fee).toFixed(4), staked: +paid.toFixed(2), dcaUsd: size * CFG.liveDcaMult, avg: price, dca: null, openedAt: now, orderId: r.orderId || null, limit: r.fillPrice };
     liveBook.open.push(pos); liveDirty = true;
-    emit("live", `REAL BUY ${d.side} BTC15: ${r.qty} shares at up to ${cents(r.fillPrice)} = $${r.cost.toFixed(2)} (${d.tier} signal)${r.viaPositions ? " (fill confirmed from positions)" : ""}`, { family, live: true, pos });
+    emit("live", `REAL BUY ${d.side} BTC15: ${r.qty} shares at ${cents(price)} = $${paid.toFixed(2)} (limit ${cents(r.fillPrice)}, ${d.tier} signal)${r.viaPositions ? " (fill confirmed from positions)" : ""}`, { family, live: true, pos });
   } finally { liveBusy = false; }
+}
+
+/** What a fill really cost: the portfolio's cost for the market if it's sane, else the limit-price cost. */
+async function actualCost(pm, slug, qty, limitCost) {
+  try {
+    const p = (await pm.getOpenPositions())?.[slug];
+    if (p?.cost > 0 && p.cost <= limitCost + 0.01) return p.cost;
+    if (p?.avgPx > 0 && p.avgPx * qty <= limitCost + 0.01) return +(p.avgPx * qty).toFixed(2);
+  } catch { /* fall through */ }
+  return limitCost;
 }
 
 async function manageLive(now) {
@@ -884,6 +913,9 @@ async function manageLive(now) {
       if (d.dca) {
         p.dca = { pending: true, at: now };   // one attempt, filled or not
         liveDirty = true;
+        let mine = false;
+        try { mine = await claimOnce(`arena:copy:live:dca:${p.usSlug}`, 3600); } catch { mine = false; }
+        if (!mine) { p.dca = { skipped: true, at: now }; continue; }
         const r = await pm.buyOutcomeFOK({ slug: p.usSlug, side: p.side, sizeUsd: p.dcaUsd, price: d.price, slip: CFG.liveSlip, adding: true });
         if (!r.filled) { p.dca = { failed: true, at: now, error: r.error }; emit("live", `REAL DCA $${p.dcaUsd} didn't fill (${r.error})`, { family: p.family, live: true }); continue; }
         const fee = takerFee(r.qty, r.fillPrice);
