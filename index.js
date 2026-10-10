@@ -889,6 +889,11 @@ app.post("/api/copy/reset", async (req, res) => {
   try { res.json(await (await import("./arena/copy-trader.js")).resetSession()); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+// Stop / resume SHADOW's real-money bets. POST, so ADMIN_TOKEN applies. Body: { halt: true|false }.
+app.post("/api/copy/live", async (req, res) => {
+  try { res.json({ ok: true, live: (await import("./arena/copy-trader.js")).setLiveHalted(req.body?.halt !== false) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 app.get("/api/copy/stream", async (req, res) => {
   let ct;
   try { ct = await import("./arena/copy-trader.js"); } catch (e) { return res.status(500).end(); }
