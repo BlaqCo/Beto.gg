@@ -122,13 +122,13 @@ test("position management: DCA once in the band, stop at 22¢, numbers match the
   assert.equal(ct.decideManage({ pos: down, us: { bid: 0.76, ask: 0.78 }, now, cfg }).stop, true);
 });
 
-test("default rule: last 4 minutes, 72-95¢, DCA $20 at 53-63¢, stop 22¢", () => {
+test("default rule: last 3:30, 72-95¢, DCA $20 at 53-63¢, stop 22¢", () => {
   const c = ct.CFG;
-  assert.equal(c.entryWindowMs, 240_000); assert.equal(c.minPrice, 0.72); assert.equal(c.maxPrice, 0.95);
+  assert.equal(c.entryWindowMs, 210_000); assert.equal(c.minPrice, 0.72); assert.equal(c.maxPrice, 0.95);
   assert.equal(c.dcaLow, 0.53); assert.equal(c.dcaHigh, 0.63); assert.equal(c.dcaUsd, 20); assert.equal(c.stopPrice, 0.22);
   const now = 1_000_000, up = { Up: 100, Down: 0 };
-  assert.deepEqual(ct.decideEntry({ smartFlow: up, us: { end: now + 230_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }), { enter: true, side: "Up", price: 0.74 }, "3:50 left at 74¢ enters");
-  assert.equal(ct.decideEntry({ smartFlow: up, us: { end: now + 250_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }).wait, true, "4:10 left waits");
+  assert.deepEqual(ct.decideEntry({ smartFlow: up, us: { end: now + 200_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }), { enter: true, side: "Up", price: 0.74 }, "3:20 left at 74¢ enters");
+  assert.equal(ct.decideEntry({ smartFlow: up, us: { end: now + 220_000, bid: 0.72, ask: 0.74 }, holding: false, now, cfg: c }).wait, true, "3:40 left waits");
   assert.match(ct.decideEntry({ smartFlow: up, us: { end: now + 200_000, bid: 0.69, ask: 0.71 }, holding: false, now, cfg: c }).why, /under the 72¢ minimum/);
 });
 
@@ -217,7 +217,7 @@ test("rules side by side: every rule has its own config and leaderboard rows onl
   assert.equal(ct.cfgOf(ct.VARIANTS[2]).dcaUsd, 20, "its DCA stays $20");
   assert.equal(ct.cfgOf(ct.VARIANTS[3]).dcaUsd, 0);
   assert.equal(ct.cfgOf(ct.VARIANTS[5]).stopPrice, 0);
-  assert.match(ct.ruleText(ct.VARIANTS[0]), /last 4 min · 72¢-95¢ · 2\+ smart wallets agree/);
+  assert.match(ct.ruleText(ct.VARIANTS[0]), /last 3:30 · 72¢-95¢ · 2\+ smart wallets agree/);
   assert.equal(ct.leaderboardRows().length, 2, "only SHADOW's rows before the others trade");
   const st = ct.copyStatus();
   assert.equal(st.variants.length, ct.CFG.variants ? 7 : 1, "comparison rules run only with COPY_VARIANTS=true");
@@ -262,9 +262,9 @@ test("defaults: SHADOW only, BTC15 only, real money off", () => {
   assert.equal(ct.liveSafety().code, "off");
 });
 
-test("real-money sizes: $1 / $3 / $5 by signal, DCA 2x", () => {
-  assert.deepEqual(["weak", "normal", "strong"].map(ct.liveSize), [1, 3, 5]);
+test("real-money sizes: $2 / $3 / $5 by signal, DCA 2x", () => {
+  assert.deepEqual(["weak", "normal", "strong"].map(ct.liveSize), [2, 3, 5]);
   assert.equal(ct.CFG.liveDcaMult, 2);
   const st = ct.liveStatus();
-  assert.deepEqual(st.sizes, [1, 3, 5]); assert.equal(st.enabled, false); assert.equal(st.bets, 0);
+  assert.deepEqual(st.sizes, [2, 3, 5]); assert.equal(st.enabled, false); assert.equal(st.bets, 0);
 });
