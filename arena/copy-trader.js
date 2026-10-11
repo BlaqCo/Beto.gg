@@ -13,8 +13,9 @@
  *   3. Voting. During a live window it polls the newest trades. Every smart wallet's buy
  *      is a vote for that side, weighted by the wallet's recent win rate and its edge on
  *      late 70¢+ bets (the kind SHADOW makes).
- *   4. Entering. In the last 3:30, if 2+ smart wallets back a side with 65%+ of the
- *      vote weight, that side costs 72-95¢ on Polymarket US, and the price isn't above
+ *   4. Entering. In the entry window (COPY_ENTRY_SECONDS), if 2+ smart wallets back a side
+ *      and none bet the other way (COPY_MIN_SHARE, default unanimous), that side's live
+ *      order-book price is inside the band, and the price isn't above
  *      fair value (BTC spot vs strike with time left, averaged with the global Polymarket
  *      price; only a fresh global price can veto, the BTC math alone just shrinks the bet),
  *      it makes a $5 / $10 / $15 paper bet sized by how strongly smart money agrees, adds 2x that once
@@ -54,7 +55,9 @@ export const CFG = {
     .split(",").map(a => a.trim().toLowerCase()).filter(a => /^0x[0-9a-f]{40}$/.test(a)),
   soloLateN: 0,                                 // >0: one wallet is enough if it has this many late bets...
   soloLateWin: 0.9,                             // ...with at least this win rate (the "1 strong wallet" rule)
-  minShare: env("COPY_MIN_SHARE", 0.65),        // share of smart vote weight on our side
+  // Share of smart vote weight on our side. 1 = unanimous: any smart wallet on the other side
+  // means no bet. Oct 10-11 results: unanimous 29-12 (71%), split 7-9 (44%), in both halves.
+  minShare: env("COPY_MIN_SHARE", 1),
   minEdge: env("COPY_MIN_EDGE", 0),             // fair value minus price minus fee, per share
   defaultVol: env("COPY_DEFAULT_VOL", 0.5),     // BTC yearly volatility when spot ticks are thin
   basisUsd: env("COPY_BASIS_USD", 25),          // Coinbase spot vs settlement index slack
@@ -72,6 +75,10 @@ export const CFG = {
   liveDailyLoss: env("COPY_LIVE_DAILY_LOSS", 10),// no new real bets after this much lost in a UTC day
   liveMaxLoss: env("COPY_LIVE_MAX_LOSS", 15),   // real trading switches itself off at this total loss
   liveSlip: env("COPY_LIVE_SLIP", 0.03),        // real orders may pay this much over the quote (never over maxPrice)
+  // UTC hours real bets may be placed, "start-end" (end not included); "" = any hour. Paper keeps
+  // betting around the clock so the hours can be re-checked. Oct 10-11: 00-12 UTC won 25 of 30,
+  // 12-24 UTC won 11 of 27 (US trading hours, when BTC swings late in the window).
+  liveHours: parseHours(process.env.COPY_LIVE_HOURS_UTC ?? "0-12"),
   // Wallet scoring.
   lateMs: env("COPY_LATE_SECONDS", 300) * 1000, // a "late" buy: this close to the end...
   latePrice: env("COPY_LATE_PRICE", 0.70),      // ...at this price or more
@@ -93,6 +100,15 @@ export const CFG = {
   backfill60: env("COPY_BACKFILL_BTC60", 48),
   maxTradesPerWindow: env("COPY_MAX_TRADES_PER_WINDOW", 5000),
 };
+
+/** "0-12" -> [0, 12]; "22-6" wraps past midnight; "" or junk -> null (any hour). */
+export function parseHours(s) {
+  const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(s || "");
+  if (!m) return null;
+  const a = +m[1], b = +m[2];
+  return a >= 0 && a <= 23 && b >= 0 && b <= 24 && a !== b ? [a, b] : null;
+}
+export const inHours = (h, hrs) => !hrs || (hrs[0] < hrs[1] ? h >= hrs[0] && h < hrs[1] : h >= hrs[0] || h < hrs[1]);
 
 const DUR = { btc15: 15 * 60_000, btc60: 60 * 60_000 };
 // wallets v3 adds recency-weighted and late-bet stats (v2 lacked them; v1 had year-old hourly markets).
@@ -510,11 +526,15 @@ function decidePrimary({ side, votes, us, now, cfg, globalPx }) {
   const edge = fv.fair == null ? null : +(fv.fair - price - takerFee(1, price)).toFixed(4);
   if (edge != null && edge < cfg.minEdge && fv.global != null) return { enter: false, code: "edge", why: `primary wallet is on ${side}, but US ${side} at ${cents(price)} costs more than it's worth (global ${cents(fv.global)})` };
   const agree = c.side === side ? c.agree : (side === "Up" ? c.nUp : c.nDown);
-  const base = c.side === side && c.agree >= 3 && c.share >= 0.75 ? "strong" : c.side && c.side !== side && c.share >= cfg.minShare ? "weak" : "normal";
+  // Smart wallets betting against the primary make it a coin flip, same as a split vote.
+  const mine = side === "Up" ? c.wUp : c.wDown, total = c.wUp + c.wDown;
+  const share = total > 0 ? +(mine / total).toFixed(4) : 1;
+  if (share < cfg.minShare) return { enter: false, code: "split", why: `primary wallet is on ${side}, but ${side === "Up" ? c.nDown : c.nUp} smart wallet(s) bet the other way (${Math.round(share * 100)}% on ${side}, need ${Math.round(cfg.minShare * 100)}%)` };
+  const base = c.side === side && c.agree >= 3 && c.share >= 0.75 ? "strong" : c.side && c.side !== side ? "weak" : "normal";
   const tier = pp.fallback ? tierDown(base) : base;
   const stake = tier === "strong" ? cfg.sizeStrong : tier === "weak" ? cfg.sizeWeak : cfg.stake;
   return { enter: true, side, price, stake, tier, primary: true, fallback: pp.fallback,
-    signal: { ...c, agree, against: side === "Up" ? c.nDown : c.nUp, share: c.side === side ? c.share : +(1 - c.share).toFixed(4), price, ...fv, edge, tier } };
+    signal: { ...c, agree, against: side === "Up" ? c.nDown : c.nUp, share, price, ...fv, edge, tier } };
 }
 
 export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safety, primary }) {
@@ -850,7 +870,7 @@ export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.roun
 
 export const liveSize = tier => (tier === "strong" ? CFG.liveStrong : tier === "weak" ? CFG.liveWeak : CFG.liveStake);
 
-export function liveSafety(now = Date.now()) {
+export function liveSafety(now = Date.now(), end = null) {
   if (!CFG.live) return { ok: false, code: "off", why: "real money is off (COPY_LIVE is not true)" };
   if (liveBook.halted) return { ok: false, code: "halted", why: `real money halted: ${liveBook.halted}` };
   const settled = liveBook.closed.filter(p => p.won != null && Number.isFinite(p.pnl));
@@ -858,7 +878,10 @@ export function liveSafety(now = Date.now()) {
   if (total <= -CFG.liveMaxLoss) return { ok: false, code: "max", why: `total real loss ${usd(total)} reached the -$${CFG.liveMaxLoss} limit` };
   const s = safetyCheck(liveBook, now, { ...CFG, dailyLossLimit: CFG.liveDailyLoss });
   if (!s.ok) return s;
-  if (liveBook.open.length) return { ok: false, code: "open", why: "already holding a real bet" };
+  // One real bet per window. A bet from the window before may still be waiting to settle.
+  if (liveBook.open.some(p => end == null || Math.abs(p.end - end) < 60_000)) return { ok: false, code: "open", why: "already holding a real bet this window" };
+  const h = new Date(now).getUTCHours();
+  if (!inHours(h, CFG.liveHours)) return { ok: false, code: "hours", why: `real bets only ${CFG.liveHours[0]}:00-${CFG.liveHours[1]}:00 UTC (now ${h}:xx); paper keeps going` };
   return { ok: true, total, today: s.today };
 }
 
@@ -868,7 +891,7 @@ async function maybeLive({ family, us, d, now }) {
   if (liveTried.has(key)) return;
   liveTried.add(key);
   if (liveTried.size > 200) liveTried.delete(liveTried.values().next().value);
-  const safe = liveSafety(now);
+  const safe = liveSafety(now, us.end);
   if (!safe.ok) { emit("live", `REAL bet skipped: ${safe.why}`, { family, live: true }); return; }
   // During a deploy the old and new server overlap for a few seconds; only one may bet a window.
   try {
@@ -879,10 +902,19 @@ async function maybeLive({ family, us, d, now }) {
     const pm = await getPm(), size = liveSize(d.tier);
     const bp = await pm.getBuyingPower();
     if (!(bp.buyingPower >= size)) { emit("live", `REAL bet skipped: buying power $${(bp.buyingPower || 0).toFixed(2)} is under $${size}`, { family, live: true }); return; }
-    const r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price, slip: liveSlipFor(d.price) });
+    let r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price, slip: liveSlipFor(d.price) });
+    if (!r.filled) {
+      // Usually the ask moved in the second between quote and order. One retry at the fresh
+      // book price, only if it's still inside the band and the window is still open.
+      const fresh = await withBook(us), px = sidePrice(d.side, fresh);
+      if (px != null && px >= CFG.minPrice && px <= CFG.maxPrice && us.end - Date.now() >= CFG.minMsLeft) {
+        emit("live", `REAL order for ${d.side} didn't fill (${r.error}); retrying once at the fresh price ${cents(px)}`, { family, live: true });
+        r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: px, slip: liveSlipFor(px) });
+      }
+    }
     if (!r.filled) { liveBook.missed = (liveBook.missed || 0) + 1; liveDirty = true; emit("live", `REAL order for ${d.side} at up to ${cents(Math.min(0.99, d.price + liveSlipFor(d.price)))} didn't fill (${r.error}); no real bet this window`, { family, live: true }); return; }
     // The order can fill better than its limit; the portfolio's cost is what was really paid.
-    const paid = await actualCost(pm, us.slug, r.qty, r.cost);
+    const paid = await actualCost(pm, us.slug, r.qty, r.cost, r.fillPrice);
     const price = +(paid / r.qty).toFixed(4);
     const fee = takerFee(r.qty, price);
     const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, price, contracts: r.qty, fee: +fee.toFixed(4),
@@ -892,12 +924,17 @@ async function maybeLive({ family, us, d, now }) {
   } finally { liveBusy = false; }
 }
 
-/** What a fill really cost: the portfolio's cost for the market if it's sane, else the limit-price cost. */
-async function actualCost(pm, slug, qty, limitCost) {
+/**
+ * What a fill really cost: the portfolio's cost for the market if it's sane, else the limit-price
+ * cost. Sane = no more than the limit and no more than 6¢ a share under it. A Down fill can come
+ * back priced on the Up side (16:42 UTC Oct 11: logged 33¢, really ~67¢), which this rejects.
+ */
+export async function actualCost(pm, slug, qty, limitCost, limitPx = limitCost / qty) {
+  const sane = c => c > 0 && c <= limitCost + 0.01 && c / qty >= limitPx - 0.06;
   try {
     const p = (await pm.getOpenPositions())?.[slug];
-    if (p?.cost > 0 && p.cost <= limitCost + 0.01) return p.cost;
-    if (p?.avgPx > 0 && p.avgPx * qty <= limitCost + 0.01) return +(p.avgPx * qty).toFixed(2);
+    if (sane(p?.cost)) return p.cost;
+    if (p?.avgPx > 0 && sane(p.avgPx * qty)) return +(p.avgPx * qty).toFixed(2);
   } catch { /* fall through */ }
   return limitCost;
 }
@@ -989,9 +1026,9 @@ export function liveStatus(now = Date.now()) {
   const day = new Date(now).toISOString().slice(0, 10);
   const open = liveBook.open.map(p => ({ ...p, mark: liveMark(p) }));
   const unrealized = +open.reduce((a, p) => a + (p.mark?.pnl || 0), 0).toFixed(2);
-  return { enabled: CFG.live, halted: liveBook.halted, safety: CFG.live ? liveSafety(now) : null,
+  return { enabled: CFG.live, halted: liveBook.halted, safety: CFG.live ? liveSafety(now, Math.ceil(now / DUR.btc15) * DUR.btc15) : null,
     cash: liveAcct.cash, buyingPower: liveAcct.buyingPower, cashAt: liveAcct.at || null, cashError: liveAcct.error,
-    unrealized, missed: liveBook.missed || 0, slip: CFG.liveSlip,
+    unrealized, missed: liveBook.missed || 0, slip: CFG.liveSlip, hours: CFG.liveHours,
     sizes: [CFG.liveWeak, CFG.liveStake, CFG.liveStrong], dcaMult: CFG.liveDcaMult, dailyLoss: CFG.liveDailyLoss, maxLoss: CFG.liveMaxLoss,
     bets: settled.length, open, wins: settled.filter(p => p.won).length, losses: settled.filter(p => !p.won).length,
     pnl: +settled.reduce((a, p) => a + p.pnl, 0).toFixed(2),
