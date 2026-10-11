@@ -292,9 +292,12 @@ test("primary wallet: locked in by default, SHADOW follows its side", () => {
   // No other smart wallet at all: the primary alone is enough.
   let d = ct.decideSmart({ votes: votes("Down", 0), us, holding: false, now, cfg: c, safety: ok, primary: { Up: 0, Down: 120 } });
   assert.equal(d.enter, true); assert.equal(d.side, "Down"); assert.equal(d.primary, true); assert.equal(d.tier, "normal");
-  // Others agree: strong. Others lean the other way: weak, but still follows the primary.
+  // Others agree: strong. Any smart wallet on the other side: no bet (unanimous by default)...
   assert.equal(ct.decideSmart({ votes: votes("Down", 4), us, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } }).tier, "strong");
   d = ct.decideSmart({ votes: votes("Up", 4), us, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } });
+  assert.equal(d.enter, false); assert.equal(d.code, "split");
+  // ...unless the share rule is loosened, then it follows the primary at the weak size.
+  d = ct.decideSmart({ votes: votes("Up", 4), us, holding: false, now, cfg: { ...c, minShare: 0 }, safety: ok, primary: { Down: 120 } });
   assert.equal(d.side, "Down"); assert.equal(d.tier, "weak");
   // Price band and time window still apply.
   assert.equal(ct.decideSmart({ votes: votes("Down", 0), us: { ...us, bid: 0.40, ask: 0.42 }, holding: false, now, cfg: c, safety: ok, primary: { Down: 120 } }).code, "cheap");
@@ -344,4 +347,33 @@ test("entries use the live order book, not the market list's price", async () =>
   assert.equal(none.ask, null, "no book: no price");
   assert.equal(ct.decideSmart({ votes, us: none, holding: false, now: 0, cfg, safety: { ok: true } }).code, "no-price");
   ct._setPm(null);
+});
+
+test("smart entry: unanimous by default, any smart wallet against means no bet", () => {
+  assert.equal(ct.CFG.minShare, 1);
+  const now = 0, us = { end: 200_000, bid: 0.62, ask: 0.64, pxs: [] }, ok = { ok: true };
+  const v = { Up: new Map(), Down: new Map() };
+  for (let i = 0; i < 6; i++) ct.addVote(v, { wallet: "u" + i, outcome: "Up", usd: 10, price: 0.6 }, 0.3);
+  const cfg = { ...ct.CFG, minPrice: 0.56, maxPrice: 0.72, preferMax: 0.72, entryWindowMs: 270_000 };
+  assert.equal(ct.decideSmart({ votes: v, us, holding: false, now, cfg, safety: ok }).enter, true);
+  ct.addVote(v, { wallet: "d0", outcome: "Down", usd: 3, price: 0.4 }, 0.05);
+  assert.equal(ct.decideSmart({ votes: v, us, holding: false, now, cfg, safety: ok }).code, "split", "6 vs 1 is still a split");
+});
+
+test("real-money hours", () => {
+  assert.deepEqual(ct.parseHours("0-12"), [0, 12]);
+  assert.deepEqual(ct.parseHours(" 22 - 6 "), [22, 6]);
+  assert.equal(ct.parseHours(""), null); assert.equal(ct.parseHours("abc"), null); assert.equal(ct.parseHours("5-5"), null);
+  assert.equal(ct.inHours(11, [0, 12]), true); assert.equal(ct.inHours(12, [0, 12]), false);
+  assert.equal(ct.inHours(23, [22, 6]), true); assert.equal(ct.inHours(3, [22, 6]), true); assert.equal(ct.inHours(12, [22, 6]), false);
+  assert.equal(ct.inHours(15, null), true, "no hours set: any hour");
+  assert.deepEqual(ct.CFG.liveHours, [0, 12], "default: 00-12 UTC");
+});
+
+test("actual cost: a Down fill priced on the Up side is rejected", async () => {
+  const pm = cost => ({ getOpenPositions: async () => ({ s: { cost } }) });
+  // 4.3 shares at a 67¢ limit = $2.88. The portfolio said $1.41 (33¢): not believable.
+  assert.equal(await ct.actualCost(pm(1.41), "s", 4.3, 2.88, 0.67), 2.88);
+  assert.equal(await ct.actualCost(pm(2.79), "s", 4.3, 2.88, 0.67), 2.79, "a few cents better is real");
+  assert.equal(await ct.actualCost(pm(3.5), "s", 4.3, 2.88, 0.67), 2.88, "more than the limit is not");
 });
