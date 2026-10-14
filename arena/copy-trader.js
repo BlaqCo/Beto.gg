@@ -30,7 +30,7 @@
  */
 import { EventEmitter } from "events";
 import { takerFee } from "../fees.js";
-import { fastQuote } from "./fast-book.js";
+import { fastQuote, currentGap } from "./fast-book.js";
 import { saveJSON, loadJSON, claimOnce } from "./state.js";
 
 const GAMMA = process.env.COPY_GAMMA_URL || "https://gamma-api.polymarket.com";
@@ -875,7 +875,8 @@ export function _setPm(m) { pmMod = m; }                       // tests
 
 /** A US quote replaced by the live order book's best bid/ask (Up side); bid/ask null if unavailable. */
 export async function withBook(us) {
-  const f = fastQuote(us.slug, 1500);      // the 1s fast book saves a round trip when it's fresh
+  // The fast book's last read saves a request (and the shared rate limit) when it's fresh.
+  const f = fastQuote(us.slug, Math.max(2000, currentGap() + 1500));
   if (f) return { ...us, bid: f.bid, ask: f.ask, t: f.t, src: "fast" };
   try {
     const b = await (await getPm()).getBBO(us.slug);

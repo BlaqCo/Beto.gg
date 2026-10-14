@@ -111,10 +111,13 @@ test("fast book tick: reads the current window's book, backs off on 429", async 
   await fb._tick();
   assert.equal(got.length, 1); assert.equal(got[0].slug, "w1");
   assert.ok(fb.fastQuote("w1")); assert.equal(fb.fastQuote("other"), null);
+  await fb._tick();
+  assert.equal(calls, 1, "waits its gap between reads");
   fail = Object.assign(new Error("Request failed with status code 429"), { response: { status: 429 } });
-  await fb._tick();
+  fb._ready(); await fb._tick();
   assert.equal(fb.fastBookStatus().rateLimited, 1);
+  assert.equal(fb.currentGap(), 2000, "the gap doubles (at least 2s) after a 429");
   await fb._tick();
-  assert.equal(calls, 2, "backed off: no request the next second");
+  assert.equal(calls, 2, "paused: no request straight after a 429");
   off(); fb._reset();
 });
