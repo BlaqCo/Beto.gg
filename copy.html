@@ -104,6 +104,7 @@ table.trades .res{font-weight:600}
 .chart .lbl{font:11px var(--f-mono);fill:var(--muted)} .chart .lbl.main{fill:var(--text)} .chart .lbl.hl{fill:var(--text)}
 table.rules{table-layout:fixed} table.rules th:nth-child(2){width:15%} table.rules th:nth-child(3){width:20%} table.rules th:nth-child(4){width:22%} table.rules th:nth-child(5){width:17%}
 table.rules td{white-space:normal;vertical-align:top} table.rules tr{cursor:pointer} table.rules tr.main-row td{border-bottom:0;padding-bottom:0} table.rules td.rule{padding-top:2px}
+table.rules.pairs tr{cursor:default} table.rules.pairs td.r .sub{white-space:normal}
 table.rules tr.hl td{background:rgba(255,181,71,.08)} table.rules tr.hl td:first-child{box-shadow:inset 3px 0 var(--amber)}
 table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-space:nowrap}
 .sig{margin-top:6px;padding-top:6px;border-top:1px dashed var(--phos-faint)}
@@ -141,6 +142,11 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
   <section id="realSec">
     <div class="ph">REAL MONEY <em>BTC15 · SHADOW's bets mirrored small</em></div>
     <div class="real" id="real"><p class="mut">Loading…</p></div>
+  </section>
+
+  <section id="pairSec">
+    <div class="ph">PAIR SCALPER <em>practice · buys Up and Down at different moments for under $1 a pair</em></div>
+    <div class="real" id="pair"><p class="mut">Loading…</p></div>
   </section>
 
   <section>
@@ -529,6 +535,37 @@ setInterval(() => {
   if (lastPoll) $("hb").textContent = `last checked global trades ${ago(lastPoll)}`;
 }, 1000);
 setInterval(loadStatus, 15000);
+
+// PAIR practice scalper.
+async function loadPair() {
+  let P;
+  try { const r = await fetch("/api/pair", { cache: "no-store" }); if (!r.ok) throw new Error(r.status); P = await r.json(); }
+  catch { $("pair").innerHTML = '<p class="mut">PAIR isn\'t on this server version yet.</p>'; return; }
+  const signed = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  const pct = x => x == null ? "—" : `${Math.round(x * 100)}%`;
+  const F = P.fastBook || {};
+  const feed = !F.enabled ? '<span class="neg">fast book off</span>'
+    : F.book ? `order book every ${F.tickMs / 1000}s · last ${ago(F.book.t)} · reply ~${F.avgMs ?? "?"}ms${F.slow ? ' · <span class="amb">rate-limited, slowed</span>' : ""}${F.rateLimited ? ` · ${F.rateLimited} rate limits` : ""}`
+    : '<span class="amb">waiting for the first BTC15 book</span>';
+  if (!P.enabled) { $("pair").innerHTML = `<p class="mut">PAIR is off (PAIR=false). ${feed}</p>`; return; }
+  const rows = P.variants.map(v => { const t = v.totals; return `<tr><td>${esc(v.name)}<div class="sub">pair ≤ ${Math.round(v.cfg.target * 100)}¢</div></td>
+    <td class="r">${t.windows}</td><td class="r">${t.pairs}<div class="sub">of ${t.legs} legs</div></td>
+    <td class="r">${signed(t.lockedPnl)}<div class="sub">${t.avgEdge == null ? "—" : Math.round(t.avgEdge * 100) + "¢ avg"}</div></td>
+    <td class="r res ${t.pnl >= 0 ? "pos" : "neg"}">${signed(t.pnl)}</td></tr>`; }).join("");
+  const main = P.variants.find(v => v.id === "main") || P.variants[0];
+  const n = main?.now, bid = b => b ? `${b.kind === "open" ? "first-leg" : "completing"} bid ${cents(b.px)}` : "no bid";
+  const now = !n ? "Waiting for the next BTC15 window."
+    : n.open ? `Holding ${esc(n.open.side)} @ ${cents(n.open.px)}, waiting to buy the other side · Up: ${bid(n.bids.Up)} · Down: ${bid(n.bids.Down)}`
+    : `${n.pairs} pair(s) this window · Up: ${bid(n.bids.Up)} · Down: ${bid(n.bids.Down)}`;
+  const ev = (P.events || []).slice(-8).reverse().map(e => `<li><span class="mut">${hhmmss(e.t)}</span> ${esc(e.msg)}</li>`).join("");
+  $("pair").innerHTML = `<p class="mut" style="margin:0 0 6px">${feed}</p>
+    <div class="tbl"><table class="rules pairs"><thead><tr><th>SETTING</th><th class="r">WINDOWS</th><th class="r">PAIRS</th><th class="r">LOCKED</th><th class="r">P&amp;L</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="mut" style="margin:6px 0 0;font-size:12px">P&amp;L = locked pairs + unpaired legs (${main ? signed(main.totals.unpairedPnl) : "—"} for ${esc(main?.name || "")}). Pairs done: ${main ? pct(main.totals.completion) : "—"} of first legs.</p>
+    <p style="margin:8px 0 0"><b>${esc(main?.name || "PAIR")} now:</b> ${now}</p>
+    ${ev ? `<ul class="mut" style="margin:6px 0 0;padding-left:16px;font-size:12px">${ev}</ul>` : ""}
+    <p class="mut" style="margin:6px 0 0;font-size:11px">Paper only, ${main?.cfg.shares ?? 10} shares a leg. A pair is locked profit whichever way BTC goes. An unpaired leg at minute ${main?.cfg.cutoffMin ?? 11} is held if it's winning, else sold. Fills are counted only when the book reaches our price, a second after the bid was placed.</p>`;
+}
+loadPair(); setInterval(loadPair, 5000);
 let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (status) { renderCurve(status.curve); renderCmp(status.variants || []); } }, 200); });
 const pickRule = e => { const tr = e.target.closest("tr[data-id]"); if (!tr) return; hlRule = hlRule === tr.dataset.id || tr.dataset.id === "main" ? null : tr.dataset.id; if (status) renderRules(status.variants || []); };
 $("rules").addEventListener("click", pickRule);

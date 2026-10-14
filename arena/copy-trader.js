@@ -30,6 +30,7 @@
  */
 import { EventEmitter } from "events";
 import { takerFee } from "../fees.js";
+import { fastQuote } from "./fast-book.js";
 import { saveJSON, loadJSON, claimOnce } from "./state.js";
 
 const GAMMA = process.env.COPY_GAMMA_URL || "https://gamma-api.polymarket.com";
@@ -38,7 +39,8 @@ const env = (k, d) => (process.env[k] != null && process.env[k] !== "" ? Number(
 
 export const CFG = {
   stake: env("COPY_STAKE", 10),                 // paper dollars per copy
-  pollMs: env("COPY_POLL_MS", 10_000),          // live trade polling
+  pollMs: env("COPY_POLL_MS", 5_000),           // live trade polling
+  fastEntry: process.env.COPY_FAST_ENTRY !== "false",  // re-check entries on every 1s fast-book tick
   minWindows: env("COPY_MIN_WINDOWS", 20),      // settled windows before a wallet can be trusted
   minWinRate: env("COPY_MIN_WIN_RATE", 0.55),
   minRoi: env("COPY_MIN_ROI", 0.05),            // profit / money put in
@@ -787,11 +789,28 @@ async function pollLive(family, now) {
     if (!best || amt > best.usd) cur.smartBest[t.outcome] = { wallet: t.wallet, name: t.name, usd: amt, price: t.price, outcome: t.outcome, why: j.why };
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
   }
-  // Entry check every poll, for every rule.
-  // The market list's prices can be minutes old (21:57 UTC: it said Up 59¢, the book was 33¢), so
-  // inside the entry window every decision uses the live order book. No book = no bet this poll.
+  await checkEntries(family, cur, now);
+  stats.lastPollAt = Date.now();
+  emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
+}
+
+/**
+ * Entry check for every rule. Runs after each trade poll and, inside the entry window, on every
+ * fast-book tick (once a second), so a price moving into the band is caught within a second
+ * instead of on the next 5-10s poll. The market list's prices can be minutes old (21:57 UTC:
+ * it said Up 59¢, the book was 33¢), so inside the entry window every decision uses the live
+ * order book. No book = no bet.
+ */
+let entryBusy = false;
+async function checkEntries(family, cur, now, book = null) {
+  if (entryBusy) return;
+  entryBusy = true;
+  try { await entriesFor(family, cur, now, book); } finally { entryBusy = false; }
+}
+async function entriesFor(family, cur, now, book) {
   let us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
-  if (us && us.end - now <= CFG.entryWindowMs && us.end - now >= CFG.minMsLeft) us = await withBook(us);
+  if (us && us.end - now <= CFG.entryWindowMs && us.end - now >= CFG.minMsLeft)
+    us = book && book.slug === us.slug ? { ...us, bid: book.bid, ask: book.ask, t: book.t, src: "fast" } : await withBook(us);
   for (const v of activeVariants()) {
     const cfg = cfgOf(v), bk = bookOf(v.id);
     const holding = bk.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
@@ -813,8 +832,6 @@ async function pollLive(family, now) {
       }
     } else if (v.id === "main" && !d.wait && !holding && !cur.skips.has(d.code)) { cur.skips.add(d.code); emit("skip", `not entering: ${d.why}`, { family }); }
   }
-  stats.lastPollAt = Date.now();
-  emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
 }
 
 async function workScoreQueue(now) {
@@ -858,6 +875,8 @@ export function _setPm(m) { pmMod = m; }                       // tests
 
 /** A US quote replaced by the live order book's best bid/ask (Up side); bid/ask null if unavailable. */
 export async function withBook(us) {
+  const f = fastQuote(us.slug, 1500);      // the 1s fast book saves a round trip when it's fresh
+  if (f) return { ...us, bid: f.bid, ask: f.ask, t: f.t, src: "fast" };
   try {
     const b = await (await getPm()).getBBO(us.slug);
     if (b && b.bid > 0 && b.ask > 0 && b.ask < 1 && b.ask >= b.bid) return { ...us, bid: b.bid, ask: b.ask, t: Date.now(), src: "book" };
@@ -1224,6 +1243,20 @@ export async function startCopyTrader() {
     }
     busyLive = false;
   }, CFG.pollMs));
+  // Fast entries: every fast-book tick inside BTC15's entry window re-runs the entry check
+  // with the votes so far and the second-old book.
+  if (CFG.fastEntry && CFG.families.includes("btc15")) {
+    try {
+      (await import("./fast-book.js")).onTick(book => {
+        const cur = live.btc15, now = Date.now();
+        if (!cur?.market || Math.abs(cur.end - book.end) > 60_000) return;
+        const left = cur.end - now;
+        if (left > CFG.entryWindowMs || left < CFG.minMsLeft) return;
+        stats.fastChecks = (stats.fastChecks || 0) + 1;
+        return checkEntries("btc15", cur, now, book);
+      });
+    } catch (err) { stats.lastError = `fast entry: ${err.message}`; }
+  }
   timers.push(setInterval(async () => {
     if (busyScore) return; busyScore = true;
     try { await workScoreQueue(Date.now()); } finally { busyScore = false; }

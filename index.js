@@ -884,6 +884,19 @@ app.get("/api/copy", async (req, res) => {
     res.json({ ...ct.copyStatus(), events: ct.recentEvents(150) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// PAIR practice scalper: status, plus the fast book's health.
+app.get("/api/pair", async (req, res) => {
+  try {
+    const [pt, fb] = await Promise.all([import("./arena/pair-trader.js"), import("./arena/fast-book.js")]);
+    res.set("Cache-Control", "no-store");
+    res.json({ ...pt.pairStatus(), fastBook: fb.fastBookStatus() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Clear PAIR's practice record. POST, so ADMIN_TOKEN applies.
+app.post("/api/pair/reset", async (req, res) => {
+  try { res.json(await (await import("./arena/pair-trader.js")).resetPair()); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // Start a new SHADOW session (clears every rule's paper record and the feed). POST, so ADMIN_TOKEN applies.
 app.post("/api/copy/reset", async (req, res) => {
   try { res.json(await (await import("./arena/copy-trader.js")).resetSession()); }
@@ -1168,6 +1181,12 @@ async function loadBots() {
   } catch (err) {
     console.log("🎞 Arena recorder not loaded:", err.message);
   }
+  // Fast book: the live BTC15 order book every second, for SHADOW's entries and PAIR.
+  try { await (await import("./arena/fast-book.js")).startFastBook(); }
+  catch (err) { console.log("⚡ Fast book not loaded:", err.message); }
+  // PAIR: practice scalping of Up and Down on BTC15 (paper only). Off with PAIR=false.
+  try { await (await import("./arena/pair-trader.js")).startPairTrader(); }
+  catch (err) { console.log("🔀 PAIR not loaded:", err.message); }
   // SHADOW copy trader: paper copies of smart global-Polymarket wallets. Started right
   // after the recorder so it hears every settlement. Off with COPY_TRADER=false.
   try { await (await import("./arena/copy-trader.js")).startCopyTrader(); }
