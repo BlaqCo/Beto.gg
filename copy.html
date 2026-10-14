@@ -563,7 +563,7 @@ async function loadPair() {
     <p class="mut" style="margin:6px 0 0;font-size:12px">P&amp;L = locked pairs + unpaired legs (${main ? signed(main.totals.unpairedPnl) : "—"} for ${esc(main?.name || "")}). Pairs done: ${main ? pct(main.totals.completion) : "—"} of first legs.</p>
     <p style="margin:8px 0 0"><b>${esc(main?.name || "PAIR")} now:</b> ${now}</p>
     ${ev ? `<ul class="mut" style="margin:6px 0 0;padding-left:16px;font-size:12px">${ev}</ul>` : ""}
-    <p class="mut" style="margin:6px 0 0;font-size:11px">Paper only, ${main?.cfg.shares ?? 10} shares a leg. A pair is locked profit whichever way BTC goes. An unpaired leg at minute ${main?.cfg.cutoffMin ?? 11} is held if it's winning, else sold. Fills are counted only when the book reaches our price, a second after the bid was placed.</p>`;
+    <p class="mut" style="margin:6px 0 0;font-size:11px">Paper only, ${main?.cfg.shares ?? 10} shares a leg. A pair is locked profit whichever way BTC goes. An unpaired leg is held to the close after minute ${main?.cfg.cutoffMin ?? 11}${main?.cfg.holdAbove ? ` (sold if under ${cents(main.cfg.holdAbove)})` : ""}. Fills are counted only when the book reaches our price, a second after the bid was placed.</p>`;
 }
 loadPair(); setInterval(loadPair, 5000);
 let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (status) { renderCurve(status.curve); renderCmp(status.variants || []); } }, 200); });

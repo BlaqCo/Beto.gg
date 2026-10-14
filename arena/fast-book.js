@@ -6,14 +6,15 @@
  * and hands each tick to listeners: SHADOW's fast entry check and the PAIR practice bot.
  * One market, one request at a time. The gap between requests adapts: it starts at
  * FAST_BOOK_MS (default 1000ms), doubles on every 429 (up to 15s, with a 5s+ pause), and
- * shrinks 15% after every 20 requests in a row that go through. So it settles just under
+ * shrinks 30% after every 5 requests in a row that go through (so a burst of 429s from
+ * other traffic costs about a minute, not the rest of the window). So it settles just under
  * Polymarket's real limit (first deploy: 1/s was refused within seconds).
  *
  * Read-only: never places orders. Off with FAST_BOOK=false.
  */
 
 const TICK_MS = Math.max(500, Number(process.env.FAST_BOOK_MS || 1000));   // fastest gap allowed
-const MAX_GAP = 15_000, PAUSE_MS = 5000, SPEEDUP_AFTER = 20, HISTORY = 1200;  // keep ~20 min of ticks
+const MAX_GAP = 15_000, PAUSE_MS = 5000, SPEEDUP_AFTER = 5, HISTORY = 1200;  // keep ~20 min of ticks
 const DUR = 15 * 60_000;
 
 let pm = null, recorder = null, timer = null, busy = false, nextAt = 0, gap = TICK_MS, streak = 0, lastLog = 0;
@@ -55,13 +56,16 @@ async function tick() {
       gap = Math.min(MAX_GAP, Math.max(gap * 2, 2000));
       nextAt = Date.now() + Math.max(gap, PAUSE_MS);
       if (Date.now() - lastLog > 60_000) { lastLog = Date.now(); console.log(`  ⚡ [fast-book] rate-limited (${stats.rateLimited} so far): now every ${(gap / 1000).toFixed(1)}s`); }
-    } else stats.errors++;
+    } else {
+      // A new window's book 404s for its first minute or two: wait 5s+ instead of hammering it.
+      stats.errors++; nextAt = Date.now() + Math.max(gap, PAUSE_MS);
+    }
     stats.lastError = err.message; return;
   }
   const ms = Date.now() - t0;
   if (!(b && b.bid > 0 && b.ask > 0 && b.ask < 1 && b.ask >= b.bid)) { stats.errors++; return; }
   stats.ok++;
-  if (++streak >= SPEEDUP_AFTER && gap > TICK_MS) { streak = 0; gap = Math.max(TICK_MS, Math.round(gap * 0.85)); }
+  if (++streak >= SPEEDUP_AFTER && gap > TICK_MS) { streak = 0; gap = Math.max(TICK_MS, Math.round(gap * 0.7)); }
   stats.avgMs = stats.avgMs == null ? ms : Math.round(stats.avgMs * 0.9 + ms * 0.1);
   if (!book || book.slug !== q.slug) ticks = [];
   book = { slug: q.slug, start: q.start, end: q.end, bid: b.bid, ask: b.ask, t: Date.now(), ms };
