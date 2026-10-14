@@ -545,7 +545,7 @@ async function loadPair() {
   const pct = x => x == null ? "—" : `${Math.round(x * 100)}%`;
   const F = P.fastBook || {};
   const feed = !F.enabled ? '<span class="neg">fast book off</span>'
-    : F.book ? `order book every ${F.tickMs / 1000}s · last ${ago(F.book.t)} · reply ~${F.avgMs ?? "?"}ms${F.slow ? ' · <span class="amb">rate-limited, slowed</span>' : ""}${F.rateLimited ? ` · ${F.rateLimited} rate limits` : ""}`
+    : F.book ? `order book every ${((F.gapMs ?? F.tickMs) / 1000).toFixed(1)}s · last ${ago(F.book.t)} · reply ~${F.avgMs ?? "?"}ms${F.rateLimited ? ` · ${F.rateLimited} rate limits` : ""}`
     : '<span class="amb">waiting for the first BTC15 book</span>';
   if (!P.enabled) { $("pair").innerHTML = `<p class="mut">PAIR is off (PAIR=false). ${feed}</p>`; return; }
   const rows = P.variants.map(v => { const t = v.totals; return `<tr><td>${esc(v.name)}<div class="sub">pair ≤ ${Math.round(v.cfg.target * 100)}¢</div></td>
