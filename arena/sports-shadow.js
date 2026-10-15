@@ -163,12 +163,13 @@ async function poll(now = Date.now()) {
   if (primedNow && !fresh.length) { await save(); return; }
   if (!fresh.length) return;
   const list = pm.cachedSportsMoneylines()?.markets || [];
+  // No US list yet (just restarted): leave these bets unseen and try them again on the next poll.
+  if (!list.length) { if (primedNow) await save(); return; }
   const leagues = usLeagues(list);
   for (const s of fresh.sort((a, b) => a.t - b.t)) {
     state.seen.push(s.id);
     const skip = uncopyable(s, leagues);
     if (skip) { state.skipped[skip] = (state.skipped[skip] || 0) + 1; continue; }
-    if (!list.length) { miss(s, "no US sports list loaded yet (sports recorder off?)"); continue; }
     const m = matchUs(s, list);
     if (!m.market) { miss(s, m.why); continue; }
     const start = Date.parse(m.market.gameStartIso || "");
@@ -312,5 +313,5 @@ export async function startSportsShadow({ wallets, halted }) {
 
 // Tests.
 export function _set({ pmMod, fetchFn, halted, claimFn } = {}) { if (pmMod) pm = pmMod; if (fetchFn) fetchImpl = fetchFn; if (halted) isHalted = halted; if (claimFn) claim = claimFn; }
-export function _reset() { Object.assign(state, { primedWallets: new Set(), base: [], scouted: [], seen: [], open: [], closed: [], misses: [], primed: false, wallets: [], live: { open: [], closed: [], missed: 0 } }); events.length = 0; }
+export function _reset() { Object.assign(state, { primedWallets: new Set(), base: [], scouted: [], seen: [], open: [], closed: [], misses: [], primed: false, wallets: [], live: { open: [], closed: [], missed: 0 } }); events.length = 0; missedGames.clear(); }
 export const _poll = poll, _settle = settleOpen, _state = state;

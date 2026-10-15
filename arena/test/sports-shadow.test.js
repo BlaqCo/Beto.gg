@@ -66,7 +66,7 @@ test("poll: skips history on first run, copies new bets at the book price, settl
   assert.equal(st.summary.n, 1); assert.equal(st.summary.byLeague[0].key, "mlb");
 });
 
-test("poll: a started game or a missing US list is a logged miss, not a bet", async () => {
+test("poll: a started game is a logged miss; a missing US list waits and retries", async () => {
   ss._reset();
   ss._state.wallets = [W]; ss._state.primed = true;
   ss._set({ fetchFn: async () => ({ ok: true, json: async () => [trade({ transactionHash: "0x1" })] }),
@@ -74,9 +74,13 @@ test("poll: a started game or a missing US list is a logged miss, not a bet", as
   await ss._poll(Date.now());
   assert.equal(ss._state.open.length, 0); assert.match(ss._state.misses[0].why, /already started/);
   ss._reset(); ss._state.wallets = [W]; ss._state.primed = true;
-  ss._set({ pmMod: { cachedSportsMoneylines: () => null, getBBO: async () => null, getSettlement: async () => null } });
+  let list = null;
+  ss._set({ pmMod: { cachedSportsMoneylines: () => list, getBBO: async () => null, getSettlement: async () => null } });
   await ss._poll(Date.now());
-  assert.match(ss._state.misses[0].why, /no US sports list/);
+  assert.equal(ss._state.misses.length, 0, "no US list yet: the bet waits instead of being written off");
+  list = { at: 1, markets: [{ ...US[0], gameStartIso: "2000-01-01T00:00:00Z" }] };
+  await ss._poll(Date.now());
+  assert.match(ss._state.misses[0].why, /already started/, "retried once the list loaded");
 });
 
 test("REAL sports: $1 FOK on name-matched pre-game bets only, with every brake", async () => {
