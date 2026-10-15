@@ -192,3 +192,13 @@ test("wallet report: losers held to the result (in /positions) are counted, open
   const nfl = rep.byLeague.find(g => g.key === "sports:nfl");
   assert.equal(nfl.n, 2); assert.equal(nfl.wins, 1); assert.equal(nfl.pnl, -10);
 });
+
+test("wallet report: asks newest first, and a record with no losses is not trusted", async () => {
+  const urls = [];
+  const wins = Array.from({ length: 60 }, (_, i) => ({ conditionId: "x" + i, outcomeIndex: 0, eventSlug: "mlb-a-b-2026-10-01", avgPrice: 0.5, totalBought: 10, realizedPnl: 5 }));
+  wr._set({ fetchFn: async url => { urls.push(url); return { ok: true, json: async () => (/closed-positions/.test(url) && /offset=0&/.test(url) ? wins.slice(0, 50) : /closed-positions/.test(url) && /offset=50&/.test(url) ? wins.slice(50) : []) }; } });
+  const rep = await wr.buildReport("0xallwins");
+  assert.match(urls[0], /sortBy=TIMESTAMP&sortDirection=DESC/);
+  assert.equal(rep.suspect, true);
+  assert.match(wr.leagueProven(rep, "mlb").why, /no losses/);
+});

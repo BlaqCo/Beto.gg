@@ -59,6 +59,7 @@ export function aggregate(results) {
 
 /** Is the wallet's record in this league good enough for real money? */
 export function leagueProven(report, league) {
+  if (report?.suspect) return { ok: false, why: "the wallet's record came back with no losses at all, so it can't be trusted yet" };
   const g = report?.byLeague?.find(x => x.key === `sports:${league}`);
   if (!g) return { ok: false, why: `no finished ${league} positions on record for this wallet` };
   if (g.n < RECORD_MIN_N) return { ok: false, why: `only ${g.n} finished ${league} positions on record (need ${RECORD_MIN_N})` };
@@ -74,7 +75,9 @@ export async function buildReport(wallet) {
   const rows = [], seen = new Set(), key = r => `${r.conditionId || r.asset || r.slug}:${r.outcomeIndex ?? r.outcome ?? ""}`;
   let shape = null;
   for (let p = 0; p < MAX_PAGES; p++) {
-    const res = await fetchImpl(`${DATA}/closed-positions?user=${wallet}&limit=${PAGE}&offset=${p * PAGE}`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    // Newest first. The default order is biggest win first, and with the 3,000-row cap that
+    // returned only winners (Oct 15: 3,000 rows, 100% won). Recent rows are a fair sample.
+    const res = await fetchImpl(`${DATA}/closed-positions?user=${wallet}&limit=${PAGE}&offset=${p * PAGE}&sortBy=TIMESTAMP&sortDirection=DESC`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`data-api closed-positions ${res.status}`);
     const page = await res.json();
     const list = Array.isArray(page) ? page : page?.data || page?.positions || [];
@@ -97,7 +100,10 @@ export async function buildReport(wallet) {
     if (!list.length || !fresh.length) break;
   }
   const results = rows.map(toResult).filter(Boolean);
-  return { wallet, rows: rows.length, closed: closedN, heldAtResult: rows.length - closedN, usable: results.length, shape, complete: closedN < PAGE * MAX_PAGES, ...aggregate(results) };
+  // A record with no losses at all is a sign the API still handed back only winners.
+  const suspect = rows.length >= 50 && results.every(r => r.pnl > 0);
+  if (suspect) console.log(`  📒 [wallet-report] ${wallet.slice(0, 8)}: every one of ${results.length} positions is a win; the data looks one-sided, not trusting it`);
+  return { wallet, suspect, rows: rows.length, closed: closedN, heldAtResult: rows.length - closedN, usable: results.length, shape, complete: closedN < PAGE * MAX_PAGES, ...aggregate(results) };
 }
 
 export async function refresh(wallet) {
