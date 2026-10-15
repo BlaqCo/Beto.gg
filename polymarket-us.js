@@ -504,6 +504,9 @@ export async function fetchCryptoMarkets() {
   return out;
 }
 
+/** The last sports moneyline list fetched, without fetching (null if none yet). */
+export function cachedSportsMoneylines() { return _cache ? { at: _cacheTime, markets: _cache } : null; }
+
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
 
@@ -554,7 +557,11 @@ export async function fetchSportsMoneylines() {
   // Small batches with a short pause between them respect whatever the
   // real burst ceiling is, at the cost of a little extra scan time.
   const _fetchStart = Date.now();
-  const DISCOVERY_BATCH = 8, DISCOVERY_PAUSE_MS = 400;
+  // Spread out further (Oct 2026): 8 at a time every 400ms used up the gateway's shared
+  // rate limit every 5 minutes and starved the BTC15 order-book reads. Now 2 at a time,
+  // 1.5s apart (about 30s for the whole sweep). SPORTS_FETCH_BATCH / SPORTS_FETCH_PAUSE_MS.
+  const DISCOVERY_BATCH = Math.max(1, Number(process.env.SPORTS_FETCH_BATCH || 2));
+  const DISCOVERY_PAUSE_MS = Math.max(0, Number(process.env.SPORTS_FETCH_PAUSE_MS || 1500));
   const results = [];
   for (let i = 0; i < urls.length; i += DISCOVERY_BATCH) {
     const batch = urls.slice(i, i + DISCOVERY_BATCH);
@@ -823,6 +830,7 @@ export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
 
 // ── getBBO ───────────────────────────────────────────────────────
 // BBO response: { marketData: { bestBid: { value: "0.54", currency: "USD" }, bestAsk: { value: "0.56" }, lastTradePx: {...}, currentPx: {...} } }
+const _bbo404 = new Set();
 export async function getBBO(slug) {
   try {
     const { data } = await axios.get(
@@ -848,6 +856,12 @@ export async function getBBO(slug) {
     // logs showed hundreds of these errors the whole time.
     const isRateLimit = /429/.test(err.message || "") || err.response?.status === 429;
     if (isRateLimit) throw err;
+    // A new BTC window's book 404s for its first few minutes: say so once per market, not
+    // on every retry.
+    if (err.response?.status === 404) {
+      if (!_bbo404.has(slug)) { _bbo404.add(slug); if (_bbo404.size > 200) _bbo404.delete(_bbo404.values().next().value); console.log(`  ⏳ [getBBO] no order book yet for ${slug} (404); will keep checking quietly`); }
+      return null;
+    }
     console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
     return null;
   }

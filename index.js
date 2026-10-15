@@ -28,6 +28,21 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
+// ── Site lock ──────────────────────────────────────────────────
+// SITE_PASSWORD set = every page and API needs it (browser login box; any username).
+// /health stays open for Railway's health check. Writes still need ADMIN_TOKEN too.
+const SITE_PASSWORD = process.env.SITE_PASSWORD || "";
+if (SITE_PASSWORD) console.log("🔒 Site lock on: every page needs SITE_PASSWORD");
+app.use((req, res, next) => {
+  if (!SITE_PASSWORD || req.path === "/health") return next();
+  const m = /^Basic (.+)$/.exec(req.get("authorization") || "");
+  const pass = m ? Buffer.from(m[1], "base64").toString().split(":").slice(1).join(":") : "";
+  const a = Buffer.from(pass), b = Buffer.from(SITE_PASSWORD);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+  res.set("WWW-Authenticate", 'Basic realm="Beto", charset="UTF-8"');
+  return res.status(401).send("Password required.");
+});
+
 app.use(express.json());
 
 // ── Write lock ─────────────────────────────────────────────────
@@ -846,7 +861,9 @@ app.get("/api/colony", async (req, res) => {
     check("lab", !(lb?.loadErrors || []).length, (lb?.loadErrors || []).length ? `${lb.loadErrors.length} strategy file(s) failed to load` : `${strategies} strategies loaded`);
     const rs = lb?.reality?.summary;
     out.reality = rs || null;
-    if (rs) check("lab", rs.label !== "arena too optimistic", `reality check: ${rs.msg}`, rs.label === "arena too optimistic" ? "alert" : rs.label === "matches" ? "ok" : "info");
+    // "Too optimistic" is a calibration fact, not a fault: the agents are told the gap and
+    // BTC15 tape now uses the live order book. So it's a warning, not an alert.
+    if (rs) check("lab", rs.label !== "arena too optimistic", `reality check: ${rs.msg}${rs.label === "arena too optimistic" ? " · agents now discount by this; BTC15 tape now uses live order-book prices" : ""}`, rs.label === "arena too optimistic" ? "warn" : rs.label === "matches" ? "ok" : "info");
     else if (lb?.reality?.error) check("lab", false, `reality check failed: ${lb.reality.error}`);
     const ag = out.agents;
     check("lab", !!ag?.enabled, !ag?.enabled ? "AI agents off: set AGENTS_ENABLED=true" : ag.lastError ? `AI agents error: ${ag.lastError}` : ag.lastRunAt ? `AI agents ran ${Math.round((Date.now() - ag.lastRunAt) / 60000)}m ago; next in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m` : `AI agents start in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m`, ag?.enabled ? (ag.lastError ? "warn" : "ok") : "info");
@@ -891,6 +908,45 @@ app.get("/api/pair", async (req, res) => {
     res.set("Cache-Control", "no-store");
     res.json({ ...pt.pairStatus(), fastBook: fb.fastBookStatus() });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// SHADOW LAB: the signal log, the TUNER's proposals, and applying one to SHADOW.
+let _ct = null;
+const _shadowRule = () => _ct?.shadowRule ? _ct.shadowRule() : null;
+app.get("/api/shadowlab", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    const v = lab.validateRule(_ct.shadowRule());
+    res.set("Cache-Control", "no-store");
+    res.json(lab.labStatus(v.ok ? v.rule : null));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Your own proposal. Body: { name, rule, rationale }. POST, so ADMIN_TOKEN applies.
+app.post("/api/shadowlab/propose", async (req, res) => {
+  try { const lab = await import("./arena/shadow-lab.js"); await lab.loadLab(); res.json(await lab.addProposal({ ...req.body, author: "you" })); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// Put a proven proposal on SHADOW (paper and real money). Body: { id }. POST, so ADMIN_TOKEN applies.
+app.post("/api/shadowlab/apply", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    const r = await lab.applyProposal(String(req.body?.id || ""));
+    if (r.ok) _ct.applyLabRule(r.applied.rule, `proposal ${r.applied.id}`);
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/shadowlab/revert", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    await lab.revertApplied(); _ct.applyLabRule(null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.get("/api/sportsshadow", async (req, res) => {
+  try { res.set("Cache-Control", "no-store"); res.json((await import("./arena/sports-shadow.js")).sportsShadowStatus()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Clear PAIR's practice record. POST, so ADMIN_TOKEN applies.
 app.post("/api/pair/reset", async (req, res) => {
@@ -951,6 +1007,9 @@ app.get("/api/arena/tape", async (req, res) => {
 app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
 
 app.use(express.static("public")); // after routes so JSON endpoints win
+
+// A deploy stops the old copy with SIGTERM: exit cleanly instead of being killed.
+for (const sig of ["SIGTERM", "SIGINT"]) process.once(sig, () => { console.log(`👋 ${sig}: shutting down for a deploy or restart`); process.exit(0); });
 
 app.listen(PORT, () => {
   console.log(`[OK] PolyBettor on port ${PORT} | view: ${currentMode} | dashboard at /dashboard`);
@@ -1189,8 +1248,11 @@ async function loadBots() {
   catch (err) { console.log("🔀 PAIR not loaded:", err.message); }
   // SHADOW copy trader: paper copies of smart global-Polymarket wallets. Started right
   // after the recorder so it hears every settlement. Off with COPY_TRADER=false.
-  try { await (await import("./arena/copy-trader.js")).startCopyTrader(); }
+  try { _ct = await import("./arena/copy-trader.js"); await _ct.startCopyTrader(); }
   catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
+  // SPORTS SHADOW: practice copies of the primary wallet's sports bets. Off with SPORTS_SHADOW=false.
+  try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [] }); }
+  catch (err) { console.log("🏟 SPORTS SHADOW not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
   // AI agents: add strategy recipes and vote. Off unless AGENTS_ENABLED=true.
@@ -1198,6 +1260,7 @@ async function loadBots() {
     (await import("./arena/agents.js")).startAgents({
       getLeaderboard: () => getArenaLeaderboard(),
       onChange: () => { _arenaCache.ts = 0; _arenaCache.data = null; },
+      getShadowRule: () => _shadowRule(),
     });
   } catch (err) { console.log("🤖 AI agents not loaded:", err.message); }
 

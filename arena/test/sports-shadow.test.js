@@ -1,0 +1,79 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as ss from "../sports-shadow.js";
+
+const W = "0x424eb20fcd25113e3b98f42522a54580350b263b";
+const trade = (o = {}) => ({ proxyWallet: W, side: "BUY", price: 0.42, size: 100, timestamp: 1_790_000_000, transactionHash: "0xabc",
+  eventSlug: "mlb-cle-tb-2026-10-13", slug: "mlb-cle-tb-2026-10-13", title: "Guardians vs. Rays", outcome: "Guardians", name: "sharp", ...o });
+const US = [
+  { slug: "aec-mlb-cle-tb-2026-10-13", question: "Will the Cleveland Guardians win against the Tampa Bay Rays?", gameStartIso: "2099-01-01T00:00:00Z", ask: 0.45, bid: 0.43 },
+  { slug: "asc-mlb-cle-tb-2026-10-13-pos-4pt5", question: "Will the Cleveland Guardians cover 4.5 vs the Tampa Bay Rays?", gameStartIso: "2099-01-01T00:00:00Z", ask: 0.8, bid: 0.78 },
+];
+
+test("only sports BUYs become signals", () => {
+  assert.equal(ss.toSignal(trade()).league, "mlb");
+  assert.equal(ss.toSignal(trade({ side: "SELL" })), null);
+  assert.equal(ss.toSignal(trade({ eventSlug: "btc-updown-15m-1790000000", slug: "btc-updown-15m-1790000000" })), null);
+  assert.equal(ss.toSignal(trade({ price: 0 })), null);
+});
+
+test("team names match loosely, the US question gives the YES team", () => {
+  assert.equal(ss.yesTeamOf("Will the Cleveland Guardians win against the Tampa Bay Rays?"), "cleveland guardians");
+  assert.ok(ss.sameTeam("cleveland guardians", "Guardians"));
+  assert.ok(!ss.sameTeam("cleveland guardians", "Rays"));
+});
+
+test("matching: backed team → YES, the other team in a two-team game → NO", () => {
+  const g = ss.matchUs(ss.toSignal(trade()), US);
+  assert.equal(g.market.slug, "aec-mlb-cle-tb-2026-10-13"); assert.equal(g.buy, "YES");
+  const r = ss.matchUs(ss.toSignal(trade({ outcome: "Rays" })), US);
+  assert.equal(r.buy, "NO", "the US market names the Guardians, so backing the Rays is NO");
+  assert.match(ss.matchUs(ss.toSignal(trade({ eventSlug: "nba-lal-bos-2026-10-13", slug: "nba-lal-bos-2026-10-13" })), US).why, /no US market/);
+});
+
+test("matching: soccer Yes/No markets", () => {
+  const us = [
+    { slug: "aec-epl-ars-che-2026-10-18-ars", question: "Will Arsenal win against Chelsea?", gameStartIso: "2099-01-01T00:00:00Z" },
+    { slug: "aec-epl-ars-che-2026-10-18-che", question: "Will Chelsea win against Arsenal?", gameStartIso: "2099-01-01T00:00:00Z" },
+  ];
+  const yes = ss.matchUs(ss.toSignal(trade({ eventSlug: "epl-ars-che-2026-10-18", slug: "epl-ars-che-2026-10-18-che", title: "Will Chelsea win on 2026-10-18?", outcome: "Yes" })), us);
+  assert.equal(yes.market.slug, "aec-epl-ars-che-2026-10-18-che"); assert.equal(yes.buy, "YES");
+  const no = ss.matchUs(ss.toSignal(trade({ eventSlug: "epl-ars-che-2026-10-18", slug: "epl-ars-che-2026-10-18-che", title: "Will Chelsea win on 2026-10-18?", outcome: "No" })), us);
+  assert.match(no.why, /can draw/, "No in a game that can draw isn't mapped");
+});
+
+test("poll: skips history on first run, copies new bets at the book price, settles them", async () => {
+  ss._reset();
+  ss._state.wallets = [W];
+  let rows = [trade({ transactionHash: "0xold" })];
+  let settlement = null;
+  ss._set({ fetchFn: async () => ({ ok: true, json: async () => rows }),
+    pmMod: { cachedSportsMoneylines: () => ({ at: 1, markets: US }), getBBO: async () => ({ bid: 0.41, ask: 0.44 }), getSettlement: async () => settlement } });
+  await ss._poll(1000);
+  assert.equal(ss._state.open.length, 0, "first run only remembers");
+  rows = [trade({ transactionHash: "0xold" }), trade({ transactionHash: "0xnew" }), trade({ transactionHash: "0xnew2", price: 0.45 })];
+  await ss._poll(2000);
+  assert.equal(ss._state.open.length, 1, "one bet per wallet per market");
+  const b = ss._state.open[0];
+  assert.equal(b.buy, "YES"); assert.equal(b.px, 0.44, "paid the book's ask");
+  // Settles after the game: Guardians won.
+  settlement = 1;
+  await ss._settle(b.start + 4 * 3600_000);
+  assert.equal(ss._state.closed[0].won, true);
+  assert.ok(ss._state.closed[0].pnl > 12, "10/0.44 − 10 − fee");
+  const st = ss.sportsShadowStatus();
+  assert.equal(st.summary.n, 1); assert.equal(st.summary.byLeague[0].key, "mlb");
+});
+
+test("poll: a started game or a missing US list is a logged miss, not a bet", async () => {
+  ss._reset();
+  ss._state.wallets = [W]; ss._state.primed = true;
+  ss._set({ fetchFn: async () => ({ ok: true, json: async () => [trade({ transactionHash: "0x1" })] }),
+    pmMod: { cachedSportsMoneylines: () => ({ at: 1, markets: [{ ...US[0], gameStartIso: "2000-01-01T00:00:00Z" }] }), getBBO: async () => null, getSettlement: async () => null } });
+  await ss._poll(Date.now());
+  assert.equal(ss._state.open.length, 0); assert.match(ss._state.misses[0].why, /already started/);
+  ss._reset(); ss._state.wallets = [W]; ss._state.primed = true;
+  ss._set({ pmMod: { cachedSportsMoneylines: () => null, getBBO: async () => null, getSettlement: async () => null } });
+  await ss._poll(Date.now());
+  assert.match(ss._state.misses[0].why, /no US sports list/);
+});

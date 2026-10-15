@@ -104,7 +104,7 @@ table.trades .res{font-weight:600}
 .chart .lbl{font:11px var(--f-mono);fill:var(--muted)} .chart .lbl.main{fill:var(--text)} .chart .lbl.hl{fill:var(--text)}
 table.rules{table-layout:fixed} table.rules th:nth-child(2){width:15%} table.rules th:nth-child(3){width:20%} table.rules th:nth-child(4){width:22%} table.rules th:nth-child(5){width:17%}
 table.rules td{white-space:normal;vertical-align:top} table.rules tr{cursor:pointer} table.rules tr.main-row td{border-bottom:0;padding-bottom:0} table.rules td.rule{padding-top:2px}
-table.rules.pairs tr{cursor:default} table.rules.pairs td.r .sub{white-space:normal}
+table.rules.pairs tr{cursor:default} .labcard{border-top:1px solid var(--phos-dim);padding:8px 0;font-size:13px;line-height:1.45} .labcard.off{opacity:.55} .labcard .why{font-size:12px;font-style:italic} .labcard .act{margin-top:4px} table.rules.pairs td.r .sub{white-space:normal}
 table.rules tr.hl td{background:rgba(255,181,71,.08)} table.rules tr.hl td:first-child{box-shadow:inset 3px 0 var(--amber)}
 table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-space:nowrap}
 .sig{margin-top:6px;padding-top:6px;border-top:1px dashed var(--phos-faint)}
@@ -142,6 +142,16 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
   <section id="realSec">
     <div class="ph">REAL MONEY <em>BTC15 · SHADOW's bets mirrored small</em></div>
     <div class="real" id="real"><p class="mut">Loading…</p></div>
+  </section>
+
+  <section id="labSec">
+    <div class="ph">SHADOW LAB <em>AI agents hunting SHADOW's edge · you approve changes</em></div>
+    <div class="real" id="lab"><p class="mut">Loading…</p></div>
+  </section>
+
+  <section id="sportsSec">
+    <div class="ph">SPORTS SHADOW <em>practice · copies the primary wallet's sports bets onto US</em></div>
+    <div class="real" id="sports"><p class="mut">Loading…</p></div>
   </section>
 
   <section id="pairSec">
@@ -535,6 +545,59 @@ setInterval(() => {
   if (lastPoll) $("hb").textContent = `last checked global trades ${ago(lastPoll)}`;
 }, 1000);
 setInterval(loadStatus, 15000);
+
+// SHADOW LAB.
+async function adminPost(url, body) {
+  let tok = ""; try { tok = localStorage.getItem("betoAdminToken") || ""; } catch {}
+  if (!tok) { tok = prompt("Admin token (ADMIN_TOKEN):") || ""; if (!tok) return null; try { localStorage.setItem("betoAdminToken", tok); } catch {} }
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": tok }, body: JSON.stringify(body || {}) });
+  if (r.status === 401) { try { localStorage.removeItem("betoAdminToken"); } catch {} alert("Wrong or missing admin token. Nothing changed."); return null; }
+  return r.json();
+}
+async function loadLab() {
+  let L;
+  try { const r = await fetch("/api/shadowlab", { cache: "no-store" }); if (!r.ok) throw new Error(r.status); L = await r.json(); }
+  catch { $("lab").innerHTML = '<p class="mut">SHADOW LAB isn\'t on this server version yet.</p>'; return; }
+  const money = n => n == null ? "—" : `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  const st = x => !x || !x.n ? '<span class="mut">no bets</span>' : `${x.n} bets · ${Math.round(x.winRate * 100)}% won · <span class="${x.perBet >= 0 ? "pos" : "neg"}">${money(x.perBet)}</span>/bet`;
+  const C = L.current;
+  const head = `<p class="mut" style="margin:0 0 6px">Signal log: ${L.windows} windows (${L.settled} with results). SHADOW records what it sees every 15s in the last 10 minutes of every BTC15 window, bet or not, so any rule can be replayed. TUNER proposes rules every hour once 24 windows are in.</p>
+    <p style="margin:0 0 6px"><b>Agents are ${L.mode === "refine" ? `refining the champion <span class="pos">${esc(L.champion)}</span>` : "searching for a winning rule"}.</b> <span class="mut">${L.mode === "refine" ? "Each new proposal is a small variation of it, judged head-to-head on the same windows." : `The first proposal with ${L.forwardMin}+ forward bets in profit becomes the champion; then they refine it.`}</span></p>
+    <p style="margin:0 0 6px"><b>SHADOW now${L.applied ? ` (lab rule ${esc(L.applied.id)})` : ""}:</b> ${C ? esc(C.text) : "—"}<br><span class="mut">replayed on the log:</span> ${st(C)}${L.applied ? ' <button class="stopbtn resume" id="labRevert" type="button">BACK TO ORIGINAL RULE</button>' : ""}</p>`;
+  const act = p => p.status !== "active" ? `<span class="mut">${esc(p.retiredWhy || p.status)}</span>` : L.applied?.id === p.id ? '<b class="pos">ON SHADOW NOW</b>'
+    : p.canApply ? `<button class="stopbtn resume" data-apply="${esc(p.id)}" type="button">APPLY TO SHADOW</button>` : `<span class="mut">Apply: ${esc(p.applyWhy)}</span>`;
+  const cards = (L.proposals || []).map(p => `<div class="labcard${p.status !== "active" ? " off" : ""}"><b>${esc(p.id)}</b>${p.id === L.champion ? ' <b class="pos">★ CHAMPION</b>' : ""} <span class="mut">by ${esc(p.author)}${p.parent ? `, refining ${esc(p.parent)}` : ""}</span>
+    <div class="mut">${esc(p.text)}</div>${p.rationale ? `<div class="mut why">${esc(p.rationale)}</div>` : ""}
+    <div>Replayed: ${st(p.backtest)}</div><div>Forward: ${st(p.forward)}</div>${p.vsParent ? `<div>vs ${esc(p.vsParent.parent)} on the same windows: <span class="${p.vsParent.total >= p.vsParent.parentTotal ? "pos" : "neg"}">${money(p.vsParent.total)}</span> vs ${money(p.vsParent.parentTotal)}${p.vsParent.better ? ' · <b class="pos">BEATS THE CHAMPION</b>' : ""}</div>` : ""}<div class="act">${act(p)}</div></div>`).join("");
+  $("lab").innerHTML = head + (cards || '<p class="mut">No proposals yet.</p>') +
+    `<p class="mut" style="margin:6px 0 0;font-size:11px">Replayed = the whole log; it can be fitted by luck. Forward = only windows after the proposal was made, which can't. Apply unlocks at ${L.forwardMin} forward bets in profit, and changes SHADOW's rule for practice and real money (real money keeps its $3 bets and loss limits).</p>`;
+  document.querySelectorAll("[data-apply]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Apply ${b.dataset.apply} to SHADOW? Practice and real money follow the new rule right away.`)) return;
+    const r = await adminPost("/api/shadowlab/apply", { id: b.dataset.apply }); if (r && !r.ok) alert(r.error); loadLab(); loadStatus();
+  });
+  const rv = $("labRevert");
+  if (rv) rv.onclick = async () => { if (!confirm("Put SHADOW back on its original rule?")) return; await adminPost("/api/shadowlab/revert"); loadLab(); loadStatus(); };
+}
+loadLab(); setInterval(loadLab, 30000);
+
+// SPORTS SHADOW.
+async function loadSports() {
+  let S;
+  try { const r = await fetch("/api/sportsshadow", { cache: "no-store" }); if (!r.ok) throw new Error(r.status); S = await r.json(); }
+  catch { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW isn\'t on this server version yet.</p>'; return; }
+  if (!S.enabled) { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW is off.</p>'; return; }
+  const m = S.summary, sg = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  const list = S.usListAt ? `US sports list ${ago(S.usListAt)}` : '<span class="amb">no US sports list yet: turn the sports recorder on (ARENA_SPORTS=true)</span>';
+  const row = b => `<div class="labcard"><b>${esc(b.buy)}</b> ${esc(b.usQuestion)} @ ${cents(b.px)}${b.won == null && b.closedAt == null ? ` <span class="mut">· starts ${hhmm(b.start)}</span>` : ` · <span class="${b.pnl >= 0 ? "pos" : "neg"}">${b.won == null ? "void" : (b.won ? "WON " : "LOST ") + sg(b.pnl)}</span>`}
+    <div class="mut">they bought ${esc(b.outcome)} @ ${cents(b.theirPx)} ($${(+b.theirUsd).toFixed(0)}) · ${esc(b.league)}</div></div>`;
+  $("sports").innerHTML = `<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
+    <p style="margin:0 0 6px"><b>${m.n} settled</b>${m.n ? ` · ${Math.round(m.winRate * 100)}% won · <span class="${m.pnl >= 0 ? "pos" : "neg"}">${sg(m.pnl)}</span> (${sg(m.perBet)}/bet)` : ""}${m.byLeague.length ? `<br><span class="mut">${m.byLeague.map(g => `${esc(g.key)} ${g.wins}/${g.n} ${sg(g.pnl)}`).join(" · ")}</span>` : ""}</p>
+    ${S.open.length ? `<p class="mut" style="margin:6px 0 0">OPEN</p>${S.open.map(row).join("")}` : ""}
+    ${S.recent.length ? `<p class="mut" style="margin:6px 0 0">SETTLED</p>${S.recent.slice(0, 8).map(row).join("")}` : ""}
+    ${S.misses.length ? `<p class="mut" style="margin:6px 0 0">NOT COPIED (newest first)</p><ul class="mut" style="margin:2px 0 0;padding-left:16px;font-size:12px">${S.misses.slice(0, 6).map(x => `<li>${esc(x.outcome)} in "${esc(x.title)}": ${esc(x.why)}</li>`).join("")}</ul>` : ""}
+    <p class="mut" style="margin:6px 0 0;font-size:11px">Paper only, $10 a bet at the US order-book price, pre-game only, one bet per game. DUGOUT reads these results when it designs sports strategies.</p>`;
+}
+loadSports(); setInterval(loadSports, 30000);
 
 // PAIR practice scalper.
 async function loadPair() {

@@ -1,4 +1,7 @@
 [deploy]
+# Run node directly: under "npm start", Railway's normal stop signal at every deploy
+# made npm print "npm error ... SIGTERM", which looked like a crash.
+startCommand = "node index.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"

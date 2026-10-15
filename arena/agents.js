@@ -4,7 +4,8 @@
  *   FORGE   writes BTC recipes from price patterns and timing
  *   VECTOR  writes BTC recipes from BTC spot vs strike (fair value)
  *   DUGOUT  writes sports recipes (pre-game)
- *   PRISM   retires recipes that are clearly losing (a rule, no AI call)
+ *   TUNER   studies SHADOW's signal log (SHADOW LAB) and proposes changes to SHADOW's rule
+ *   PRISM   retires recipes and SHADOW proposals that are clearly losing (a rule, no AI call)
  *   COUNCIL every agent casts a ballot for the strategy that deserves the
  *           next forward-test focus, with a reason grounded in the numbers
  *
@@ -26,7 +27,7 @@ const MAX_ACTIVE = Number(process.env.AGENTS_MAX_ACTIVE || 15);
 
 const status = { enabled: false, model: MODEL, everyMin: EVERY_MIN, runs: 0, lastRunAt: 0, nextRunAt: 0, running: false,
                  calls: 0, lastResult: null, lastError: null };
-let getLeaderboard = null, onChange = () => {};
+let getLeaderboard = null, onChange = () => {}, getShadowRule = null;
 
 const BUILDERS = [
   { name: "FORGE", families: ["btc15", "btc60"],
@@ -34,7 +35,7 @@ const BUILDERS = [
   { name: "VECTOR", families: ["btc15", "btc60"],
     focus: "BTC spot vs the window's strike price: the fair_value side, the margin needed after fees, and when in the window the market misprices it" },
   { name: "DUGOUT", families: ["sports"],
-    focus: "pre-game sports moneylines: how many hours before the start to enter, favorite vs underdog, and which price bands" },
+    focus: "pre-game sports moneylines: how many hours before the start to enter, favorite vs underdog, and which price bands; learn from SPORTS SHADOW (the primary wallet's copied sports bets) which leagues and bands hold value" },
 ];
 
 const SCHEMA = `{
@@ -86,18 +87,30 @@ async function build(builder, lb, specs, log) {
   const recorded = builder.families.reduce((s, f) => s + (tape[f] || 0), 0);
   if (recorded < 3) { log(builder.name, `waiting for data: only ${recorded} recorded ${builder.families.join("/")} windows`); return null; }
   const mine = specs.filter(r => r.author === builder.name);
+  // DUGOUT also studies SPORTS SHADOW: what the primary wallet's sports bets did, copied onto US.
+  let sportsShadow = null;
+  if (builder.families.includes("sports")) {
+    try { const ss = (await import("./sports-shadow.js")).sportsShadowStatus(); if (ss.enabled) sportsShadow = { ...ss.summary, recentMisses: ss.misses.slice(0, 5).map(m => m.why) }; } catch { /* not loaded */ }
+  }
+  // How far the arena's simulated fills were from the real bot's on the same trades.
+  const rs = lb.reality?.summary, gap = rs?.label === "arena too optimistic" && Number.isFinite(rs.meanGap) ? Math.abs(rs.meanGap) : null;
   const system = `You are ${builder.name}, a strategy researcher in an automated prediction-market lab. You design ONE new trading recipe at a time for Polymarket US "${builder.families.join('" or "')}" markets. Your focus: ${builder.focus}.
 Every trade is simulated with realistic costs: fills at the next price update, buys pay the ask, sells receive the bid, and every fill pays a taker fee of 6% x p x (1-p) per contract. Spread and fees make most ideas lose; propose something with a concrete reason to beat them.
-Rules: propose an idea that is meaningfully DIFFERENT from every existing strategy listed (not a tiny parameter tweak). Small samples (under 30 trades) prove nothing, so don't chase them. Never claim certainty.
+${gap ? `Reality check: on ${rs.n} real bot trades, real results were $${gap.toFixed(2)} per $10 trade WORSE than this arena's simulation, mostly from older tape priced from stale market-list quotes (BTC15 tape now uses the live order book). Treat any arena result as about $${gap.toFixed(2)} per $10 trade too optimistic: only ideas that clear that margin are worth proposing.
+` : ""}Rules: propose an idea that is meaningfully DIFFERENT from every existing strategy listed (not a tiny parameter tweak). Use a name not already taken. Small samples (under 30 trades) prove nothing, so don't chase them. Never claim certainty.
 Reply with ONLY a JSON object: {"spec": <recipe>, "note": "one sentence for the station log"}. Recipe schema:\n${SCHEMA}`;
   const user = `Recorded windows: ${JSON.stringify(tape)}.
 Current leaderboard (your families only, ranked by the low end of the 95% range of profit per $10 trade):
 ${JSON.stringify(boardFor(lb.rows || [], builder.families))}
+Names already taken: ${JSON.stringify(specs.map(r => r.spec.name))}${sportsShadow ? `
+SPORTS SHADOW (practice copies of the primary wallet's pre-game sports bets on US, $10 each, by league and price band): ${JSON.stringify(sportsShadow)}. Where it wins tells you which leagues and price bands a sharp bettor finds value in; use it as evidence alongside the leaderboard.` : ""}
 Your existing recipes: ${JSON.stringify(mine.map(r => ({ name: r.spec.name, status: r.status, what: describeSpec(r.spec), note: r.note })))}
 Propose one new recipe now.`;
   const out = await claude(system, user);
   if (!out?.spec) { log(builder.name, "returned no usable recipe this round"); return null; }
-  const res = await addSpec(out.spec, { author: builder.name });
+  let res = await addSpec(out.spec, { author: builder.name });
+  // A name clash isn't a bad idea: retry once under a fresh name.
+  if (!res.ok && /already exists/.test(res.error || "") && out.spec?.name) res = await addSpec({ ...out.spec, name: `${String(out.spec.name).slice(0, 36)}-${Date.now().toString(36).slice(-4)}` }, { author: builder.name });
   if (!res.ok) { log(builder.name, `recipe rejected by validation: ${res.error}`); return null; }
   log(builder.name, `new strategy ${res.rec.spec.name} (${res.rec.spec.family}): ${describeSpec(res.rec.spec)} ${out.note ? "— " + String(out.note).slice(0, 160) : ""}`);
   return res.rec;
@@ -141,6 +154,76 @@ async function council(lb, log) {
   return cast;
 }
 
+// ── TUNER: SHADOW's edge ────────────────────────────────────────────
+const RULE_SCHEMA = `{
+  "name": "kebab-case-name",
+  "rule": {
+    "priceMin": 0.30-0.95, "priceMax": 0.35-0.97,        // price paid for the side bought (its ask)
+    "minLeftSec": 15-600, "maxLeftSec": 30-600,          // enter only while time left is in this range
+    "minShare": 0.5-1,                                    // share of smart-wallet vote weight on our side
+    "minAgree": 0-15,                                     // smart wallets on our side (not needed when following the primary wallet)
+    "maxAgainst": 0-50 or omit,                           // most smart wallets allowed on the other side
+    "follow": "either" | "consensus" | "primary" | "both", // either = primary wallet if it bet, else smart money
+    "side": "any" | "up" | "down",
+    "hoursUtc": [start, end] or null                      // whole UTC hours the window must start in
+  },
+  "rationale": "1-2 sentences citing the numbers"
+}`;
+const MIN_LAB_WINDOWS = Number(process.env.AGENTS_TUNER_MIN_WINDOWS || 24);   // ~6 hours of BTC15 before the TUNER says anything
+const TUNER_EVERY_MIN = Math.max(30, Number(process.env.AGENTS_TUNER_EVERY_MIN || 60));
+const TUNER_PER_RUN = Math.max(1, Math.min(4, Number(process.env.AGENTS_TUNER_PER_RUN || 2)));
+
+export async function tune(log, labMod = null, perRun = TUNER_PER_RUN) {
+  const lab = labMod || await import("./shadow-lab.js");
+  await lab.loadLab();
+  const windows = lab.labWindows().filter(w => w.outcome != null);
+  if (windows.length < MIN_LAB_WINDOWS) { log("TUNER", `waiting for data: ${windows.length} SHADOW LAB windows logged, need ${MIN_LAB_WINDOWS}`); return null; }
+  await lab.pruneProposals(log);
+  const cur = getShadowRule ? getShadowRule() : null;
+  const v = lab.validateRule(cur || {});
+  if (!v.ok) { log("TUNER", `can't read SHADOW's rule: ${v.error}`); return null; }
+  const st = lab.labStatus(v.rule);
+  const champ = lab.champion();
+  const base = champ ? champ.rule : v.rule;
+  const sens = lab.sensitivity(base, windows);
+  const goal = champ
+    ? `MODE: REFINE. "${champ.id}" is the champion: it has ${champ.forward.n} forward bets at ${champ.forward.perBet >= 0 ? "+" : ""}${champ.forward.perBet}/bet${lab.appliedRule()?.id === champ.id ? " and is live on SHADOW" : ""}. Your job now is to make IT better, not to search elsewhere. Each proposal is a variation of the champion that changes ONE or TWO settings, aimed at its weak spot (fewer losing bets, better prices, or more bets at the same edge). It will be judged head-to-head against the champion on the same future windows. The sensitivity table below is built around the champion.`
+    : `MODE: SEARCH. No strategy has proven itself on forward bets yet. Explore DIFFERENT ideas that could win: price bands, entry timing, how much smart money must agree, following the primary wallet vs the crowd, Up/Down only, hours. Make each proposal distinct from the others and from existing proposals. The sensitivity table below is built around SHADOW's current rule.`;
+  const system = `You are TUNER, the researcher who finds and improves SHADOW's edge. SHADOW copies smart Polymarket wallets on 15-minute BTC Up/Down markets; the goal is the rule that WINS MONEY on future windows.
+You get: the rule SHADOW runs now and its replay over the signal log (every window, every 15s in the last 10 minutes: smart-money side and share, wallets for and against, the primary wallet's side, live prices), a sensitivity table (what moving each setting alone does), and the proposals being tested with their replay and FORWARD numbers (forward = windows after the proposal was made, the only numbers that can't be fitted).
+Bets are $10, pay the ask plus a taker fee of 6% x p x (1-p) per share, and are held to the close. perBet is $ profit per $10 bet; lcb is the low end of its 95% range; total = perBet x bets.
+${goal}
+Rules: favour total profit backed by many bets over a high win rate on few (under 40 bets proves nothing). Prefer simple rules with a clear reason. Never repeat an existing proposal. Never claim certainty.
+Reply with ONLY JSON: {"proposals": [ ${RULE_SCHEMA} ]} with up to ${perRun} proposals.`;
+  const brief = p => ({ id: p.id, rule: p.text, author: p.author, parent: p.parent, status: p.status, replay: { n: p.backtest.n, winRate: p.backtest.winRate, perBet: p.backtest.perBet, lcb: p.backtest.lcb }, forward: { n: p.forward.n, winRate: p.forward.winRate, perBet: p.forward.perBet, total: p.forward.total }, vsParent: p.vsParent });
+  const user = `Windows logged with a result: ${windows.length}.
+SHADOW now: ${st.current.text}. Rule JSON: ${JSON.stringify(v.rule)}
+Its replay: ${JSON.stringify({ n: st.current.n, winRate: st.current.winRate, perBet: st.current.perBet, lcb: st.current.lcb, firstHalf: st.current.firstHalf, secondHalf: st.current.secondHalf })}
+${champ ? `Champion "${champ.id}" rule JSON: ${JSON.stringify(champ.rule)}\n` : ""}Sensitivity (each setting moved alone): ${JSON.stringify(sens)}
+Proposals so far: ${JSON.stringify(st.proposals.slice(0, 16).map(brief))}
+Give up to ${perRun} proposals now.`;
+  const out = await claude(system, user, 600 + 500 * perRun);
+  const list = Array.isArray(out?.proposals) ? out.proposals : out?.rule ? [out] : [];
+  if (!list.length) { log("TUNER", "returned no usable proposal this round"); return null; }
+  const made = [];
+  for (const one of list.slice(0, perRun)) {
+    const res = await lab.addProposal({ name: one.name, rule: one.rule, rationale: one.rationale, author: "TUNER", parent: champ ? champ.id : null });
+    if (!res.ok) { log("TUNER", `proposal ${one?.name || "?"} rejected: ${res.error}`); continue; }
+    const sc = lab.scoreProposal(res.proposal);
+    log("TUNER", `${champ ? `refining ${champ.id}: ` : ""}new SHADOW proposal ${sc.id}: ${sc.text}. Replay ${sc.backtest.n} bets, ${sc.backtest.winRate == null ? "—" : Math.round(sc.backtest.winRate * 100) + "%"} won, ${sc.backtest.perBet == null ? "—" : (sc.backtest.perBet >= 0 ? "+" : "") + sc.backtest.perBet.toFixed(2)}/bet. Forward test starts now.${one.rationale ? " " + String(one.rationale).slice(0, 200) : ""}`);
+    made.push(res.proposal);
+  }
+  return made.length ? made : null;
+}
+
+let tuning = false;
+export async function runTuner() {
+  if (tuning) return null;
+  tuning = true;
+  const log = (who, msg) => console.log(`  🤖 [agents] ${who}: ${msg}`);
+  try { return await tune(log); } catch (err) { log("TUNER", `error: ${err.message}`); return null; } finally { tuning = false; status.tunerRuns = (status.tunerRuns || 0) + 1; status.tunerLastAt = Date.now(); }
+}
+
 export async function runCycle() {
   if (status.running) return status.lastResult;
   status.running = true; status.lastError = null;
@@ -169,7 +252,7 @@ export async function runCycle() {
 }
 
 export function startAgents(opts) {
-  getLeaderboard = opts.getLeaderboard; onChange = opts.onChange || (() => {});
+  getLeaderboard = opts.getLeaderboard; onChange = opts.onChange || (() => {}); getShadowRule = opts.getShadowRule || null;
   if (process.env.AGENTS_ENABLED !== "true") { console.log("🤖 AI agents off (set AGENTS_ENABLED=true to let them write strategies and vote)"); return; }
   if (!process.env.ANTHROPIC_API_KEY) { console.log("🤖 AI agents can't start: ANTHROPIC_API_KEY is not set"); return; }
   status.enabled = true;
@@ -177,7 +260,11 @@ export function startAgents(opts) {
   setTimeout(() => runCycle().catch(() => {}), 3 * 60_000);
   setTimeout(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; }, 3 * 60_000 + 1000);
   setInterval(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; runCycle().catch(() => {}); }, EVERY_MIN * 60_000);
-  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, PRISM and the Council run every ${EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
+  // TUNER (SHADOW's edge) runs on its own, faster schedule.
+  setTimeout(() => runTuner().catch(() => {}), 4 * 60_000);
+  setInterval(() => runTuner().catch(() => {}), TUNER_EVERY_MIN * 60_000);
+  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, PRISM and the Council run every ${EVERY_MIN} min, TUNER (SHADOW's edge) every ${TUNER_EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
 }
 
+export function _setShadowRule(fn) { getShadowRule = fn; }   // tests
 export function agentsStatus() { return { ...status, lastResult: status.lastResult && { ...status.lastResult, lines: status.lastResult.lines.slice(-12) } }; }
