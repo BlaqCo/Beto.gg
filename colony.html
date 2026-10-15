@@ -395,8 +395,14 @@ function renderAll(){
   $("kBest").textContent = best ? `${money(best.fwdMean)} ${best.name}` : "not enough trades"; $("kBest").className = best ? (best.fwdMean >= 0 ? "pos" : "neg") : "";
   const bal = [g.btc15, g.btc60].filter(st => st?.enabled && st.paperBalance != null).map(st => st.paperBalance);
   $("kPaper").textContent = bal.length ? cash(bal.reduce((a,b)=>a+b,0)) : "bots off";
-  const liveFams = ["btc15","btc60"].filter(f => g[f]?.enabled && g[f]?.liveTrading && g[f]?.dryRun === false);
-  const chip = $("liveChip"); chip.className = liveFams.length ? "live-on" : "live-off"; chip.textContent = liveFams.length ? `LIVE: ${liveFams.join(" + ").toUpperCase()}` : "LIVE BETS OFF";
+  // Real money: SHADOW (BTC15), SPORTS SHADOW, and the old trend bots (ACE) if anyone turns them on.
+  const liveFams = [
+    D.shadowLive?.on && `SHADOW BTC15 $${D.shadowLive.stake}`,
+    D.sportsLive?.on && `SPORTS $${D.sportsLive.stake}`,
+    ...["btc15","btc60"].filter(f => g[f]?.enabled && g[f]?.liveTrading && g[f]?.dryRun === false).map(f => `ACE ${f.toUpperCase()}`),
+  ].filter(Boolean);
+  const chip = $("liveChip"); chip.className = liveFams.length ? "live-on" : "live-off";
+  chip.textContent = liveFams.length ? `LIVE: ${liveFams.join(" + ")}` : D.shadowLive?.halted ? "LIVE BETS STOPPED" : "LIVE BETS OFF";
   // leaderboard
   $("lb").innerHTML = arena.rows.length ? arena.rows.map(r => `<tr title="${esc(r.why)}"><td><div class="sname">${esc(r.name)}</div><div class="sfam">${esc(r.family)} · by ${esc(r.author)}</div></td>
     <td class="r">${r.n}</td><td class="r ${r.fwdMean == null ? "" : r.fwdMean >= 0 ? "pos" : "neg"}">${r.fwdN ? money(r.fwdMean) : "—"}<div class="sfam">${r.fwdN} fwd</div></td>

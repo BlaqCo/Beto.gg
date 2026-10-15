@@ -833,6 +833,9 @@ app.get("/api/colony", async (req, res) => {
     const btc15 = btc15Bot?.btc15Status ? btc15Bot.btc15Status() : null;
     const btc60 = btc60Bot?.btc60Status ? btc60Bot.btc60Status() : null;
     out.gambler = { btc15, btc60 };
+    // Real money from SHADOW (BTC15) and SPORTS SHADOW, for the LIVE badge.
+    try { const L = (await import("./arena/copy-trader.js")).liveStatus(); out.shadowLive = { on: !!L.enabled && !L.halted, halted: L.halted || null, stake: L.sizes?.[1] ?? null }; } catch { out.shadowLive = null; }
+    try { const S = (await import("./arena/sports-shadow.js")).sportsShadowStatus().live; out.sportsLive = S ? { on: !!S.on && !S.halted, stake: S.stake } : null; } catch { out.sportsLive = null; }
     let stats = null;
     try { stats = await fullStats(null); } catch {}
     out.sports = { loaded: !!sportsBot?.runScanCycle, paused: cfg.PAUSED ?? null, dryRun: DRY_RUN, stats: stats?.sports || null,
