@@ -14,8 +14,8 @@
  *      Bids are placed from the previous tick's book, so there's a 1-tick reaction delay.
  *   3. Complete: rest a bid on the other side at target − first price (e.g. 94¢ − 44¢ = 50¢).
  *      When it fills, the pair is locked: + (1 − both prices) per share, plus rebates.
- *   4. Cutoff (`cutoffMin`): an unpaired leg is held to the close if its bid is at least
- *      holdAbove (it's winning), else sold at the bid (taker fee).
+ *   4. Cutoff (`cutoffMin`): no more completion bids. An unpaired leg is held to the close
+ *      (default), or sold at the bid if it's under holdAbove (PAIR_HOLD_ABOVE).
  *
  * Several settings run side by side so the best one shows up in the results. Nothing here
  * places real orders. Off with PAIR=false.
@@ -31,7 +31,10 @@ const BASE = {
   cutoffMin: env("PAIR_CUTOFF_MIN", 11),      // unpaired leg decision at this minute
   maxPairs: env("PAIR_MAX_PAIRS", 3),         // pairs per window
   minLeg: env("PAIR_MIN_LEG", 0.25), maxLeg: env("PAIR_MAX_LEG", 0.75),   // first-leg price range
-  holdAbove: env("PAIR_HOLD_ABOVE", 0.5),     // at the cutoff, hold a leg whose bid is at least this
+  // At the cutoff an unpaired leg whose bid is at least this is held to the close, else sold.
+  // 0 = always hold: selling at the bid gives up the spread and the taker fee for no gain in
+  // expected value (first live run sold an Up leg at 1¢ that still had its 1-2% chance).
+  holdAbove: env("PAIR_HOLD_ABOVE", 0),
 };
 export const VARIANTS = [
   { id: "tight", name: "PAIR 4¢", offset: 0.04, target: 0.96 },

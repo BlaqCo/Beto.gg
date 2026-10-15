@@ -121,3 +121,13 @@ test("fast book tick: reads the current window's book, backs off on 429", async 
   assert.equal(calls, 2, "paused: no request straight after a 429");
   off(); fb._reset();
 });
+
+test("pair default: an unpaired leg is held to the close, never dumped at the bid", () => {
+  const def = pt.VARIANTS.find(v => v.id === "main");
+  assert.equal(def.holdAbove, 0);
+  const w = pt.newWindow(book(0.49, 0.51));
+  pt.step(w, book(0.49, 0.51), min(1), def);
+  pt.step(w, book(0.42, 0.44), min(2), def);                   // Up @ 44¢
+  pt.step(w, book(0.01, 0.03), min(11), def);                  // Up collapsed to 1¢ bid
+  assert.equal(w.sold.length, 0); assert.equal(w.held.length, 1);
+});
