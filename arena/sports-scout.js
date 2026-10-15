@@ -19,7 +19,7 @@ const GAMMA = process.env.COPY_GAMMA_URL || "https://gamma-api.polymarket.com";
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
 const envNum = (k, d) => { const v = Number(process.env[k]); return process.env[k] != null && process.env[k] !== "" && Number.isFinite(v) ? v : d; };
 export const SCOUT = { minGames: envNum("SCOUT_MIN_GAMES", 8), minRoi: envNum("SCOUT_MIN_ROI", 0.05), minWin: envNum("SCOUT_MIN_WIN", 0.55),
-  top: envNum("SCOUT_TOP", 10), minVolume: envNum("SCOUT_MIN_VOLUME", 20000), leagueMin: envNum("SCOUT_LEAGUE_MIN", 4), gamesPerRun: envNum("SCOUT_GAMES_PER_RUN", 80), keepDays: envNum("SCOUT_KEEP_DAYS", 21) };
+  top: envNum("SCOUT_TOP", 10), minVolume: envNum("SCOUT_MIN_VOLUME", 20000), leagueMin: envNum("SCOUT_LEAGUE_MIN", 4), overallMin: envNum("SCOUT_OVERALL_MIN", 20), gamesPerRun: envNum("SCOUT_GAMES_PER_RUN", 80), keepDays: envNum("SCOUT_KEEP_DAYS", 21) };
 const KEY = "arena:sportsscout:v1", REFRESH_MS = 3 * 3600_000, MAX_TRADE_PAGES = 6, PAGE = 500;
 const NOT_MAIN = /spread|handicap|o\/u|over\/under|total|points|rebounds|assists|yards|1st|first half|2nd half|quarter|inning|props?\b|exact|both teams|clean sheet|corners|cards/i;
 
@@ -95,7 +95,12 @@ export function scoutProven(wallet, league, cfg = SCOUT) {
   if (!r) return { ok: false, why: "not in the sports scout's records" };
   if (!r.sharp) return { ok: false, why: "not rated sharp by the sports scout" };
   const l = r.leagues?.[league];
-  if (!l || l.games < cfg.leagueMin) return { ok: false, why: `only ${l?.games || 0} settled ${league} games on record (need ${cfg.leagueMin})` };
+  if (!l || l.games < cfg.leagueMin) {
+    // New to this league (its season just started): a big, profitable record across leagues is enough,
+    // unless the few games it has here are losing.
+    if (r.games >= cfg.overallMin && r.pnl > 0 && !(l?.pnl < 0)) return { ok: true, why: `sharp overall (${r.games} games, +$${r.pnl.toFixed(0)}); ${l?.games || 0} ${league} games so far` };
+    return { ok: false, why: `only ${l?.games || 0} settled ${league} games on record (need ${cfg.leagueMin}, or ${cfg.overallMin}+ profitable games overall)` };
+  }
   if (!(l.pnl > 0)) return { ok: false, why: `losing in ${league} (${l.games} games, $${l.pnl})` };
   return { ok: true, why: `${l.games} ${league} games, ${l.wins} won, +$${l.pnl.toFixed(0)}` };
 }
@@ -168,4 +173,5 @@ export async function startSportsScout({ onSharpWallets } = {}) {
 
 export function _set({ fetchFn, onSharpFn } = {}) { if (fetchFn) fetchImpl = fetchFn; if (onSharpFn) onSharp = onSharpFn; }
 export function _reset() { Object.assign(state, { results: [], done: [], records: [], sharp: [], lastRunAt: 0, lastRun: null }); }
+export function _setRecords(recs) { state.records = recs; }
 export const _state = state;

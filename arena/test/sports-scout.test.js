@@ -97,3 +97,15 @@ test("the scout only rates leagues Polymarket US lists", () => {
     assert.equal(sc.settledMarkets(ev("uel-a-b-2026-10-13", [mkt("y", "A vs B", ["A", "B"], ["1", "0"])])).length, 0);
   } finally { sc.setUsLeagues(sc.US_LEAGUES_DEFAULT); }
 });
+
+test("a wallet sharp across 20+ games may bet a league it's new to, unless losing there", () => {
+  const res = [];
+  for (let i = 0; i < 24; i++) res.push({ wallet: "0xbig", league: "mlb", cost: 100, pnl: i % 3 ? 40 : -30 });
+  res.push({ wallet: "0xbig", league: "nfl", cost: 100, pnl: -50 });
+  for (let i = 0; i < 10; i++) res.push({ wallet: "0xsmall", league: "mlb", cost: 100, pnl: 60 });
+  sc._reset(); sc._setRecords(sc.records(res));
+  assert.equal(sc.scoutProven("0xbig", "nhl").ok, true, "no NHL games yet: the overall record counts");
+  assert.equal(sc.scoutProven("0xbig", "nfl").ok, false, "its one NFL game lost");
+  assert.match(sc.scoutProven("0xsmall", "nhl").why, /20\+ profitable games overall/);
+  assert.equal(sc.scoutProven("0xsmall", "mlb").ok, true);
+});
