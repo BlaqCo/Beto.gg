@@ -35,7 +35,7 @@ const BUILDERS = [
   { name: "VECTOR", families: ["btc15", "btc60"],
     focus: "BTC spot vs the window's strike price: the fair_value side, the margin needed after fees, and when in the window the market misprices it" },
   { name: "DUGOUT", families: ["sports"],
-    focus: "pre-game sports moneylines: how many hours before the start to enter, favorite vs underdog, and which price bands" },
+    focus: "pre-game sports moneylines: how many hours before the start to enter, favorite vs underdog, and which price bands; learn from SPORTS SHADOW (the primary wallet's copied sports bets) which leagues and bands hold value" },
 ];
 
 const SCHEMA = `{
@@ -87,6 +87,11 @@ async function build(builder, lb, specs, log) {
   const recorded = builder.families.reduce((s, f) => s + (tape[f] || 0), 0);
   if (recorded < 3) { log(builder.name, `waiting for data: only ${recorded} recorded ${builder.families.join("/")} windows`); return null; }
   const mine = specs.filter(r => r.author === builder.name);
+  // DUGOUT also studies SPORTS SHADOW: what the primary wallet's sports bets did, copied onto US.
+  let sportsShadow = null;
+  if (builder.families.includes("sports")) {
+    try { const ss = (await import("./sports-shadow.js")).sportsShadowStatus(); if (ss.enabled) sportsShadow = { ...ss.summary, recentMisses: ss.misses.slice(0, 5).map(m => m.why) }; } catch { /* not loaded */ }
+  }
   // How far the arena's simulated fills were from the real bot's on the same trades.
   const rs = lb.reality?.summary, gap = rs?.label === "arena too optimistic" && Number.isFinite(rs.meanGap) ? Math.abs(rs.meanGap) : null;
   const system = `You are ${builder.name}, a strategy researcher in an automated prediction-market lab. You design ONE new trading recipe at a time for Polymarket US "${builder.families.join('" or "')}" markets. Your focus: ${builder.focus}.
@@ -97,7 +102,8 @@ Reply with ONLY a JSON object: {"spec": <recipe>, "note": "one sentence for the 
   const user = `Recorded windows: ${JSON.stringify(tape)}.
 Current leaderboard (your families only, ranked by the low end of the 95% range of profit per $10 trade):
 ${JSON.stringify(boardFor(lb.rows || [], builder.families))}
-Names already taken: ${JSON.stringify(specs.map(r => r.spec.name))}
+Names already taken: ${JSON.stringify(specs.map(r => r.spec.name))}${sportsShadow ? `
+SPORTS SHADOW (practice copies of the primary wallet's pre-game sports bets on US, $10 each, by league and price band): ${JSON.stringify(sportsShadow)}. Where it wins tells you which leagues and price bands a sharp bettor finds value in; use it as evidence alongside the leaderboard.` : ""}
 Your existing recipes: ${JSON.stringify(mine.map(r => ({ name: r.spec.name, status: r.status, what: describeSpec(r.spec), note: r.note })))}
 Propose one new recipe now.`;
   const out = await claude(system, user);

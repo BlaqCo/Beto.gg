@@ -944,6 +944,10 @@ app.post("/api/shadowlab/revert", async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+app.get("/api/sportsshadow", async (req, res) => {
+  try { res.set("Cache-Control", "no-store"); res.json((await import("./arena/sports-shadow.js")).sportsShadowStatus()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 // Clear PAIR's practice record. POST, so ADMIN_TOKEN applies.
 app.post("/api/pair/reset", async (req, res) => {
   try { res.json(await (await import("./arena/pair-trader.js")).resetPair()); }
@@ -1243,6 +1247,9 @@ async function loadBots() {
   // after the recorder so it hears every settlement. Off with COPY_TRADER=false.
   try { _ct = await import("./arena/copy-trader.js"); await _ct.startCopyTrader(); }
   catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
+  // SPORTS SHADOW: practice copies of the primary wallet's sports bets. Off with SPORTS_SHADOW=false.
+  try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [] }); }
+  catch (err) { console.log("🏟 SPORTS SHADOW not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
   // AI agents: add strategy recipes and vote. Off unless AGENTS_ENABLED=true.

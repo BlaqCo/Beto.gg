@@ -504,6 +504,9 @@ export async function fetchCryptoMarkets() {
   return out;
 }
 
+/** The last sports moneyline list fetched, without fetching (null if none yet). */
+export function cachedSportsMoneylines() { return _cache ? { at: _cacheTime, markets: _cache } : null; }
+
 export async function fetchSportsMoneylines() {
   if (_cache && Date.now() - _cacheTime < TTL) return _cache;
 
@@ -554,7 +557,11 @@ export async function fetchSportsMoneylines() {
   // Small batches with a short pause between them respect whatever the
   // real burst ceiling is, at the cost of a little extra scan time.
   const _fetchStart = Date.now();
-  const DISCOVERY_BATCH = 8, DISCOVERY_PAUSE_MS = 400;
+  // Spread out further (Oct 2026): 8 at a time every 400ms used up the gateway's shared
+  // rate limit every 5 minutes and starved the BTC15 order-book reads. Now 2 at a time,
+  // 1.5s apart (about 30s for the whole sweep). SPORTS_FETCH_BATCH / SPORTS_FETCH_PAUSE_MS.
+  const DISCOVERY_BATCH = Math.max(1, Number(process.env.SPORTS_FETCH_BATCH || 2));
+  const DISCOVERY_PAUSE_MS = Math.max(0, Number(process.env.SPORTS_FETCH_PAUSE_MS || 1500));
   const results = [];
   for (let i = 0; i < urls.length; i += DISCOVERY_BATCH) {
     const batch = urls.slice(i, i + DISCOVERY_BATCH);

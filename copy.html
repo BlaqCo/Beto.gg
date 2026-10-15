@@ -149,6 +149,11 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
     <div class="real" id="lab"><p class="mut">Loading…</p></div>
   </section>
 
+  <section id="sportsSec">
+    <div class="ph">SPORTS SHADOW <em>practice · copies the primary wallet's sports bets onto US</em></div>
+    <div class="real" id="sports"><p class="mut">Loading…</p></div>
+  </section>
+
   <section id="pairSec">
     <div class="ph">PAIR SCALPER <em>practice · buys Up and Down at different moments for under $1 a pair</em></div>
     <div class="real" id="pair"><p class="mut">Loading…</p></div>
@@ -574,6 +579,25 @@ async function loadLab() {
   if (rv) rv.onclick = async () => { if (!confirm("Put SHADOW back on its original rule?")) return; await adminPost("/api/shadowlab/revert"); loadLab(); loadStatus(); };
 }
 loadLab(); setInterval(loadLab, 30000);
+
+// SPORTS SHADOW.
+async function loadSports() {
+  let S;
+  try { const r = await fetch("/api/sportsshadow", { cache: "no-store" }); if (!r.ok) throw new Error(r.status); S = await r.json(); }
+  catch { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW isn\'t on this server version yet.</p>'; return; }
+  if (!S.enabled) { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW is off.</p>'; return; }
+  const m = S.summary, sg = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  const list = S.usListAt ? `US sports list ${ago(S.usListAt)}` : '<span class="amb">no US sports list yet: turn the sports recorder on (ARENA_SPORTS=true)</span>';
+  const row = b => `<div class="labcard"><b>${esc(b.buy)}</b> ${esc(b.usQuestion)} @ ${cents(b.px)}${b.won == null && b.closedAt == null ? ` <span class="mut">· starts ${hhmm(b.start)}</span>` : ` · <span class="${b.pnl >= 0 ? "pos" : "neg"}">${b.won == null ? "void" : (b.won ? "WON " : "LOST ") + sg(b.pnl)}</span>`}
+    <div class="mut">they bought ${esc(b.outcome)} @ ${cents(b.theirPx)} ($${(+b.theirUsd).toFixed(0)}) · ${esc(b.league)}</div></div>`;
+  $("sports").innerHTML = `<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
+    <p style="margin:0 0 6px"><b>${m.n} settled</b>${m.n ? ` · ${Math.round(m.winRate * 100)}% won · <span class="${m.pnl >= 0 ? "pos" : "neg"}">${sg(m.pnl)}</span> (${sg(m.perBet)}/bet)` : ""}${m.byLeague.length ? `<br><span class="mut">${m.byLeague.map(g => `${esc(g.key)} ${g.wins}/${g.n} ${sg(g.pnl)}`).join(" · ")}</span>` : ""}</p>
+    ${S.open.length ? `<p class="mut" style="margin:6px 0 0">OPEN</p>${S.open.map(row).join("")}` : ""}
+    ${S.recent.length ? `<p class="mut" style="margin:6px 0 0">SETTLED</p>${S.recent.slice(0, 8).map(row).join("")}` : ""}
+    ${S.misses.length ? `<p class="mut" style="margin:6px 0 0">NOT COPIED (newest first)</p><ul class="mut" style="margin:2px 0 0;padding-left:16px;font-size:12px">${S.misses.slice(0, 6).map(x => `<li>${esc(x.outcome)} in "${esc(x.title)}": ${esc(x.why)}</li>`).join("")}</ul>` : ""}
+    <p class="mut" style="margin:6px 0 0;font-size:11px">Paper only, $10 a bet at the US order-book price, pre-game only, one bet per game. DUGOUT reads these results when it designs sports strategies.</p>`;
+}
+loadSports(); setInterval(loadSports, 30000);
 
 // PAIR practice scalper.
 async function loadPair() {
