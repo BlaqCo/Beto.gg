@@ -188,3 +188,14 @@ test("TUNER: waits for data, then turns a model reply into a backtested proposal
     assert.equal(vs.parent, champ); assert.equal(vs.n, vs.parentN, "same windows for both");
   } finally { globalThis.fetch = realFetch; if (realKey == null) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = realKey; }
 });
+
+test("signal log keeps a window whose result arrives after the next window has started", async () => {
+  lab._reset();
+  const E1 = 900_000, E2 = 1_800_000, c = { side: "Up", share: 1, agree: 3, against: 0 };
+  lab.observe({ slug: "w1", start: 0, end: E1, now: E1 - 200_000, up: 0.6, down: 0.42, consensus: c });
+  lab.observe({ slug: "w2", start: E1, end: E2, now: E2 - 590_000, up: 0.5, down: 0.52, consensus: c });   // next window starts recording
+  await lab.settle({ slug: "w1", outcome: 1 });                                                             // w1's result, 5 min late
+  assert.equal(lab.labWindows().length, 1); assert.equal(lab.labWindows()[0].slug, "w1"); assert.equal(lab.labWindows()[0].outcome, 1);
+  await lab.settle({ slug: "w2", outcome: 0 });
+  assert.equal(lab.labWindows().length, 2, "the current window settles too");
+});
