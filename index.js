@@ -967,6 +967,10 @@ app.get("/api/walletreport", async (req, res) => {
     res.json(w ? { [w]: wr.walletReportStatus()[w] || null } : wr.walletReportStatus());
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.get("/api/sportsscout", async (req, res) => {
+  try { res.set("Cache-Control", "no-store"); res.json((await import("./arena/sports-scout.js")).sportsScoutStatus()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get("/api/sportsshadow", async (req, res) => {
   try { res.set("Cache-Control", "no-store"); res.json((await import("./arena/sports-shadow.js")).sportsShadowStatus()); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -1278,6 +1282,9 @@ async function loadBots() {
   catch (err) { console.log("📒 Wallet reports not loaded:", err.message); }
   try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [], halted: () => _ct?.realHalted?.() || null }); }
   catch (err) { console.log("🏟 SPORTS SHADOW not loaded:", err.message); }
+  // SPORTS SCOUT: finds wallets that win at sports; SPORTS SHADOW follows them. Off with SPORTS_SCOUT=false.
+  try { const ss = await import("./arena/sports-shadow.js"); await (await import("./arena/sports-scout.js")).startSportsScout({ onSharpWallets: list => ss.setScoutedWallets(list) }); }
+  catch (err) { console.log("🔭 Sports scout not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
   // AI agents: add strategy recipes and vote. Off unless AGENTS_ENABLED=true.
