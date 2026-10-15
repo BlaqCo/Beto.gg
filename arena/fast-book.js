@@ -63,7 +63,8 @@ async function tick() {
     stats.lastError = err.message; return;
   }
   const ms = Date.now() - t0;
-  if (!(b && b.bid > 0 && b.ask > 0 && b.ask < 1 && b.ask >= b.bid)) { stats.errors++; return; }
+  // No book (a new window's market isn't open yet, 404 → null): wait 15s, not every gap.
+  if (!(b && b.bid > 0 && b.ask > 0 && b.ask < 1 && b.ask >= b.bid)) { stats.errors++; stats.noBook = (stats.noBook || 0) + 1; nextAt = Date.now() + Math.max(gap, 15_000); return; }
   stats.ok++;
   if (++streak >= SPEEDUP_AFTER && gap > TICK_MS) { streak = 0; gap = Math.max(TICK_MS, Math.round(gap * 0.7)); }
   stats.avgMs = stats.avgMs == null ? ms : Math.round(stats.avgMs * 0.9 + ms * 0.1);

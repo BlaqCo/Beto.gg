@@ -1008,6 +1008,9 @@ app.get("/health", (req, res) => res.json({ status: "ok", view: currentMode }));
 
 app.use(express.static("public")); // after routes so JSON endpoints win
 
+// A deploy stops the old copy with SIGTERM: exit cleanly instead of being killed.
+for (const sig of ["SIGTERM", "SIGINT"]) process.once(sig, () => { console.log(`👋 ${sig}: shutting down for a deploy or restart`); process.exit(0); });
+
 app.listen(PORT, () => {
   console.log(`[OK] PolyBettor on port ${PORT} | view: ${currentMode} | dashboard at /dashboard`);
 });

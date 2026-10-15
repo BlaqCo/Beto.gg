@@ -830,6 +830,7 @@ export async function verifyCandidates(cands, { maxSpread = 0.06 } = {}) {
 
 // ── getBBO ───────────────────────────────────────────────────────
 // BBO response: { marketData: { bestBid: { value: "0.54", currency: "USD" }, bestAsk: { value: "0.56" }, lastTradePx: {...}, currentPx: {...} } }
+const _bbo404 = new Set();
 export async function getBBO(slug) {
   try {
     const { data } = await axios.get(
@@ -855,6 +856,12 @@ export async function getBBO(slug) {
     // logs showed hundreds of these errors the whole time.
     const isRateLimit = /429/.test(err.message || "") || err.response?.status === 429;
     if (isRateLimit) throw err;
+    // A new BTC window's book 404s for its first few minutes: say so once per market, not
+    // on every retry.
+    if (err.response?.status === 404) {
+      if (!_bbo404.has(slug)) { _bbo404.add(slug); if (_bbo404.size > 200) _bbo404.delete(_bbo404.values().next().value); console.log(`  ⏳ [getBBO] no order book yet for ${slug} (404); will keep checking quietly`); }
+      return null;
+    }
     console.log(`❌ [getBBO] ERROR: ${err.message} | slug=${slug}`);
     return null;
   }
