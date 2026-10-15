@@ -39,9 +39,9 @@ test("buyOutcomeFOK: Up is BUY_LONG at our price + 1¢", async () => {
   assert.equal(post.price.value, "0.86");
 });
 
-test("buyOutcomeFOK: tripwire refuses anything outside $0.50-$5 without calling the exchange", async () => {
+test("buyOutcomeFOK: tripwire refuses anything outside $0.50-$10 without calling the exchange", async () => {
   const sent = fakeExchange(() => ({}));
-  for (const sizeUsd of [0.1, 5.01, 50]) assert.equal((await pm.buyOutcomeFOK({ slug: "x", side: "Up", sizeUsd, price: 0.8 })).filled, false);
+  for (const sizeUsd of [0.1, 10.01, 50]) assert.equal((await pm.buyOutcomeFOK({ slug: "x", side: "Up", sizeUsd, price: 0.8 })).filled, false);
   assert.equal((await pm.buyOutcomeFOK({ slug: "x", side: "Sideways", sizeUsd: 1, price: 0.8 })).filled, false);
   assert.equal(sent.length, 0);
 });
