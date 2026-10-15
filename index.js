@@ -1251,7 +1251,7 @@ async function loadBots() {
   try { _ct = await import("./arena/copy-trader.js"); await _ct.startCopyTrader(); }
   catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
   // SPORTS SHADOW: practice copies of the primary wallet's sports bets. Off with SPORTS_SHADOW=false.
-  try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [] }); }
+  try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [], halted: () => _ct?.realHalted?.() || null }); }
   catch (err) { console.log("🏟 SPORTS SHADOW not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }

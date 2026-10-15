@@ -1071,6 +1071,9 @@ function checkLiveMax() {
 }
 
 /** Stop or resume real betting from /copy (admin). Stopping never sells an open bet. */
+/** Why real money is stopped from /copy (null = running). SPORTS SHADOW's real bets obey it too. */
+export const realHalted = () => liveBook.halted;
+
 export function setLiveHalted(halt, why = "stopped from /copy") {
   liveBook.halted = halt ? why : null; liveDirty = true;
   emit("live", halt ? `REAL MONEY STOPPED: ${why}. Any open real bet is held to settlement.` : "REAL MONEY resumed from /copy", { live: true });

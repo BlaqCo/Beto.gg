@@ -77,3 +77,59 @@ test("poll: a started game or a missing US list is a logged miss, not a bet", as
   await ss._poll(Date.now());
   assert.match(ss._state.misses[0].why, /no US sports list/);
 });
+
+test("REAL sports: $1 FOK on name-matched pre-game bets only, with every brake", async () => {
+  const orders = [];
+  let bp = 20, halted = null, claimOk = true, settlement = null;
+  const pmMod = { cachedSportsMoneylines: () => ({ at: 1, markets: US }), getBBO: async () => ({ bid: 0.41, ask: 0.44 }), getSettlement: async () => settlement,
+    getBuyingPower: async () => ({ buyingPower: bp }),
+    buyOutcomeFOK: async o => { orders.push(o); return { filled: true, qty: 2, cost: 0.92, fillPrice: 0.46, orderId: "o1" }; } };
+  const setup = () => { ss._reset(); ss._state.wallets = [W]; ss._state.primed = true; ss._set({ pmMod, halted: () => halted, claimFn: async () => claimOk }); };
+  ss.LIVE.on = true;
+  try {
+    // Name match: the Guardians. One real $1 buy of YES (Up = long) at 44¢ + 2¢ slip.
+    setup();
+    ss._set({ fetchFn: async () => ({ ok: true, json: async () => [trade({ transactionHash: "0xa" })] }) });
+    await ss._poll(Date.now());
+    assert.equal(orders.length, 1);
+    assert.deepEqual({ slug: orders[0].slug, side: orders[0].side, sizeUsd: orders[0].sizeUsd, price: orders[0].price, slip: orders[0].slip },
+      { slug: "aec-mlb-cle-tb-2026-10-13", side: "Up", sizeUsd: 1, price: 0.44, slip: 0.02 });
+    const live = ss._state.live.open[0];
+    assert.equal(live.qty, 2); assert.equal(live.cost, 0.92);
+    // Settles on what was really paid: 2 shares won $2 − $0.92 − fee.
+    settlement = 1;
+    await ss._settle(live.start + 4 * 3600_000);
+    assert.ok(Math.abs(ss._state.live.closed[0].pnl - (2 - 0.92 - live.fee)) < 0.011);
+    assert.equal(ss.sportsShadowStatus().live.bets, 1);
+
+    // Backing the Rays: inferred "other team" → paper only.
+    orders.length = 0; setup();
+    ss._set({ fetchFn: async () => ({ ok: true, json: async () => [trade({ transactionHash: "0xb", outcome: "Rays" })] }) });
+    await ss._poll(Date.now());
+    assert.equal(ss._state.open.length, 1, "paper copy still made"); assert.equal(orders.length, 0, "no real order");
+
+    // Halted from /copy, another copy holds the claim, or no buying power: no order.
+    for (const [why, fn] of [["halted", () => { halted = "stopped from /copy"; }], ["claim", () => { claimOk = false; }], ["buying power", () => { bp = 0.5; }]]) {
+      halted = null; claimOk = true; bp = 20; orders.length = 0; setup(); fn();
+      ss._set({ fetchFn: async () => ({ ok: true, json: async () => [trade({ transactionHash: "0x" + why })] }) });
+      await ss._poll(Date.now());
+      assert.equal(orders.length, 0, why);
+    }
+  } finally { ss.LIVE.on = false; }
+});
+
+test("REAL sports brakes: price band, loss limits, one bet per game", () => {
+  ss._reset(); ss.LIVE.on = true;
+  try {
+    const bet = { usSlug: "s1", px: 0.5 }, m = { exact: true };
+    assert.equal(ss.liveBlock(bet, m), null);
+    assert.match(ss.liveBlock({ ...bet, px: 0.95 }, m), /outside 10-90/);
+    assert.match(ss.liveBlock(bet, { exact: false }), /inferred/);
+    ss._state.live.closed.push({ usSlug: "old", won: false, pnl: -5.2, closedAt: Date.now() });
+    assert.match(ss.liveBlock(bet, m), /daily limit/);
+    ss._state.live.closed = [{ usSlug: "old", won: false, pnl: -10.5, closedAt: 0 }];
+    assert.match(ss.liveBlock(bet, m), /-\$10 limit/);
+    ss._state.live.closed = []; ss._state.live.open = [{ usSlug: "s1" }];
+    assert.match(ss.liveBlock(bet, m), /already has a real bet/);
+  } finally { ss.LIVE.on = false; }
+});
