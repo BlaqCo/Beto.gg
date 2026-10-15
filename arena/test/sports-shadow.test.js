@@ -179,3 +179,16 @@ test("wallet report: pages through every closed position, 50 at a time", async (
   assert.match(urls[0], /limit=50&offset=0/); assert.match(urls[2], /offset=100/);
   assert.equal(rep.byKind[0].n, 120); assert.equal(rep.byKind[0].wins, 80, "losers included, not just the first page of winners");
 });
+
+test("wallet report: losers held to the result (in /positions) are counted, open bets are not", async () => {
+  const closed = [{ conditionId: "w1", outcomeIndex: 0, eventSlug: "nfl-a-b-2026-10-01", avgPrice: 0.5, totalBought: 100, realizedPnl: 50 }];
+  const held = [
+    { conditionId: "l1", outcomeIndex: 0, eventSlug: "nfl-c-d-2026-10-02", avgPrice: 0.6, totalBought: 100, curPrice: 0, cashPnl: -60, realizedPnl: 0 },   // lost
+    { conditionId: "o1", outcomeIndex: 0, eventSlug: "nfl-e-f-2026-10-20", avgPrice: 0.5, totalBought: 100, curPrice: 0.55, cashPnl: 5, realizedPnl: 0 }, // game not over
+  ];
+  wr._set({ fetchFn: async url => ({ ok: true, json: async () => (/offset=0/.test(url) ? (/closed-positions/.test(url) ? closed : held) : []) }) });
+  const rep = await wr.buildReport("0xheld");
+  assert.equal(rep.closed, 1); assert.equal(rep.heldAtResult, 1, "only the settled loser");
+  const nfl = rep.byLeague.find(g => g.key === "sports:nfl");
+  assert.equal(nfl.n, 2); assert.equal(nfl.wins, 1); assert.equal(nfl.pnl, -10);
+});

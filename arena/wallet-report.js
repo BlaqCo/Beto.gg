@@ -27,9 +27,15 @@ export function classify(row) {
 const band = px => (px < 0.35 ? "under 35¢" : px < 0.5 ? "35-50¢" : px < 0.65 ? "50-65¢" : px < 0.8 ? "65-80¢" : "80¢+");
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 
-/** A closed-position row as { kind, league, band, cost, pnl }, or null if unusable. */
+/**
+ * A finished position as { kind, league, band, cost, pnl }, or null if unusable.
+ * Closed positions (/closed-positions) carry realizedPnl. Positions still held at the result
+ * (/positions with curPrice at 0 or 1, which is where every LOSER sits: /closed-positions only
+ * lists ones that paid out) carry cashPnl, plus realizedPnl from any partial sells.
+ */
 export function toResult(row) {
-  const pnl = num(row.realizedPnl ?? row.realized_pnl ?? row.cashPnl);
+  const held = row._held === true;
+  const pnl = held ? (num(row.cashPnl) ?? 0) + (num(row.realizedPnl) ?? 0) : num(row.realizedPnl ?? row.realized_pnl ?? row.cashPnl);
   const px = num(row.avgPrice ?? row.avg_price);
   const size = num(row.totalBought ?? row.size ?? row.initialValue);
   if (pnl == null || !(px > 0 && px < 1)) return null;
@@ -78,8 +84,20 @@ export async function buildReport(wallet) {
     rows.push(...fresh);
     if (!list.length || !fresh.length) break;   // past the end, or the API repeating a page
   }
+  const closedN = rows.length;
+  // Positions still held when the market settled: losers (worth 0) and unredeemed winners.
+  for (let p = 0; p < MAX_PAGES; p++) {
+    const res = await fetchImpl(`${DATA}/positions?user=${wallet}&limit=${PAGE}&offset=${p * PAGE}&sizeThreshold=0`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`data-api positions ${res.status}`);
+    const page = await res.json();
+    const list = Array.isArray(page) ? page : page?.data || page?.positions || [];
+    const fresh = list.filter(r => !seen.has(key(r)));
+    fresh.forEach(r => seen.add(key(r)));
+    for (const r of fresh) { const cp = num(r.curPrice); if (cp != null && (cp <= 0.001 || cp >= 0.999)) rows.push({ ...r, _held: true }); }
+    if (!list.length || !fresh.length) break;
+  }
   const results = rows.map(toResult).filter(Boolean);
-  return { wallet, rows: rows.length, usable: results.length, shape, complete: rows.length < PAGE * MAX_PAGES, ...aggregate(results) };
+  return { wallet, rows: rows.length, closed: closedN, heldAtResult: rows.length - closedN, usable: results.length, shape, complete: closedN < PAGE * MAX_PAGES, ...aggregate(results) };
 }
 
 export async function refresh(wallet) {
@@ -87,7 +105,7 @@ export async function refresh(wallet) {
     const report = await buildReport(wallet);
     reports.set(wallet, { at: Date.now(), report, error: null });
     const s = report.byKind.find(k => k.key === "sports");
-    console.log(`  📒 [wallet-report] ${wallet.slice(0, 8)}: ${report.usable} finished positions${s ? `; sports ${s.n}, ${Math.round(s.winRate * 100)}% won, ${s.pnl >= 0 ? "+" : ""}$${s.pnl}` : "; no sports"} (fields: ${(report.shape || []).join(",")})`);
+    console.log(`  📒 [wallet-report] ${wallet.slice(0, 8)}: ${report.usable} finished positions (${report.closed} closed + ${report.heldAtResult} held to the result)${s ? `; sports ${s.n}, ${Math.round(s.winRate * 100)}% won, ${s.pnl >= 0 ? "+" : ""}$${s.pnl}` : "; no sports"} (fields: ${(report.shape || []).join(",")})`);
   } catch (err) {
     reports.set(wallet, { ...(reports.get(wallet) || {}), at: Date.now(), error: err.message });
     console.log(`  📒 [wallet-report] ${wallet.slice(0, 8)} failed: ${err.message}`);
