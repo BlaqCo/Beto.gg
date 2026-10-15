@@ -597,10 +597,20 @@ async function loadSports() {
   catch { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW isn\'t on this server version yet.</p>'; return; }
   if (!S.enabled) { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW is off.</p>'; return; }
   const m = S.summary, sg = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  let W = null; try { const r = await fetch("/api/walletreport", { cache: "no-store" }); if (r.ok) W = await r.json(); } catch {}
+  const rec = Object.entries(W || {}).map(([w, x]) => {
+    if (!x) return "";
+    if (x.error && !x.report) return `<p class="mut" style="margin:0 0 6px">Wallet ${esc(w.slice(0, 8))} record: <span class="neg">${esc(x.error)}</span></p>`;
+    const R = x.report; if (!R) return `<p class="mut" style="margin:0 0 6px">Wallet ${esc(w.slice(0, 8))} record: loading…</p>`;
+    const g = k => R.byKind.find(y => y.key === k), line = y => y ? `${y.n} finished · ${Math.round(y.winRate * 100)}% won · <span class="${y.pnl >= 0 ? "pos" : "neg"}">${y.pnl >= 0 ? "+" : "−"}$${Math.abs(y.pnl).toFixed(0)}</span>${y.roi != null ? ` (${y.roi >= 0 ? "+" : ""}${Math.round(y.roi * 100)}% ROI)` : ""}` : "none";
+    const lg = R.byLeague.filter(y => y.key.startsWith("sports:")).slice(0, 8).map(y => `${esc(y.key.slice(7))} ${y.wins}/${y.n} ${y.pnl >= 0 ? "+" : "−"}$${Math.abs(y.pnl).toFixed(0)}`).join(" · ");
+    const bd = (R.sportsByBand || []).map(y => `${esc(y.key)} ${Math.round(y.winRate * 100)}% ${y.pnl >= 0 ? "+" : "−"}$${Math.abs(y.pnl).toFixed(0)}`).join(" · ");
+    return `<p style="margin:0 0 6px"><b>Wallet's real record</b> <span class="mut">(global Polymarket, closed positions, ${ago(x.at)})</span><br>Sports: ${line(g("sports"))}<br>Crypto: ${line(g("crypto"))}${lg ? `<br><span class="mut">By league: ${lg}</span>` : ""}${bd ? `<br><span class="mut">Sports by price: ${bd}</span>` : ""}<br><span class="mut">Real sports money only copies leagues with 20+ finished positions in profit.</span></p>`;
+  }).join("");
   const list = S.usListAt ? `US sports list ${ago(S.usListAt)}` : '<span class="amb">no US sports list yet: turn the sports recorder on (ARENA_SPORTS=true)</span>';
   const row = b => `<div class="labcard"><b>${esc(b.buy)}</b> ${esc(b.usQuestion)} @ ${cents(b.px)}${b.won == null && b.closedAt == null ? ` <span class="mut">· starts ${hhmm(b.start)}</span>` : ` · <span class="${b.pnl >= 0 ? "pos" : "neg"}">${b.won == null ? "void" : (b.won ? "WON " : "LOST ") + sg(b.pnl)}</span>`}
     <div class="mut">they bought ${esc(b.outcome)} @ ${cents(b.theirPx)} ($${(+b.theirUsd).toFixed(0)}) · ${esc(b.league)}</div></div>`;
-  $("sports").innerHTML = `<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
+  $("sports").innerHTML = `${rec}<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
     <p style="margin:0 0 6px"><b>${m.n} settled</b>${m.n ? ` · ${Math.round(m.winRate * 100)}% won · <span class="${m.pnl >= 0 ? "pos" : "neg"}">${sg(m.pnl)}</span> (${sg(m.perBet)}/bet)` : ""}${m.byLeague.length ? `<br><span class="mut">${m.byLeague.map(g => `${esc(g.key)} ${g.wins}/${g.n} ${sg(g.pnl)}`).join(" · ")}</span>` : ""}</p>
     ${(() => { const R = S.live; if (!R) return "";
       if (!R.on) return '<p class="mut" style="margin:0 0 6px">REAL MONEY: off (SPORTS_LIVE is not true)</p>';

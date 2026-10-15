@@ -91,6 +91,9 @@ async function build(builder, lb, specs, log) {
   let sportsShadow = null;
   if (builder.families.includes("sports")) {
     try { const ss = (await import("./sports-shadow.js")).sportsShadowStatus(); if (ss.enabled) sportsShadow = { ...ss.summary, recentMisses: ss.misses.slice(0, 5).map(m => m.why) }; } catch { /* not loaded */ }
+    // The primary wallet's own sports track record on global Polymarket, by league and price band.
+    try { const wr = await import("./wallet-report.js"); const all = Object.values(wr.walletReportStatus()).map(x => x?.report).filter(Boolean);
+      if (all.length) (sportsShadow ||= {}).walletRecord = all.map(r => ({ sports: r.byKind.find(k => k.key === "sports") || null, byLeague: r.byLeague.filter(g => g.key.startsWith("sports:")).slice(0, 10), byPrice: r.sportsByBand })); } catch { /* not loaded */ }
   }
   // How far the arena's simulated fills were from the real bot's on the same trades.
   const rs = lb.reality?.summary, gap = rs?.label === "arena too optimistic" && Number.isFinite(rs.meanGap) ? Math.abs(rs.meanGap) : null;
