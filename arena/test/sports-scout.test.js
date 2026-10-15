@@ -88,3 +88,11 @@ test("SPORTS SHADOW follows scouted wallets, skipping their earlier bets", async
   await ss._poll(Date.now());
   assert.equal(ss._state.misses.length, 1, "the new bet is processed (no US list here, so it's a logged miss)");
 });
+
+test("the scout only rates leagues Polymarket US lists", () => {
+  sc.setUsLeagues(["nba"]);
+  try {
+    assert.equal(sc.settledMarkets(ev("nba-a-b-2026-10-13", [mkt("x", "A vs B", ["A", "B"], ["1", "0"])])).length, 1);
+    assert.equal(sc.settledMarkets(ev("uel-a-b-2026-10-13", [mkt("y", "A vs B", ["A", "B"], ["1", "0"])])).length, 0);
+  } finally { sc.setUsLeagues(sc.US_LEAGUES_DEFAULT); }
+});

@@ -27,9 +27,15 @@ const parseArr = v => { if (Array.isArray(v)) return v; try { const x = JSON.par
 const leagueOf = slug => { const s = String(slug || "").toLowerCase(); return /\d{4}-\d{2}-\d{2}/.test(s) && /^[a-z0-9]+-/.test(s) ? s.split("-")[0] : null; };
 
 /** A closed gamma event → its settled main markets: [{ conditionId, outcomes, winner, league, eventSlug, end }]. */
+// Leagues Polymarket US lists (used until the live US list is available).
+export const US_LEAGUES_DEFAULT = ["nfl", "nba", "mlb", "nhl", "wnba", "cfb", "ncaaf", "cbb", "ncaab", "epl", "mls", "ucl", "laliga", "seriea", "bundesliga", "ligue1", "atp", "wta", "ufc", "kbo", "npb"];
+let usLeagueSet = new Set(US_LEAGUES_DEFAULT);
+/** Only rate wallets where we can copy them: the leagues Polymarket US lists. */
+export function setUsLeagues(list) { if (list?.size || list?.length) usLeagueSet = new Set(list); }
+
 export function settledMarkets(ev, minVolume = SCOUT.minVolume) {
   const league = leagueOf(ev?.slug);
-  if (!league) return [];
+  if (!league || !usLeagueSet.has(league)) return [];
   const end = Date.parse(ev.endDate || ev.closedTime || "") || null;
   const out = [];
   for (const m of ev.markets || []) {
@@ -104,6 +110,8 @@ async function getJSON(url) {
 }
 
 export async function runScout(now = Date.now()) {
+  // Track the leagues the live US sports list actually has.
+  try { const pm = await import("../polymarket-us.js"); const l = pm.cachedSportsMoneylines?.()?.markets; if (l?.length) setUsLeagues(new Set(l.map(m => String(m.slug || "").toLowerCase().split("-")[1]).filter(Boolean))); } catch { /* defaults */ }
   const done = new Set(state.done);
   const markets = [];
   for (let off = 0; off < 2000 && markets.length < SCOUT.gamesPerRun * 2; off += 100) {
@@ -129,7 +137,7 @@ export async function runScout(now = Date.now()) {
   // Keep the window rolling: results from the last keepDays only.
   state.results = state.results.filter(r => now - r.end < SCOUT.keepDays * 86400_000);
   state.done = state.done.slice(-5000);
-  state.records = records(state.results);
+  state.records = records(state.results.filter(r => usLeagueSet.has(r.league)));   // rate only what we can copy
   state.sharp = pickSharp(state.records);
   state.lastRunAt = now;
   state.lastRun = { markets: games, trades, wallets: state.records.length, sharp: state.sharp.length };
@@ -150,7 +158,7 @@ export async function startSportsScout({ onSharpWallets } = {}) {
   if (state.enabled) return;
   if (onSharpWallets) onSharp = onSharpWallets;
   const saved = await loadJSON(KEY);
-  if (saved?.results) { state.results = saved.results; state.done = saved.done || []; state.lastRunAt = saved.lastRunAt || 0; state.records = records(state.results); state.sharp = pickSharp(state.records); onSharp(state.sharp.map(s => s.wallet)); }
+  if (saved?.results) { state.results = saved.results; state.done = saved.done || []; state.lastRunAt = saved.lastRunAt || 0; state.records = records(state.results.filter(r => usLeagueSet.has(r.league))); state.sharp = pickSharp(state.records); onSharp(state.sharp.map(s => s.wallet)); }
   state.enabled = true;
   const run = async () => { try { await runScout(); state.lastError = null; } catch (err) { state.lastError = err.message; console.log(`  🔭 [sports-scout] failed: ${err.message}`); } };
   setTimeout(run, 45_000);

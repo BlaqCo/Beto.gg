@@ -31,6 +31,20 @@ import { scoutProven } from "./sports-scout.js";
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
 const KEY = "arena:sportsshadow:v1", POLL_MS = 60_000, STAKE = 10;
 const SETTLE_AFTER_MS = 3 * 3600_000, SETTLE_EVERY_MS = 15 * 60_000, GIVE_UP_MS = 48 * 3600_000;
+// Polymarket US lists main "who wins" markets for major leagues only. These are bets we can't copy.
+const SIDE_BET = /exact score|o\/u|over\/under|spread|both teams|end in a draw|\bdraw\b|handicap|1st half|2nd half|first half|corners|cards|total (goals|points|runs)/i;
+const SIDE_SLUG = /-(more-markets|exact-score|draw|total|spread)(-|$)/i;
+/** US leagues, from the live US sports list ("aec-<league>-..."); null if the list isn't loaded. */
+export function usLeagues(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  return new Set(list.map(m => String(m.slug || "").toLowerCase().split("-")[1]).filter(Boolean));
+}
+/** Why a signal can't be copied onto US at all (quietly skipped), or null. */
+export function uncopyable(s, leagues) {
+  if (SIDE_BET.test(s.title || "") || SIDE_SLUG.test(s.slug || "") || SIDE_SLUG.test(s.eventSlug || "")) return "side bet";
+  if (leagues && !leagues.has(s.league)) return "league not on US";
+  return null;
+}
 export const LEAGUES = ["mlb", "nba", "nfl", "nhl", "wnba", "ncaaf", "ncaab", "cfb", "cbb", "epl", "laliga", "la-liga", "seriea", "serie-a", "bundesliga", "ligue1", "ligue-1", "mls", "ucl", "uel", "ufc", "atp", "wta"];
 const envNum = (k, d) => { const v = Number(process.env[k]); return process.env[k] != null && process.env[k] !== "" && Number.isFinite(v) ? v : d; };
 export const LIVE = { on: process.env.SPORTS_LIVE === "true", stake: envNum("SPORTS_LIVE_STAKE", 1), dailyLoss: envNum("SPORTS_LIVE_DAILY_LOSS", 5),
@@ -109,7 +123,7 @@ export function summary(closed) {
 const band = px => (px < 0.35 ? "under 35¢" : px < 0.5 ? "35-50¢" : px < 0.65 ? "50-65¢" : px < 0.8 ? "65-80¢" : "80¢+");
 
 // ── Runtime ─────────────────────────────────────────────────────────
-const state = { enabled: false, wallets: [], base: [], scouted: [], primedWallets: new Set(), seen: [], open: [], closed: [], misses: [], started: false, lastPollAt: 0, lastError: null, primed: false,
+const state = { enabled: false, skipped: {}, wallets: [], base: [], scouted: [], primedWallets: new Set(), seen: [], open: [], closed: [], misses: [], started: false, lastPollAt: 0, lastError: null, primed: false,
   live: { open: [], closed: [], missed: 0 } };
 let pm = null, fetchImpl = (...a) => fetch(...a), isHalted = () => null, claim = claimOnce;
 const events = [];
@@ -136,8 +150,11 @@ async function poll(now = Date.now()) {
   if (primedNow && !fresh.length) { await save(); return; }
   if (!fresh.length) return;
   const list = pm.cachedSportsMoneylines()?.markets || [];
+  const leagues = usLeagues(list);
   for (const s of fresh.sort((a, b) => a.t - b.t)) {
     state.seen.push(s.id);
+    const skip = uncopyable(s, leagues);
+    if (skip) { state.skipped[skip] = (state.skipped[skip] || 0) + 1; continue; }
     if (!list.length) { miss(s, "no US sports list loaded yet (sports recorder off?)"); continue; }
     const m = matchUs(s, list);
     if (!m.market) { miss(s, m.why); continue; }
@@ -249,7 +266,7 @@ export function setScoutedWallets(list = []) {
 }
 
 export function sportsShadowStatus() {
-  return { enabled: state.enabled, wallets: state.wallets, base: state.base, scouted: state.scouted, lastPollAt: state.lastPollAt, lastError: state.lastError, usListAt: pm?.cachedSportsMoneylines?.()?.at || null,
+  return { enabled: state.enabled, wallets: state.wallets, base: state.base, scouted: state.scouted, skipped: state.skipped, lastPollAt: state.lastPollAt, lastError: state.lastError, usListAt: pm?.cachedSportsMoneylines?.()?.at || null,
     live: { on: LIVE.on, stake: LIVE.stake, dailyLoss: LIVE.dailyLoss, maxLoss: LIVE.maxLoss, halted: isHalted() || null, missed: state.live.missed, ...liveTotals(),
       open: state.live.open.slice(-20).reverse(), recent: state.live.closed.slice(-20).reverse() },
     summary: summary(state.closed), open: state.open.slice(-20).reverse(), recent: state.closed.slice(-20).reverse(), misses: state.misses.slice(-15).reverse(), events: events.slice(-30) };

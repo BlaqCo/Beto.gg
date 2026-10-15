@@ -202,3 +202,16 @@ test("wallet report: asks newest first, and a record with no losses is not trust
   assert.equal(rep.suspect, true);
   assert.match(wr.leagueProven(rep, "mlb").why, /no losses/);
 });
+
+test("side bets and non-US leagues are skipped quietly, not logged as misses", () => {
+  const leagues = ss.usLeagues([{ slug: "aec-mlb-cle-tb-2026-10-13" }, { slug: "aec-epl-ars-che-2026-10-18-ars" }]);
+  assert.deepEqual([...leagues].sort(), ["epl", "mlb"]);
+  const sig = o => ({ league: "mlb", title: "Guardians vs. Rays", slug: "mlb-cle-tb-2026-10-13", eventSlug: "mlb-cle-tb-2026-10-13", ...o });
+  assert.equal(ss.uncopyable(sig(), leagues), null);
+  assert.equal(ss.uncopyable(sig({ title: "Exact Score: Lyon 0 - 4 Palace?" }), leagues), "side bet");
+  assert.equal(ss.uncopyable(sig({ title: "Lyon vs. Palace: O/U 1.5" }), leagues), "side bet");
+  assert.equal(ss.uncopyable(sig({ title: "Spread: AZ (-1.5)" }), leagues), "side bet");
+  assert.equal(ss.uncopyable(sig({ slug: "uel-lyo-cry-2026-10-15-more-markets" }), leagues), "side bet");
+  assert.equal(ss.uncopyable(sig({ league: "uel" }), leagues), "league not on US");
+  assert.equal(ss.uncopyable(sig({ league: "uel" }), null), null, "no US list yet: don't guess");
+});
