@@ -92,6 +92,16 @@ export function sameTeam(a, b) {
  * The US market and side for a signal: { market, buy: "YES"|"NO" } or { why }.
  * markets: the US sports moneyline list (slug, question, gameStartIso, ask, bid, league).
  */
+/** Team names on a US market's YES (long) and NO (short) sides: from "Will X win" or the side names. */
+export function sideTeams(m) {
+  const y = yesTeamOf(m.question);
+  if (y) return { yes: y, no: null };
+  const named = x => x && !/^(yes|no)$/i.test(x.name.trim()) && x.name.trim() ? norm(x.name) : null;
+  const sides = Array.isArray(m.sides) ? m.sides : [];
+  const yes = named(sides.find(x => x.long)), no = named(sides.find(x => !x.long));
+  return yes ? { yes, no } : null;
+}
+
 export function matchUs(sig, markets) {
   const ev = String(sig.eventSlug || "").toLowerCase();
   let cands = ev ? markets.filter(m => String(m.slug || "").toLowerCase().includes(ev)) : [];
@@ -102,12 +112,15 @@ export function matchUs(sig, markets) {
     if (date && codes.length >= 2) cands = markets.filter(m => { const s = String(m.slug || "").toLowerCase(); return s.includes(date) && s.includes(`${sig.league}-`) && codes.every(c => s.includes(`-${c}-`) || s.endsWith(`-${c}`)); });
   }
   // Only "Will <team> win ..." markets (spreads and totals ask other questions).
-  cands = cands.filter(m => yesTeamOf(m.question));
+  cands = cands.filter(m => sideTeams(m));
   if (!cands.length) return { why: `no US market for ${ev || sig.slug}` };
   const b = backedTeam(sig);
   if (!b.team) return { why: b.why };
-  const hit = cands.find(m => { const y = yesTeamOf(m.question); return y && sameTeam(y, b.team); });
+  const hit = cands.find(m => sameTeam(sideTeams(m).yes, b.team));
   if (hit) return { market: hit, buy: b.against ? "NO" : "YES", exact: !b.against };
+  // "Who will win" markets name both sides: backing the short-side team is a named NO.
+  const hitNo = cands.find(m => sameTeam(sideTeams(m).no, b.team));
+  if (hitNo) return { market: hitNo, buy: b.against ? "YES" : "NO", exact: !b.against };
   if (cands.length === 1 && !THREE_WAY.has(sig.league)) return { market: cands[0], buy: b.against ? "YES" : "NO", exact: false };   // two teams: the other one
   return { why: `found ${cands.length} US market(s) for ${ev} but none names "${b.team}"` };
 }

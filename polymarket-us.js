@@ -269,7 +269,7 @@ function isGameMarket(m) {
 }
 
 // ── Main fetch ───────────────────────────────────────────────────
-let _cache = null, _cacheTime = 0;
+let _cache = null, _cacheTime = 0, _sidesLogged = false;
 const TTL = 60_000;   // widened from 20s. At the new 25s scan gap, a 20s
 // cache would still expire almost every single scan — defeating the whole
 // point of caching. 60s means discovery's 39-request sweep now fires
@@ -782,6 +782,8 @@ export async function fetchSportsMoneylines() {
       volumeTotal: num(m.volume) || 0,
       lastTradePx: num(m.lastTradePx) || num(m.lastTradePrice) || null,
       sportsType: m.sportsMarketTypeV2 || m.sportsMarketType || "",
+      // Side names: on game markets they name the teams ("Rays" long, "Guardians" short).
+      sides: (Array.isArray(m.marketSides) ? m.marketSides : []).map(x => ({ long: x.long === true, name: String(x.description || "") })),
     });
   }
 
@@ -812,6 +814,8 @@ export async function fetchSportsMoneylines() {
   out.forEach(m => { byLeague[m.league] = (byLeague[m.league] || 0) + 1; });
   console.log("  By league: " + Object.entries(byLeague).map(([l,n]) => `${l}:${n}`).join(" "));
 
+  const team = out.find(x => /^aec-(mlb|nba|nhl|nfl)-/.test(x.slug));
+  if (team && !_sidesLogged) { _sidesLogged = true; console.log(`  🔬 US game sides (${team.slug}): ${JSON.stringify(team.sides)} | ${team.question?.slice(0, 120)}`); }
   _cache = out;
   _cacheTime = Date.now();
   return out;
