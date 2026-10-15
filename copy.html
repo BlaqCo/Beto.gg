@@ -598,6 +598,10 @@ async function loadSports() {
   if (!S.enabled) { $("sports").innerHTML = '<p class="mut">SPORTS SHADOW is off.</p>'; return; }
   const m = S.summary, sg = n => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
   let W = null; try { const r = await fetch("/api/walletreport", { cache: "no-store" }); if (r.ok) W = await r.json(); } catch {}
+  let SC = null; try { const r = await fetch("/api/sportsscout", { cache: "no-store" }); if (r.ok) SC = await r.json(); } catch {}
+  const scout = !SC?.enabled ? "" : `<p style="margin:0 0 6px"><b>SPORTS SCOUT</b> <span class="mut">${SC.lastRunAt ? `${SC.games} settled games scored · ${ago(SC.lastRunAt)}` : "first run in about a minute"}${SC.lastError ? ` · <span class="neg">${esc(SC.lastError)}</span>` : ""}</span>
+    ${SC.sharp.length ? `<br>Following ${SC.sharp.length} sharp sports wallet(s):<br><span class="mut">${SC.sharp.map(w => `${esc(w.name || w.wallet.slice(0, 8))} ${w.games} games · ${Math.round(w.winRate * 100)}% · +$${w.pnl.toFixed(0)} (${Math.round(w.roi * 100)}%) · ${Object.entries(w.leagues).sort((a, b) => b[1].games - a[1].games).slice(0, 3).map(([k, v]) => `${esc(k)} ${v.games}`).join("/")}`).join("<br>")}</span>`
+      : `<br><span class="mut">No wallet meets the bar yet (${SC.cfg.minGames}+ settled games, in profit, ${Math.round(SC.cfg.minRoi * 100)}%+ return, ${Math.round(SC.cfg.minWin * 100)}%+ won).</span>`}</p>`;
   const rec = Object.entries(W || {}).map(([w, x]) => {
     if (!x) return "";
     if (x.error && !x.report) return `<p class="mut" style="margin:0 0 6px">Wallet ${esc(w.slice(0, 8))} record: <span class="neg">${esc(x.error)}</span></p>`;
@@ -610,7 +614,7 @@ async function loadSports() {
   const list = S.usListAt ? `US sports list ${ago(S.usListAt)}` : '<span class="amb">no US sports list yet: turn the sports recorder on (ARENA_SPORTS=true)</span>';
   const row = b => `<div class="labcard"><b>${esc(b.buy)}</b> ${esc(b.usQuestion)} @ ${cents(b.px)}${b.won == null && b.closedAt == null ? ` <span class="mut">· starts ${hhmm(b.start)}</span>` : ` · <span class="${b.pnl >= 0 ? "pos" : "neg"}">${b.won == null ? "void" : (b.won ? "WON " : "LOST ") + sg(b.pnl)}</span>`}
     <div class="mut">they bought ${esc(b.outcome)} @ ${cents(b.theirPx)} ($${(+b.theirUsd).toFixed(0)}) · ${esc(b.league)}</div></div>`;
-  $("sports").innerHTML = `${rec}<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
+  $("sports").innerHTML = `${scout}${rec}<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
     <p style="margin:0 0 6px"><b>${m.n} settled</b>${m.n ? ` · ${Math.round(m.winRate * 100)}% won · <span class="${m.pnl >= 0 ? "pos" : "neg"}">${sg(m.pnl)}</span> (${sg(m.perBet)}/bet)` : ""}${m.byLeague.length ? `<br><span class="mut">${m.byLeague.map(g => `${esc(g.key)} ${g.wins}/${g.n} ${sg(g.pnl)}`).join(" · ")}</span>` : ""}</p>
     ${(() => { const R = S.live; if (!R) return "";
       if (!R.on) return '<p class="mut" style="margin:0 0 6px">REAL MONEY: off (SPORTS_LIVE is not true)</p>';

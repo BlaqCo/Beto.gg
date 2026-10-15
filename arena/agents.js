@@ -91,6 +91,8 @@ async function build(builder, lb, specs, log) {
   let sportsShadow = null;
   if (builder.families.includes("sports")) {
     try { const ss = (await import("./sports-shadow.js")).sportsShadowStatus(); if (ss.enabled) sportsShadow = { ...ss.summary, recentMisses: ss.misses.slice(0, 5).map(m => m.why) }; } catch { /* not loaded */ }
+    // The sports scout's sharp wallets: who wins at sports, by league.
+    try { const sc = (await import("./sports-scout.js")).sportsScoutStatus(); if (sc.enabled && sc.sharp.length) (sportsShadow ||= {}).sharpSportsWallets = sc.sharp.slice(0, 8).map(w => ({ games: w.games, winRate: w.winRate, roi: w.roi, leagues: w.leagues })); } catch { /* not loaded */ }
     // The primary wallet's own sports track record on global Polymarket, by league and price band.
     try { const wr = await import("./wallet-report.js"); const all = Object.values(wr.walletReportStatus()).map(x => x?.report).filter(Boolean);
       if (all.length) (sportsShadow ||= {}).walletRecord = all.map(r => ({ sports: r.byKind.find(k => k.key === "sports") || null, byLeague: r.byLeague.filter(g => g.key.startsWith("sports:")).slice(0, 10), byPrice: r.sportsByBand })); } catch { /* not loaded */ }

@@ -26,6 +26,7 @@
 import { takerFee } from "../fees.js";
 import { saveJSON, loadJSON, claimOnce } from "./state.js";
 import { reportFor, leagueProven } from "./wallet-report.js";
+import { scoutProven } from "./sports-scout.js";
 
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
 const KEY = "arena:sportsshadow:v1", POLL_MS = 60_000, STAKE = 10;
@@ -108,25 +109,31 @@ export function summary(closed) {
 const band = px => (px < 0.35 ? "under 35¢" : px < 0.5 ? "35-50¢" : px < 0.65 ? "50-65¢" : px < 0.8 ? "65-80¢" : "80¢+");
 
 // ── Runtime ─────────────────────────────────────────────────────────
-const state = { enabled: false, wallets: [], seen: [], open: [], closed: [], misses: [], started: false, lastPollAt: 0, lastError: null, primed: false,
+const state = { enabled: false, wallets: [], base: [], scouted: [], primedWallets: new Set(), seen: [], open: [], closed: [], misses: [], started: false, lastPollAt: 0, lastError: null, primed: false,
   live: { open: [], closed: [], missed: 0 } };
 let pm = null, fetchImpl = (...a) => fetch(...a), isHalted = () => null, claim = claimOnce;
 const events = [];
 function emit(msg) { events.push({ t: Date.now(), msg }); if (events.length > 100) events.shift(); console.log(`  🏟 [sports-shadow] ${msg}`); }
-const save = () => saveJSON(KEY, { seen: state.seen.slice(-800), open: state.open, closed: state.closed.slice(-300), misses: state.misses.slice(-60),
+const save = () => saveJSON(KEY, { primedWallets: [...state.primedWallets], seen: state.seen.slice(-3000), open: state.open, closed: state.closed.slice(-300), misses: state.misses.slice(-60),
   live: { open: state.live.open, closed: state.live.closed.slice(-300), missed: state.live.missed } });
 
 async function poll(now = Date.now()) {
   state.lastPollAt = now;
   const fresh = [];
+  if (state.primed && !state.primedWallets.size) state.wallets.forEach(w => state.primedWallets.add(w));   // saved before per-wallet priming
+  let primedNow = 0;
   for (const w of state.wallets) {
     const res = await fetchImpl(`${DATA}/trades?user=${w}&limit=100`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(12_000) });
     if (!res.ok) throw new Error(`data-api ${res.status}`);
     const rows = await res.json();
-    for (const t of Array.isArray(rows) ? rows : []) { const s = toSignal(t); if (s && !state.seen.includes(s.id)) fresh.push(s); }
+    const mine = [];
+    for (const t of Array.isArray(rows) ? rows : []) { const s = toSignal(t); if (s && !state.seen.includes(s.id)) mine.push(s); }
+    // A wallet's first look: remember what's there, copy only what it does from now on.
+    if (!state.primedWallets.has(w)) { state.primedWallets.add(w); state.seen.push(...mine.map(s => s.id)); primedNow++; continue; }
+    fresh.push(...mine);
   }
-  // First run: remember what's there, copy only what comes after.
-  if (!state.primed) { state.primed = true; state.seen.push(...fresh.map(s => s.id)); if (fresh.length) emit(`watching ${state.wallets.length} wallet(s); ${fresh.length} earlier sports buys skipped`); await save(); return; }
+  if (primedNow) { state.primed = true; emit(`now watching ${primedNow} new wallet(s) (${state.wallets.length} in all); their earlier bets are skipped`); }
+  if (primedNow && !fresh.length) { await save(); return; }
   if (!fresh.length) return;
   const list = pm.cachedSportsMoneylines()?.markets || [];
   for (const s of fresh.sort((a, b) => a.t - b.t)) {
@@ -163,10 +170,14 @@ export function liveBlock(bet, m, now = Date.now()) {
   if (!m.exact) return "the team was inferred, not matched by name, so this one stays paper";
   // Only copy real money in leagues where the wallet has a proven, profitable record.
   if (process.env.SPORTS_LIVE_REQUIRE_RECORD !== "false") {
-    const rep = reportFor(bet.wallet);
-    if (!rep) return "the wallet's sports record hasn't loaded yet";
-    const p = leagueProven(rep, bet.league);
-    if (!p.ok) return `${p.why}; real money needs a proven record`;
+    // Proven by the sports scout (settled games it scored), or by the wallet's own closed positions.
+    const sc = scoutProven(bet.wallet, bet.league);
+    if (!sc.ok) {
+      const rep = reportFor(bet.wallet);
+      if (!rep) return `${sc.why}, and the wallet's own sports record hasn't loaded; real money needs a proven record`;
+      const p = leagueProven(rep, bet.league);
+      if (!p.ok) return `${p.why}; real money needs a proven record`;
+    }
   }
   if (bet.px < LIVE.minPx || bet.px > LIVE.maxPx) return `price ${Math.round(bet.px * 100)}¢ is outside ${Math.round(LIVE.minPx * 100)}-${Math.round(LIVE.maxPx * 100)}¢`;
   const t = liveTotals(now);
@@ -227,8 +238,18 @@ async function settleOpen(now = Date.now()) {
   if (changed) await save();
 }
 
+/** The sports scout's sharp wallets: followed alongside the primary/listed ones. */
+export function setScoutedWallets(list = []) {
+  const next = [...new Set(list.map(w => String(w).toLowerCase()).filter(w => /^0x[0-9a-f]{40}$/.test(w)))];
+  const added = next.filter(w => !state.wallets.includes(w));
+  state.scouted = next;
+  state.wallets = [...new Set([...state.base, ...next])];
+  if (added.length) emit(`sports scout: following ${added.length} more sharp wallet(s); ${state.wallets.length} in all`);
+  return state.wallets;
+}
+
 export function sportsShadowStatus() {
-  return { enabled: state.enabled, wallets: state.wallets, lastPollAt: state.lastPollAt, lastError: state.lastError, usListAt: pm?.cachedSportsMoneylines?.()?.at || null,
+  return { enabled: state.enabled, wallets: state.wallets, base: state.base, scouted: state.scouted, lastPollAt: state.lastPollAt, lastError: state.lastError, usListAt: pm?.cachedSportsMoneylines?.()?.at || null,
     live: { on: LIVE.on, stake: LIVE.stake, dailyLoss: LIVE.dailyLoss, maxLoss: LIVE.maxLoss, halted: isHalted() || null, missed: state.live.missed, ...liveTotals(),
       open: state.live.open.slice(-20).reverse(), recent: state.live.closed.slice(-20).reverse() },
     summary: summary(state.closed), open: state.open.slice(-20).reverse(), recent: state.closed.slice(-20).reverse(), misses: state.misses.slice(-15).reverse(), events: events.slice(-30) };
@@ -241,10 +262,10 @@ export async function startSportsShadow({ wallets, halted }) {
   state.started = true;
   pm = await import("../polymarket-us.js");
   const extra = (process.env.COPY_SPORTS_WALLETS || "").split(",").map(a => a.trim().toLowerCase()).filter(a => /^0x[0-9a-f]{40}$/.test(a));
-  state.wallets = [...new Set([...(wallets || []), ...extra])];
-  if (!state.wallets.length) { console.log("🏟 SPORTS SHADOW: no wallets to follow"); return; }
+  state.base = [...new Set([...(wallets || []), ...extra])];
+  state.wallets = [...new Set([...state.base, ...state.scouted])];
   const saved = await loadJSON(KEY);
-  if (saved) { state.seen = saved.seen || []; state.open = saved.open || []; state.closed = saved.closed || []; state.misses = saved.misses || []; state.primed = state.seen.length > 0;
+  if (saved) { state.primedWallets = new Set(saved.primedWallets || []); state.seen = saved.seen || []; state.open = saved.open || []; state.closed = saved.closed || []; state.misses = saved.misses || []; state.primed = state.seen.length > 0;
     if (saved.live) state.live = { open: saved.live.open || [], closed: saved.live.closed || [], missed: saved.live.missed || 0 }; }
   state.enabled = true;
   const run = async () => { try { await poll(); await settleOpen(); state.lastError = null; } catch (err) { state.lastError = err.message; } };
@@ -256,5 +277,5 @@ export async function startSportsShadow({ wallets, halted }) {
 
 // Tests.
 export function _set({ pmMod, fetchFn, halted, claimFn } = {}) { if (pmMod) pm = pmMod; if (fetchFn) fetchImpl = fetchFn; if (halted) isHalted = halted; if (claimFn) claim = claimFn; }
-export function _reset() { Object.assign(state, { seen: [], open: [], closed: [], misses: [], primed: false, wallets: [], live: { open: [], closed: [], missed: 0 } }); events.length = 0; }
+export function _reset() { Object.assign(state, { primedWallets: new Set(), base: [], scouted: [], seen: [], open: [], closed: [], misses: [], primed: false, wallets: [], live: { open: [], closed: [], missed: 0 } }); events.length = 0; }
 export const _poll = poll, _settle = settleOpen, _state = state;
