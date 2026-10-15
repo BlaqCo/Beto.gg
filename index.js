@@ -861,7 +861,9 @@ app.get("/api/colony", async (req, res) => {
     check("lab", !(lb?.loadErrors || []).length, (lb?.loadErrors || []).length ? `${lb.loadErrors.length} strategy file(s) failed to load` : `${strategies} strategies loaded`);
     const rs = lb?.reality?.summary;
     out.reality = rs || null;
-    if (rs) check("lab", rs.label !== "arena too optimistic", `reality check: ${rs.msg}`, rs.label === "arena too optimistic" ? "alert" : rs.label === "matches" ? "ok" : "info");
+    // "Too optimistic" is a calibration fact, not a fault: the agents are told the gap and
+    // BTC15 tape now uses the live order book. So it's a warning, not an alert.
+    if (rs) check("lab", rs.label !== "arena too optimistic", `reality check: ${rs.msg}${rs.label === "arena too optimistic" ? " · agents now discount by this; BTC15 tape now uses live order-book prices" : ""}`, rs.label === "arena too optimistic" ? "warn" : rs.label === "matches" ? "ok" : "info");
     else if (lb?.reality?.error) check("lab", false, `reality check failed: ${lb.reality.error}`);
     const ag = out.agents;
     check("lab", !!ag?.enabled, !ag?.enabled ? "AI agents off: set AGENTS_ENABLED=true" : ag.lastError ? `AI agents error: ${ag.lastError}` : ag.lastRunAt ? `AI agents ran ${Math.round((Date.now() - ag.lastRunAt) / 60000)}m ago; next in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m` : `AI agents start in ${Math.max(0, Math.round((ag.nextRunAt - Date.now()) / 60000))}m`, ag?.enabled ? (ag.lastError ? "warn" : "ok") : "info");

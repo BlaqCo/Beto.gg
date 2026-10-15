@@ -15,6 +15,7 @@ import axios from "axios";
 import * as pm from "../polymarket-us.js";
 import { appendWindow } from "./tape.js";
 import { saveJSON, loadJSON } from "./state.js";
+import { fastQuote } from "./fast-book.js";
 
 const STATE_KEY = "arena:state:btc";
 const SAVE_EVERY_MS = 60_000;
@@ -128,10 +129,14 @@ async function tick() {
       live.set(m.slug, rec);
     }
     if (rec.strike == null) rec.strike = pm.extractSettlementNum(m.assetPriceTerms?.priceToBeat);
-    // Prices come from the listing (one request for every market). Fall back to the
-    // per-market book only when the listing has no prices and we're not rate-limited.
-    let { bid, ask } = fresh ? quoteFromListing(m) : { bid: null, ask: null };
-    let src = bid != null ? "L" : null;
+    // BTC15 prices come from the fast book (the live order book, read every 1-2s) when it's
+    // fresh. The listing's prices can be minutes old, which made the arena's fills too
+    // optimistic (reality check, Oct 15: the real bot did ~$2.70 per $10 trade worse).
+    // Otherwise the listing (one request for every market), then the per-market book only
+    // when the listing has no prices and we're not rate-limited.
+    const fb = family === "btc15" ? fastQuote(m.slug, 6000, now) : null;
+    let { bid, ask } = fb ? { bid: fb.bid, ask: fb.ask } : fresh ? quoteFromListing(m) : { bid: null, ask: null };
+    let src = fb ? "F" : bid != null ? "L" : null;
     if (bid == null && now >= bboBlockedUntil) {
       try {
         const bbo = await pm.getBBO(m.slug);

@@ -87,18 +87,24 @@ async function build(builder, lb, specs, log) {
   const recorded = builder.families.reduce((s, f) => s + (tape[f] || 0), 0);
   if (recorded < 3) { log(builder.name, `waiting for data: only ${recorded} recorded ${builder.families.join("/")} windows`); return null; }
   const mine = specs.filter(r => r.author === builder.name);
+  // How far the arena's simulated fills were from the real bot's on the same trades.
+  const rs = lb.reality?.summary, gap = rs?.label === "arena too optimistic" && Number.isFinite(rs.meanGap) ? Math.abs(rs.meanGap) : null;
   const system = `You are ${builder.name}, a strategy researcher in an automated prediction-market lab. You design ONE new trading recipe at a time for Polymarket US "${builder.families.join('" or "')}" markets. Your focus: ${builder.focus}.
 Every trade is simulated with realistic costs: fills at the next price update, buys pay the ask, sells receive the bid, and every fill pays a taker fee of 6% x p x (1-p) per contract. Spread and fees make most ideas lose; propose something with a concrete reason to beat them.
-Rules: propose an idea that is meaningfully DIFFERENT from every existing strategy listed (not a tiny parameter tweak). Small samples (under 30 trades) prove nothing, so don't chase them. Never claim certainty.
+${gap ? `Reality check: on ${rs.n} real bot trades, real results were $${gap.toFixed(2)} per $10 trade WORSE than this arena's simulation, mostly from older tape priced from stale market-list quotes (BTC15 tape now uses the live order book). Treat any arena result as about $${gap.toFixed(2)} per $10 trade too optimistic: only ideas that clear that margin are worth proposing.
+` : ""}Rules: propose an idea that is meaningfully DIFFERENT from every existing strategy listed (not a tiny parameter tweak). Use a name not already taken. Small samples (under 30 trades) prove nothing, so don't chase them. Never claim certainty.
 Reply with ONLY a JSON object: {"spec": <recipe>, "note": "one sentence for the station log"}. Recipe schema:\n${SCHEMA}`;
   const user = `Recorded windows: ${JSON.stringify(tape)}.
 Current leaderboard (your families only, ranked by the low end of the 95% range of profit per $10 trade):
 ${JSON.stringify(boardFor(lb.rows || [], builder.families))}
+Names already taken: ${JSON.stringify(specs.map(r => r.spec.name))}
 Your existing recipes: ${JSON.stringify(mine.map(r => ({ name: r.spec.name, status: r.status, what: describeSpec(r.spec), note: r.note })))}
 Propose one new recipe now.`;
   const out = await claude(system, user);
   if (!out?.spec) { log(builder.name, "returned no usable recipe this round"); return null; }
-  const res = await addSpec(out.spec, { author: builder.name });
+  let res = await addSpec(out.spec, { author: builder.name });
+  // A name clash isn't a bad idea: retry once under a fresh name.
+  if (!res.ok && /already exists/.test(res.error || "") && out.spec?.name) res = await addSpec({ ...out.spec, name: `${String(out.spec.name).slice(0, 36)}-${Date.now().toString(36).slice(-4)}` }, { author: builder.name });
   if (!res.ok) { log(builder.name, `recipe rejected by validation: ${res.error}`); return null; }
   log(builder.name, `new strategy ${res.rec.spec.name} (${res.rec.spec.family}): ${describeSpec(res.rec.spec)} ${out.note ? "— " + String(out.note).slice(0, 160) : ""}`);
   return res.rec;

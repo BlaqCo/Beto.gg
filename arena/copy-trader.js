@@ -610,8 +610,10 @@ function labObserve(family, cur, now, book = null) {
   if (!lab || family !== "btc15" || !cur) return;
   const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
   if (!us?.slug) return;
-  const q = book && book.slug === us.slug ? book : fastQuote(us.slug, 20_000) || us;
-  if (q.bid == null || q.ask == null) return;
+  // Live order book only: the market list's prices can be minutes old, and a stale price
+  // in the log would make every replay too optimistic. No fresh book = no snapshot.
+  const q = book && book.slug === us.slug ? book : fastQuote(us.slug, 10_000);
+  if (!q || q.bid == null || q.ask == null) return;
   lab.observe({ slug: us.slug, start: cur.start, end: cur.end, now, up: q.ask, down: +(1 - q.bid).toFixed(4), consensus: consensus(cur.votes), pSide: primarySide(cur.primary) });
 }
 
