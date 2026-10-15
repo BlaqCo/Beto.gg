@@ -932,7 +932,7 @@ app.post("/api/shadowlab/apply", async (req, res) => {
     _ct = _ct || await import("./arena/copy-trader.js");
     const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
     const r = await lab.applyProposal(String(req.body?.id || ""));
-    if (r.ok) _ct.applyLabRule(r.applied.rule, `proposal ${r.applied.id}`);
+    if (r.ok) _ct.applyLineup(lab.lineup(), `you added ${r.applied.id}`);
     res.json(r);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -940,8 +940,18 @@ app.post("/api/shadowlab/revert", async (req, res) => {
   try {
     _ct = _ct || await import("./arena/copy-trader.js");
     const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
-    await lab.revertApplied(); _ct.applyLabRule(null);
+    await lab.revertApplied(); _ct.applyLineup([]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// Take one rule out of the lineup. Body: { id }. POST, so ADMIN_TOKEN applies.
+app.post("/api/shadowlab/remove", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    const r = await lab.removeFromLineup(String(req.body?.id || ""));
+    if (r.ok) _ct.applyLineup(lab.lineup(), "you removed a rule");
+    res.json(r);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 app.get("/api/sportsshadow", async (req, res) => {
@@ -1251,7 +1261,7 @@ async function loadBots() {
   try { _ct = await import("./arena/copy-trader.js"); await _ct.startCopyTrader(); }
   catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
   // SPORTS SHADOW: practice copies of the primary wallet's sports bets. Off with SPORTS_SHADOW=false.
-  try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [] }); }
+  try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [], halted: () => _ct?.realHalted?.() || null }); }
   catch (err) { console.log("🏟 SPORTS SHADOW not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }

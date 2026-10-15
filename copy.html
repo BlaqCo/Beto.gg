@@ -145,12 +145,12 @@ table.rules .sub{font-size:11px;color:var(--muted)} table.rules td.r .sub{white-
   </section>
 
   <section id="labSec">
-    <div class="ph">SHADOW LAB <em>AI agents hunting SHADOW's edge · you approve changes</em></div>
+    <div class="ph">SHADOW LAB <em>AI agents find, run and keep adjusting SHADOW's winning rules</em></div>
     <div class="real" id="lab"><p class="mut">Loading…</p></div>
   </section>
 
   <section id="sportsSec">
-    <div class="ph">SPORTS SHADOW <em>practice · copies the primary wallet's sports bets onto US</em></div>
+    <div class="ph">SPORTS SHADOW <em>copies the primary wallet's sports bets onto US</em></div>
     <div class="real" id="sports"><p class="mut">Loading…</p></div>
   </section>
 
@@ -563,20 +563,30 @@ async function loadLab() {
   const C = L.current;
   const head = `<p class="mut" style="margin:0 0 6px">Signal log: ${L.windows} windows (${L.settled} with results). SHADOW records what it sees every 15s in the last 10 minutes of every BTC15 window, bet or not, so any rule can be replayed. TUNER proposes rules every hour once 24 windows are in.</p>
     <p style="margin:0 0 6px"><b>Agents are ${L.mode === "refine" ? `refining the champion <span class="pos">${esc(L.champion)}</span>` : "searching for a winning rule"}.</b> <span class="mut">${L.mode === "refine" ? "Each new proposal is a small variation of it, judged head-to-head on the same windows." : `The first proposal with ${L.forwardMin}+ forward bets in profit becomes the champion; then they refine it.`}</span></p>
-    <p style="margin:0 0 6px"><b>SHADOW now${L.applied ? ` (lab rule ${esc(L.applied.id)})` : ""}:</b> ${C ? esc(C.text) : "—"}<br><span class="mut">replayed on the log:</span> ${st(C)}${L.applied ? ' <button class="stopbtn resume" id="labRevert" type="button">BACK TO ORIGINAL RULE</button>' : ""}</p>`;
-  const act = p => p.status !== "active" ? `<span class="mut">${esc(p.retiredWhy || p.status)}</span>` : L.applied?.id === p.id ? '<b class="pos">ON SHADOW NOW</b>'
-    : p.canApply ? `<button class="stopbtn resume" data-apply="${esc(p.id)}" type="button">APPLY TO SHADOW</button>` : `<span class="mut">Apply: ${esc(p.applyWhy)}</span>`;
+    ${(L.lineup || []).length ? `<p style="margin:0 0 4px"><b>LIVE LINEUP</b> <span class="mut">(${L.lineup.length}/${L.lineupMax} rules; first to fire takes the window; real money follows)</span> <button class="stopbtn resume" id="labRevert" type="button">CLEAR LINEUP</button></p>
+      ${L.lineup.map(l => `<div class="labcard"><b class="pos">${esc(l.id)}</b> <span class="mut">${l.by === "auto" ? "added by auto" : "added by you"} ${hhmm(l.at)}</span><div class="mut">${esc(l.text)}</div>
+        <div>Since it joined: ${st(l.since)}</div><div>Real money: ${l.live ? `${l.live.n} bets · ${l.live.wins} won · <span class="${l.live.pnl >= 0 ? "pos" : "neg"}">${money(l.live.pnl)}</span>` : '<span class="mut">no settled real bets yet</span>'}</div>
+        <div class="act"><button class="stopbtn" data-remove="${esc(l.id)}" type="button">REMOVE</button></div></div>`).join("")}`
+      : `<p style="margin:0 0 6px"><b>SHADOW now (its own rule):</b> ${C ? esc(C.text) : "—"}<br><span class="mut">replayed on the log:</span> ${st(C)}</p>`}
+    <p class="mut" style="margin:4px 0 6px;font-size:12px">AUTO ${L.auto ? '<b class="pos">ON</b>: proven rules join the lineup, better ones replace the weakest, losers are dropped (one change per 3h)' : "OFF (LAB_AUTO=false): you add and remove rules"}.${(L.autoLog || []).length ? `<br>${L.autoLog.slice(0, 4).map(x => `${hhmm(x.t)} ${esc(x.msg)}`).join("<br>")}` : ""}</p>`;
+  const inLineup = new Set((L.lineup || []).map(l => l.id));
+  const act = p => p.status !== "active" ? `<span class="mut">${esc(p.retiredWhy || p.status)}</span>` : inLineup.has(p.id) ? '<b class="pos">IN THE LIVE LINEUP</b>'
+    : p.canApply ? `<button class="stopbtn resume" data-apply="${esc(p.id)}" type="button">ADD TO LINEUP</button>` : `<span class="mut">Lineup: ${esc(p.applyWhy)}</span>`;
   const cards = (L.proposals || []).map(p => `<div class="labcard${p.status !== "active" ? " off" : ""}"><b>${esc(p.id)}</b>${p.id === L.champion ? ' <b class="pos">★ CHAMPION</b>' : ""} <span class="mut">by ${esc(p.author)}${p.parent ? `, refining ${esc(p.parent)}` : ""}</span>
     <div class="mut">${esc(p.text)}</div>${p.rationale ? `<div class="mut why">${esc(p.rationale)}</div>` : ""}
     <div>Replayed: ${st(p.backtest)}</div><div>Forward: ${st(p.forward)}</div>${p.vsParent ? `<div>vs ${esc(p.vsParent.parent)} on the same windows: <span class="${p.vsParent.total >= p.vsParent.parentTotal ? "pos" : "neg"}">${money(p.vsParent.total)}</span> vs ${money(p.vsParent.parentTotal)}${p.vsParent.better ? ' · <b class="pos">BEATS THE CHAMPION</b>' : ""}</div>` : ""}<div class="act">${act(p)}</div></div>`).join("");
   $("lab").innerHTML = head + (cards || '<p class="mut">No proposals yet.</p>') +
-    `<p class="mut" style="margin:6px 0 0;font-size:11px">Replayed = the whole log; it can be fitted by luck. Forward = only windows after the proposal was made, which can't. Apply unlocks at ${L.forwardMin} forward bets in profit, and changes SHADOW's rule for practice and real money (real money keeps its $3 bets and loss limits).</p>`;
+    `<p class="mut" style="margin:6px 0 0;font-size:11px">Replayed = the whole log; it can be fitted by luck. Forward = only windows after the proposal was made, which can't. A rule can join the lineup at ${L.forwardMin} forward bets in profit. Lineup rules trade practice and real money (real money keeps its bet size and loss limits).</p>`;
   document.querySelectorAll("[data-apply]").forEach(b => b.onclick = async () => {
-    if (!confirm(`Apply ${b.dataset.apply} to SHADOW? Practice and real money follow the new rule right away.`)) return;
+    if (!confirm(`Add ${b.dataset.apply} to SHADOW's live lineup? Practice and real money use it right away.`)) return;
     const r = await adminPost("/api/shadowlab/apply", { id: b.dataset.apply }); if (r && !r.ok) alert(r.error); loadLab(); loadStatus();
   });
   const rv = $("labRevert");
-  if (rv) rv.onclick = async () => { if (!confirm("Put SHADOW back on its original rule?")) return; await adminPost("/api/shadowlab/revert"); loadLab(); loadStatus(); };
+  if (rv) rv.onclick = async () => { if (!confirm("Clear the lineup and put SHADOW back on its original rule?")) return; await adminPost("/api/shadowlab/revert"); loadLab(); loadStatus(); };
+  document.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Take ${b.dataset.remove} out of the live lineup?`)) return;
+    const r = await adminPost("/api/shadowlab/remove", { id: b.dataset.remove }); if (r && !r.ok) alert(r.error); loadLab(); loadStatus();
+  });
 }
 loadLab(); setInterval(loadLab, 30000);
 
@@ -592,10 +602,15 @@ async function loadSports() {
     <div class="mut">they bought ${esc(b.outcome)} @ ${cents(b.theirPx)} ($${(+b.theirUsd).toFixed(0)}) · ${esc(b.league)}</div></div>`;
   $("sports").innerHTML = `<p class="mut" style="margin:0 0 6px">Following ${S.wallets.length} wallet(s) · checked ${ago(S.lastPollAt)} · ${list}${S.lastError ? ` · <span class="neg">${esc(S.lastError)}</span>` : ""}</p>
     <p style="margin:0 0 6px"><b>${m.n} settled</b>${m.n ? ` · ${Math.round(m.winRate * 100)}% won · <span class="${m.pnl >= 0 ? "pos" : "neg"}">${sg(m.pnl)}</span> (${sg(m.perBet)}/bet)` : ""}${m.byLeague.length ? `<br><span class="mut">${m.byLeague.map(g => `${esc(g.key)} ${g.wins}/${g.n} ${sg(g.pnl)}`).join(" · ")}</span>` : ""}</p>
-    ${S.open.length ? `<p class="mut" style="margin:6px 0 0">OPEN</p>${S.open.map(row).join("")}` : ""}
+    ${(() => { const R = S.live; if (!R) return "";
+      if (!R.on) return '<p class="mut" style="margin:0 0 6px">REAL MONEY: off (SPORTS_LIVE is not true)</p>';
+      const lrow = b => `<div class="labcard"><b>REAL ${esc(b.buy)}</b> ${esc(b.usQuestion)} · ${b.qty} sh @ ${cents(b.px)} = $${(+b.cost).toFixed(2)}${b.closedAt ? ` · <span class="${b.pnl >= 0 ? "pos" : "neg"}">${b.won == null ? "void" : (b.won ? "WON " : "LOST ") + sg(b.pnl)}</span>` : ` <span class="mut">· starts ${hhmm(b.start)}</span>`}</div>`;
+      return `<p style="margin:0 0 6px"><b>REAL MONEY ${R.halted ? '<span class="neg">STOPPED</span>' : '<span class="pos">ON</span>'}</b> · $${R.stake} a bet · ${R.bets} settled, ${R.wins} won · <span class="${R.pnl >= 0 ? "pos" : "neg"}">${sg(R.pnl)}</span> (today ${sg(R.today)})${R.missed ? ` · ${R.missed} didn't fill` : ""}<br><span class="mut">Name-matched teams only, pre-game, 10-90¢ · stops for the day at −$${R.dailyLoss}, off at −$${R.maxLoss} · the STOP REAL MONEY button above stops it too</span></p>
+        ${R.open.map(lrow).join("")}${R.recent.slice(0, 6).map(lrow).join("")}`; })()}
+    ${S.open.length ? `<p class="mut" style="margin:6px 0 0">OPEN (practice)</p>${S.open.map(row).join("")}` : ""}
     ${S.recent.length ? `<p class="mut" style="margin:6px 0 0">SETTLED</p>${S.recent.slice(0, 8).map(row).join("")}` : ""}
     ${S.misses.length ? `<p class="mut" style="margin:6px 0 0">NOT COPIED (newest first)</p><ul class="mut" style="margin:2px 0 0;padding-left:16px;font-size:12px">${S.misses.slice(0, 6).map(x => `<li>${esc(x.outcome)} in "${esc(x.title)}": ${esc(x.why)}</li>`).join("")}</ul>` : ""}
-    <p class="mut" style="margin:6px 0 0;font-size:11px">Paper only, $10 a bet at the US order-book price, pre-game only, one bet per game. DUGOUT reads these results when it designs sports strategies.</p>`;
+    <p class="mut" style="margin:6px 0 0;font-size:11px">Practice copies: $10 a bet at the US order-book price, pre-game only, one bet per game. DUGOUT reads these results when it designs sports strategies.</p>`;
 }
 loadSports(); setInterval(loadSports, 30000);
 

@@ -11,16 +11,26 @@
  *     other side → buy NO.
  * A $10 paper bet is placed at the US order book's price (one read per bet), held to the
  * result. Every miss is kept with its reason, so the matching can be fixed from real data.
- * Pre-game only. One bet per wallet per US market. Paper only: no orders, no keys.
- * Off with SPORTS_SHADOW=false. Wallets: the primary wallet plus COPY_SPORTS_WALLETS.
+ * Pre-game only. One bet per wallet per US market. Off with SPORTS_SHADOW=false.
+ * Wallets: the primary wallet plus COPY_SPORTS_WALLETS.
+ *
+ * REAL MONEY (off unless SPORTS_LIVE=true): each paper copy also places a real
+ * SPORTS_LIVE_STAKE ($1) fill-or-kill buy, but only when the team was matched BY NAME (an
+ * inferred "other team" stays paper), only pre-game, priced 10-90¢, one per US market (a
+ * Redis claim stops a deploy overlap from doubling it), with buying power checked first.
+ * Stops for the day at -SPORTS_LIVE_DAILY_LOSS ($5) and for good at -SPORTS_LIVE_MAX_LOSS
+ * ($10). SHADOW's STOP REAL MONEY button on /copy stops it too.
  */
 import { takerFee } from "../fees.js";
-import { saveJSON, loadJSON } from "./state.js";
+import { saveJSON, loadJSON, claimOnce } from "./state.js";
 
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
 const KEY = "arena:sportsshadow:v1", POLL_MS = 60_000, STAKE = 10;
 const SETTLE_AFTER_MS = 3 * 3600_000, SETTLE_EVERY_MS = 15 * 60_000, GIVE_UP_MS = 48 * 3600_000;
 export const LEAGUES = ["mlb", "nba", "nfl", "nhl", "wnba", "ncaaf", "ncaab", "cfb", "cbb", "epl", "laliga", "la-liga", "seriea", "serie-a", "bundesliga", "ligue1", "ligue-1", "mls", "ucl", "uel", "ufc", "atp", "wta"];
+const envNum = (k, d) => { const v = Number(process.env[k]); return process.env[k] != null && process.env[k] !== "" && Number.isFinite(v) ? v : d; };
+export const LIVE = { on: process.env.SPORTS_LIVE === "true", stake: envNum("SPORTS_LIVE_STAKE", 1), dailyLoss: envNum("SPORTS_LIVE_DAILY_LOSS", 5),
+  maxLoss: envNum("SPORTS_LIVE_MAX_LOSS", 10), minPx: 0.10, maxPx: 0.90, slip: 0.02 };
 const THREE_WAY = new Set(["epl", "laliga", "la-liga", "seriea", "serie-a", "bundesliga", "ligue1", "ligue-1", "mls", "ucl", "uel"]);
 
 const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -79,8 +89,8 @@ export function matchUs(sig, markets) {
   const b = backedTeam(sig);
   if (!b.team) return { why: b.why };
   const hit = cands.find(m => { const y = yesTeamOf(m.question); return y && sameTeam(y, b.team); });
-  if (hit) return { market: hit, buy: b.against ? "NO" : "YES" };
-  if (cands.length === 1 && !THREE_WAY.has(sig.league)) return { market: cands[0], buy: b.against ? "YES" : "NO" };   // two teams: the other one
+  if (hit) return { market: hit, buy: b.against ? "NO" : "YES", exact: !b.against };
+  if (cands.length === 1 && !THREE_WAY.has(sig.league)) return { market: cands[0], buy: b.against ? "YES" : "NO", exact: false };   // two teams: the other one
   return { why: `found ${cands.length} US market(s) for ${ev} but none names "${b.team}"` };
 }
 
@@ -95,11 +105,13 @@ export function summary(closed) {
 const band = px => (px < 0.35 ? "under 35¢" : px < 0.5 ? "35-50¢" : px < 0.65 ? "50-65¢" : px < 0.8 ? "65-80¢" : "80¢+");
 
 // ── Runtime ─────────────────────────────────────────────────────────
-const state = { enabled: false, wallets: [], seen: [], open: [], closed: [], misses: [], started: false, lastPollAt: 0, lastError: null, primed: false };
-let pm = null, fetchImpl = (...a) => fetch(...a);
+const state = { enabled: false, wallets: [], seen: [], open: [], closed: [], misses: [], started: false, lastPollAt: 0, lastError: null, primed: false,
+  live: { open: [], closed: [], missed: 0 } };
+let pm = null, fetchImpl = (...a) => fetch(...a), isHalted = () => null, claim = claimOnce;
 const events = [];
 function emit(msg) { events.push({ t: Date.now(), msg }); if (events.length > 100) events.shift(); console.log(`  🏟 [sports-shadow] ${msg}`); }
-const save = () => saveJSON(KEY, { seen: state.seen.slice(-800), open: state.open, closed: state.closed.slice(-300), misses: state.misses.slice(-60) });
+const save = () => saveJSON(KEY, { seen: state.seen.slice(-800), open: state.open, closed: state.closed.slice(-300), misses: state.misses.slice(-60),
+  live: { open: state.live.open, closed: state.live.closed.slice(-300), missed: state.live.missed } });
 
 async function poll(now = Date.now()) {
   state.lastPollAt = now;
@@ -130,9 +142,44 @@ async function poll(now = Date.now()) {
       usSlug: m.market.slug, usQuestion: m.market.question, buy: m.buy, px, band: band(px), start: Number.isFinite(start) ? start : now + 6 * 3600_000, openedAt: now, lastTry: 0 };
     state.open.push(bet);
     emit(`COPIED ${s.name || s.wallet.slice(0, 6)}: ${s.outcome} in "${s.title}" ($${s.usd} @ ${Math.round(s.price * 100)}¢) → paper ${m.buy} on US "${m.market.question}" @ ${Math.round(px * 100)}¢, $${STAKE}`);
+    if (LIVE.on) { try { await maybeLive(bet, m, now); } catch (err) { emit(`REAL sports bet error: ${err.message}`); } }
   }
   await save();
 }
+// ── Real money ──────────────────────────────────────────────────────
+const dayOf = t => new Date(t).toISOString().slice(0, 10);
+export function liveTotals(now = Date.now()) {
+  const done = state.live.closed.filter(b => b.won != null);
+  return { bets: done.length, wins: done.filter(b => b.won).length, pnl: +done.reduce((a, b) => a + b.pnl, 0).toFixed(2),
+    today: +done.filter(b => dayOf(b.closedAt) === dayOf(now)).reduce((a, b) => a + b.pnl, 0).toFixed(2) };
+}
+/** Why a real sports bet can't be placed now, or null if it can. */
+export function liveBlock(bet, m, now = Date.now()) {
+  if (!LIVE.on) return "real sports money is off (SPORTS_LIVE is not true)";
+  const h = isHalted(); if (h) return `real money halted: ${h}`;
+  if (!m.exact) return "the team was inferred, not matched by name, so this one stays paper";
+  if (bet.px < LIVE.minPx || bet.px > LIVE.maxPx) return `price ${Math.round(bet.px * 100)}¢ is outside ${Math.round(LIVE.minPx * 100)}-${Math.round(LIVE.maxPx * 100)}¢`;
+  const t = liveTotals(now);
+  if (t.pnl <= -LIVE.maxLoss) return `total real sports loss $${(-t.pnl).toFixed(2)} reached the -$${LIVE.maxLoss} limit`;
+  if (t.today <= -LIVE.dailyLoss) return `today's real sports loss $${(-t.today).toFixed(2)} reached the -$${LIVE.dailyLoss} daily limit`;
+  if (state.live.open.concat(state.live.closed).some(b => b.usSlug === bet.usSlug)) return "already has a real bet on this game";
+  return null;
+}
+async function maybeLive(bet, m, now) {
+  const why = liveBlock(bet, m, now);
+  if (why) { emit(`REAL sports bet skipped: ${why}`); return; }
+  let mine = false;
+  try { mine = await claim(`arena:sportsshadow:live:${bet.usSlug}`, 7 * 86400); } catch (err) { emit(`REAL sports bet skipped: couldn't confirm no other copy is betting (${err.message})`); return; }
+  if (!mine) { emit("REAL sports bet skipped: another running copy of the bot already bet this game"); return; }
+  const bp = await pm.getBuyingPower();
+  if (!(bp?.buyingPower >= LIVE.stake)) { emit(`REAL sports bet skipped: buying power $${(bp?.buyingPower || 0).toFixed(2)} is under $${LIVE.stake}`); return; }
+  const r = await pm.buyOutcomeFOK({ slug: bet.usSlug, side: bet.buy === "YES" ? "Up" : "Down", sizeUsd: LIVE.stake, price: bet.px, slip: LIVE.slip, minQty: m.market.minQty || 0.01 });
+  if (!r.filled) { state.live.missed++; emit(`REAL ${bet.buy} on "${bet.usQuestion}" up to ${Math.round(Math.min(0.99, bet.px + LIVE.slip) * 100)}¢ didn't fill (${r.error})`); return; }
+  const px = +(r.cost / r.qty).toFixed(4), fee = +takerFee(r.qty, px).toFixed(4);
+  state.live.open.push({ ...bet, px, qty: r.qty, cost: r.cost, fee, orderId: r.orderId || null, lastTry: 0 });
+  emit(`REAL BUY ${bet.buy} "${bet.usQuestion}": ${r.qty} shares @ ${Math.round(px * 100)}¢ = $${r.cost.toFixed(2)}`);
+}
+
 function miss(s, why) {
   state.misses.push({ t: Date.now(), title: s.title, outcome: s.outcome, eventSlug: s.eventSlug, why });
   if (state.misses.length > 60) state.misses.shift();
@@ -154,15 +201,31 @@ async function settleOpen(now = Date.now()) {
     changed = true;
     emit(won == null ? `VOID "${b.usQuestion}": no result after 48h` : `${won ? "WON" : "LOST"} ${b.buy} "${b.usQuestion}" @ ${Math.round(b.px * 100)}¢: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
   }
+  // Real bets settle the same way, on what was really paid.
+  for (const b of [...state.live.open]) {
+    if (now < b.start + SETTLE_AFTER_MS || now - b.lastTry < SETTLE_EVERY_MS) continue;
+    b.lastTry = now;
+    const out = await pm.getSettlement(b.usSlug).catch(() => null);
+    if (out == null && now - b.start <= GIVE_UP_MS) continue;
+    state.live.open = state.live.open.filter(x => x !== b);
+    const won = out == null ? null : (out === 1) === (b.buy === "YES");
+    const pnl = won == null ? 0 : +((won ? b.qty : 0) - b.cost - b.fee).toFixed(2);
+    state.live.closed.push({ ...b, won, pnl, closedAt: now });
+    changed = true;
+    emit(won == null ? `REAL VOID "${b.usQuestion}": no result after 48h (check Polymarket)` : `REAL ${won ? "WON" : "LOST"} ${b.buy} "${b.usQuestion}": ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
+  }
   if (changed) await save();
 }
 
 export function sportsShadowStatus() {
   return { enabled: state.enabled, wallets: state.wallets, lastPollAt: state.lastPollAt, lastError: state.lastError, usListAt: pm?.cachedSportsMoneylines?.()?.at || null,
+    live: { on: LIVE.on, stake: LIVE.stake, dailyLoss: LIVE.dailyLoss, maxLoss: LIVE.maxLoss, halted: isHalted() || null, missed: state.live.missed, ...liveTotals(),
+      open: state.live.open.slice(-20).reverse(), recent: state.live.closed.slice(-20).reverse() },
     summary: summary(state.closed), open: state.open.slice(-20).reverse(), recent: state.closed.slice(-20).reverse(), misses: state.misses.slice(-15).reverse(), events: events.slice(-30) };
 }
 
-export async function startSportsShadow({ wallets }) {
+export async function startSportsShadow({ wallets, halted }) {
+  if (halted) isHalted = halted;
   if (process.env.SPORTS_SHADOW === "false") { console.log("🏟 SPORTS SHADOW off (SPORTS_SHADOW=false)"); return; }
   if (state.started) return;
   state.started = true;
@@ -171,15 +234,17 @@ export async function startSportsShadow({ wallets }) {
   state.wallets = [...new Set([...(wallets || []), ...extra])];
   if (!state.wallets.length) { console.log("🏟 SPORTS SHADOW: no wallets to follow"); return; }
   const saved = await loadJSON(KEY);
-  if (saved) { state.seen = saved.seen || []; state.open = saved.open || []; state.closed = saved.closed || []; state.misses = saved.misses || []; state.primed = state.seen.length > 0; }
+  if (saved) { state.seen = saved.seen || []; state.open = saved.open || []; state.closed = saved.closed || []; state.misses = saved.misses || []; state.primed = state.seen.length > 0;
+    if (saved.live) state.live = { open: saved.live.open || [], closed: saved.live.closed || [], missed: saved.live.missed || 0 }; }
   state.enabled = true;
   const run = async () => { try { await poll(); await settleOpen(); state.lastError = null; } catch (err) { state.lastError = err.message; } };
   setTimeout(run, 30_000);
   setInterval(run, POLL_MS);
+  if (LIVE.on) console.log(`🏟 SPORTS SHADOW REAL MONEY on: $${LIVE.stake} per copied bet (name-matched, pre-game, 10-90¢), -$${LIVE.dailyLoss}/day, off at -$${LIVE.maxLoss}`);
   console.log(`🏟 SPORTS SHADOW on: practice copies of ${state.wallets.length} wallet(s)' sports bets onto Polymarket US, checked every ${POLL_MS / 1000}s`);
 }
 
 // Tests.
-export function _set({ pmMod, fetchFn } = {}) { if (pmMod) pm = pmMod; if (fetchFn) fetchImpl = fetchFn; }
-export function _reset() { Object.assign(state, { seen: [], open: [], closed: [], misses: [], primed: false, wallets: [] }); events.length = 0; }
+export function _set({ pmMod, fetchFn, halted, claimFn } = {}) { if (pmMod) pm = pmMod; if (fetchFn) fetchImpl = fetchFn; if (halted) isHalted = halted; if (claimFn) claim = claimFn; }
+export function _reset() { Object.assign(state, { seen: [], open: [], closed: [], misses: [], primed: false, wallets: [], live: { open: [], closed: [], missed: 0 } }); events.length = 0; }
 export const _poll = poll, _settle = settleOpen, _state = state;
