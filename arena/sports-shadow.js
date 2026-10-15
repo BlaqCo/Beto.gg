@@ -218,7 +218,12 @@ async function maybeLive(bet, m, now) {
   emit(`REAL BUY ${bet.buy} "${bet.usQuestion}": ${r.qty} shares @ ${Math.round(px * 100)}¢ = $${r.cost.toFixed(2)}`);
 }
 
+const missedGames = new Set();
 function miss(s, why) {
+  // One line per game and reason: a wallet often places many trades on the same game.
+  const k = `${s.eventSlug || s.slug}|${why}`;
+  if (missedGames.has(k)) return;
+  missedGames.add(k); if (missedGames.size > 2000) missedGames.delete(missedGames.values().next().value);
   state.misses.push({ t: Date.now(), title: s.title, outcome: s.outcome, eventSlug: s.eventSlug, why });
   if (state.misses.length > 60) state.misses.shift();
   emit(`not copied: ${s.outcome} in "${s.title}": ${why}`);
