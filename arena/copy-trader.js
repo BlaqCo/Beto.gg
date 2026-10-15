@@ -80,7 +80,8 @@ export const CFG = {
   liveDcaMult: env("COPY_LIVE_DCA_MULT", 2),    // DCA = this x the bet, like SHADOW ($2 / $6 / $10)
   liveDailyLoss: env("COPY_LIVE_DAILY_LOSS", 10),// no new real bets after this much lost in a UTC day
   liveMaxLoss: env("COPY_LIVE_MAX_LOSS", 15),   // real trading switches itself off at this total loss
-  liveSlip: env("COPY_LIVE_SLIP", 0.03),        // real orders may pay this much over the quote (never over maxPrice)
+  liveSlip: env("COPY_LIVE_SLIP", 0.03),        // real orders may pay this much over the quote...
+  liveOverCap: env("COPY_LIVE_OVER_CAP", 0),    // ...and at most this much over the band's top (maxPrice)
   // UTC hours real bets may be placed, "start-end" (end not included); "" = any hour. Paper keeps
   // betting around the clock so the hours can be re-checked. Oct 10-11: 00-12 UTC won 25 of 30,
   // 12-24 UTC won 11 of 27 (US trading hours, when BTC swings late in the window).
@@ -974,8 +975,13 @@ export async function withBook(us) {
   return { ...us, bid: null, ask: null, src: "no-book" };
 }
 
-/** How much over the quote a real entry may pay: CFG.liveSlip, but never past the band's top. */
-export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.round((CFG.maxPrice - price) * 100) / 100));
+/**
+ * How much over the quote a real entry may pay: CFG.liveSlip, but never more than
+ * CFG.liveOverCap past the band's top (0 = never past it). At the top of the band that left
+ * no room at all, and a fill-or-kill order at exactly 72¢ expired whenever the ask ticked up
+ * (Oct 15, 05:25 UTC: two expiries on a winning-looking entry).
+ */
+export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.round((CFG.maxPrice + CFG.liveOverCap - price) * 100) / 100));
 
 export const liveSize = tier => (tier === "strong" ? CFG.liveStrong : tier === "weak" ? CFG.liveWeak : CFG.liveStake);
 
