@@ -86,7 +86,8 @@ test("SPORTS SHADOW follows scouted wallets, skipping their earlier bets", async
   assert.equal(ss._state.misses.length, 0, "first look at a wallet copies nothing");
   rows = [...rows, { ...rows[0], transactionHash: "0xnew" }];
   await ss._poll(Date.now());
-  assert.equal(ss._state.misses.length, 1, "the new bet is processed (no US list here, so it's a logged miss)");
+  assert.equal(ss._state.misses.length, 0, "the new bet waits: no US list here yet");
+  assert.equal(ss._state.seen.filter(id => /0xnew/.test(id)).length, 0, "and stays unseen so it's tried again");
 });
 
 test("the scout only rates leagues Polymarket US lists", () => {
