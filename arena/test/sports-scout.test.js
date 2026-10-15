@@ -4,7 +4,7 @@ import * as sc from "../sports-scout.js";
 import * as ss from "../sports-shadow.js";
 
 const ev = (slug, markets, endDate = new Date(Date.now() - 86400_000).toISOString()) => ({ slug, endDate, markets });
-const mkt = (id, q, outcomes, prices) => ({ conditionId: id, question: q, outcomes: JSON.stringify(outcomes), outcomePrices: JSON.stringify(prices) });
+const mkt = (id, q, outcomes, prices, volumeNum = 50000) => ({ conditionId: id, question: q, outcomes: JSON.stringify(outcomes), outcomePrices: JSON.stringify(prices), volumeNum });
 
 test("settled main markets only: no spreads/totals, no unsettled", () => {
   const e = ev("nba-lal-bos-2026-10-13", [
@@ -16,6 +16,7 @@ test("settled main markets only: no spreads/totals, no unsettled", () => {
   const m = sc.settledMarkets(e);
   assert.deepEqual(m.map(x => x.conditionId), ["ml"]); assert.equal(m[0].winner, 1); assert.equal(m[0].league, "nba");
   assert.deepEqual(sc.settledMarkets(ev("presidential-election-2028", [mkt("x", "Who wins?", ["A", "B"], ["1", "0"])])), [], "not a sports slug");
+  assert.deepEqual(sc.settledMarkets(ev("atp-a-b-2026-10-13", [mkt("tiny", "A vs B", ["A", "B"], ["1", "0"], 300)])), [], "too little volume to judge anyone");
 });
 
 test("per-game wallet result: buys, sells, $1 per winning share", () => {

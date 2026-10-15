@@ -19,7 +19,7 @@ const GAMMA = process.env.COPY_GAMMA_URL || "https://gamma-api.polymarket.com";
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
 const envNum = (k, d) => { const v = Number(process.env[k]); return process.env[k] != null && process.env[k] !== "" && Number.isFinite(v) ? v : d; };
 export const SCOUT = { minGames: envNum("SCOUT_MIN_GAMES", 8), minRoi: envNum("SCOUT_MIN_ROI", 0.05), minWin: envNum("SCOUT_MIN_WIN", 0.55),
-  top: envNum("SCOUT_TOP", 10), leagueMin: envNum("SCOUT_LEAGUE_MIN", 4), gamesPerRun: envNum("SCOUT_GAMES_PER_RUN", 80), keepDays: envNum("SCOUT_KEEP_DAYS", 21) };
+  top: envNum("SCOUT_TOP", 10), minVolume: envNum("SCOUT_MIN_VOLUME", 20000), leagueMin: envNum("SCOUT_LEAGUE_MIN", 4), gamesPerRun: envNum("SCOUT_GAMES_PER_RUN", 80), keepDays: envNum("SCOUT_KEEP_DAYS", 21) };
 const KEY = "arena:sportsscout:v1", REFRESH_MS = 3 * 3600_000, MAX_TRADE_PAGES = 6, PAGE = 500;
 const NOT_MAIN = /spread|handicap|o\/u|over\/under|total|points|rebounds|assists|yards|1st|first half|2nd half|quarter|inning|props?\b|exact|both teams|clean sheet|corners|cards/i;
 
@@ -27,18 +27,21 @@ const parseArr = v => { if (Array.isArray(v)) return v; try { const x = JSON.par
 const leagueOf = slug => { const s = String(slug || "").toLowerCase(); return /\d{4}-\d{2}-\d{2}/.test(s) && /^[a-z0-9]+-/.test(s) ? s.split("-")[0] : null; };
 
 /** A closed gamma event → its settled main markets: [{ conditionId, outcomes, winner, league, eventSlug, end }]. */
-export function settledMarkets(ev) {
+export function settledMarkets(ev, minVolume = SCOUT.minVolume) {
   const league = leagueOf(ev?.slug);
   if (!league) return [];
   const end = Date.parse(ev.endDate || ev.closedTime || "") || null;
   const out = [];
   for (const m of ev.markets || []) {
     if (!m?.conditionId || NOT_MAIN.test(String(m.question || m.groupItemTitle || ""))) continue;
+    // Only games people actually bet on: the first live run picked 80 tiny markets with 42 trades in all.
+    const vol = Number(m.volumeNum ?? m.volume ?? 0);
+    if (minVolume > 0 && !(vol >= minVolume)) continue;
     const outcomes = parseArr(m.outcomes), prices = parseArr(m.outcomePrices).map(Number);
     if (outcomes.length < 2 || prices.length !== outcomes.length) continue;
     const winner = prices.findIndex(p => p >= 0.99);
     if (winner < 0 || prices.filter(p => p >= 0.99).length !== 1) continue;   // not settled cleanly
-    out.push({ conditionId: m.conditionId, outcomes, winner, league, eventSlug: ev.slug, end });
+    out.push({ conditionId: m.conditionId, outcomes, winner, league, eventSlug: ev.slug, end, volume: vol });
   }
   return out;
 }
@@ -103,13 +106,14 @@ async function getJSON(url) {
 export async function runScout(now = Date.now()) {
   const done = new Set(state.done);
   const markets = [];
-  for (let off = 0; off < 1000 && markets.length < SCOUT.gamesPerRun * 2; off += 100) {
+  for (let off = 0; off < 2000 && markets.length < SCOUT.gamesPerRun * 2; off += 100) {
     const evs = await getJSON(`${GAMMA}/events?closed=true&tag_slug=sports&order=endDate&ascending=false&limit=100&offset=${off}`);
     const list = Array.isArray(evs) ? evs : evs?.data || [];
     if (!list.length) break;
     for (const ev of list) for (const m of settledMarkets(ev)) if (!done.has(m.conditionId) && (!m.end || now - m.end < SCOUT.keepDays * 86400_000)) markets.push(m);
   }
   let games = 0, trades = 0;
+  markets.sort((a, b) => (b.volume || 0) - (a.volume || 0));
   for (const mk of markets.slice(0, SCOUT.gamesPerRun)) {
     const rows = [];
     for (let p = 0; p < MAX_TRADE_PAGES; p++) {
