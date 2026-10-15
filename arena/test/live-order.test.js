@@ -72,3 +72,14 @@ test("buyOutcomeFOK: a Down fill that only shows as a short position is still ca
   const r = await pm.buyOutcomeFOK({ slug: "x", side: "Down", sizeUsd: 1, price: 0.80 });
   assert.equal(r.filled, true); assert.equal(r.viaPositions, true); assert.equal(r.qty, 1.23);
 });
+
+test("real-order slip: none past the band's top unless COPY_LIVE_OVER_CAP allows it", async () => {
+  const ct = await import("../copy-trader.js");
+  const keep = { maxPrice: ct.CFG.maxPrice, liveSlip: ct.CFG.liveSlip, liveOverCap: ct.CFG.liveOverCap };
+  try {
+    Object.assign(ct.CFG, { maxPrice: 0.72, liveSlip: 0.03, liveOverCap: 0 });
+    assert.equal(ct.liveSlipFor(0.72), 0); assert.equal(ct.liveSlipFor(0.70), 0.02); assert.equal(ct.liveSlipFor(0.60), 0.03);
+    ct.CFG.liveOverCap = 0.02;
+    assert.equal(ct.liveSlipFor(0.72), 0.02, "up to 74¢ at the top of the band"); assert.equal(ct.liveSlipFor(0.60), 0.03);
+  } finally { Object.assign(ct.CFG, keep); }
+});

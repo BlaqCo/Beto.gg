@@ -169,3 +169,13 @@ test("wallet report: classifies positions, aggregates by league and price, gates
     assert.match(ss.liveBlock(bet, { exact: true }), /needs a proven record/);
   } finally { ss.LIVE.on = false; }
 });
+
+test("wallet report: pages through every closed position, 50 at a time", async () => {
+  const all = Array.from({ length: 120 }, (_, i) => ({ conditionId: "c" + i, outcomeIndex: 0, eventSlug: `nba-a-b-2026-10-${String(1 + (i % 28)).padStart(2, "0")}`, avgPrice: 0.5, totalBought: 10, realizedPnl: i % 3 ? 5 : -5 }));
+  const urls = [];
+  wr._set({ fetchFn: async url => { urls.push(url); const off = Number(/offset=(\d+)/.exec(url)[1]); return { ok: true, json: async () => all.slice(off, off + 50) }; } });
+  const rep = await wr.buildReport("0xpages");
+  assert.equal(rep.rows, 120, "all three pages read");
+  assert.match(urls[0], /limit=50&offset=0/); assert.match(urls[2], /offset=100/);
+  assert.equal(rep.byKind[0].n, 120); assert.equal(rep.byKind[0].wins, 80, "losers included, not just the first page of winners");
+});

@@ -11,7 +11,9 @@
  * Read-only. Refreshed every 6 hours; GET /api/walletreport.
  */
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
-const PAGE = 500, MAX_PAGES = 8, REFRESH_MS = 6 * 3600_000;
+// The data-api returns at most 50 rows a page (asking for 500 still gives 50), and the first
+// page looked like the biggest winners (Oct 15: 50 rows, all won). So page through everything.
+const PAGE = 50, MAX_PAGES = 60, REFRESH_MS = 6 * 3600_000;
 export const RECORD_MIN_N = Number(process.env.SPORTS_RECORD_MIN_N || 20);
 
 const CRYPTO = /(^|-)(btc|bitcoin|eth|ethereum|sol|solana|xrp|doge|crypto)(-|$)/i;
@@ -63,7 +65,7 @@ let fetchImpl = (...a) => fetch(...a);
 const reports = new Map();     // wallet -> { at, report, error, shape }
 
 export async function buildReport(wallet) {
-  const rows = [];
+  const rows = [], seen = new Set(), key = r => `${r.conditionId || r.asset || r.slug}:${r.outcomeIndex ?? r.outcome ?? ""}`;
   let shape = null;
   for (let p = 0; p < MAX_PAGES; p++) {
     const res = await fetchImpl(`${DATA}/closed-positions?user=${wallet}&limit=${PAGE}&offset=${p * PAGE}`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
@@ -71,11 +73,13 @@ export async function buildReport(wallet) {
     const page = await res.json();
     const list = Array.isArray(page) ? page : page?.data || page?.positions || [];
     if (!shape && list[0]) shape = Object.keys(list[0]).slice(0, 25);
-    rows.push(...list);
-    if (list.length < PAGE) break;
+    const fresh = list.filter(r => !seen.has(key(r)));
+    fresh.forEach(r => seen.add(key(r)));
+    rows.push(...fresh);
+    if (!list.length || !fresh.length) break;   // past the end, or the API repeating a page
   }
   const results = rows.map(toResult).filter(Boolean);
-  return { wallet, rows: rows.length, usable: results.length, shape, ...aggregate(results) };
+  return { wallet, rows: rows.length, usable: results.length, shape, complete: rows.length < PAGE * MAX_PAGES, ...aggregate(results) };
 }
 
 export async function refresh(wallet) {
