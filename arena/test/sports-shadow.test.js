@@ -215,3 +215,16 @@ test("side bets and non-US leagues are skipped quietly, not logged as misses", (
   assert.equal(ss.uncopyable(sig({ league: "uel" }), leagues), "league not on US");
   assert.equal(ss.uncopyable(sig({ league: "uel" }), null), null, "no US list yet: don't guess");
 });
+
+test("US 'Who will win' game markets match by their side names", () => {
+  const us = [{ slug: "aec-nba-tor-nyk-2026-10-15", question: "Who will win in the upcoming basketball event Raptors vs Knicks scheduled for October 15, 2026?",
+    sides: [{ long: true, name: "Raptors" }, { long: false, name: "Knicks" }], gameStartIso: "2099-01-01T00:00:00Z", ask: 0.4, bid: 0.38 }];
+  const sig = o => ss.toSignal(trade({ eventSlug: "nba-tor-nyk-2026-10-15", slug: "nba-tor-nyk-2026-10-15", title: "Raptors vs. Knicks", ...o }));
+  const yes = ss.matchUs(sig({ outcome: "Raptors" }), us);
+  assert.equal(yes.market.slug, "aec-nba-tor-nyk-2026-10-15"); assert.equal(yes.buy, "YES"); assert.equal(yes.exact, true);
+  const no = ss.matchUs(sig({ outcome: "Knicks" }), us);
+  assert.equal(no.buy, "NO"); assert.equal(no.exact, true, "the short side names the Knicks, so this is a named match");
+  // Sides labelled only Yes/No on a "Who will win" question can't be mapped.
+  const blind = [{ ...us[0], sides: [{ long: true, name: "Yes" }, { long: false, name: "No" }] }];
+  assert.match(ss.matchUs(sig({ outcome: "Raptors" }), blind).why, /no US market/);
+});
