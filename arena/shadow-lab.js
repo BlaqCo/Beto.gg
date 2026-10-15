@@ -194,7 +194,7 @@ export function sensitivity(base, windows) {
 }
 
 // ── Runtime: logging snapshots ───────────────────────────────────────
-const state = { cur: null, windows: [], proposals: [], lineup: [], lastAutoAt: 0, autoLog: [], loaded: false, logged: 0 };
+const state = { cur: null, awaiting: new Map(), windows: [], proposals: [], lineup: [], lastAutoAt: 0, autoLog: [], loaded: false, logged: 0 };
 let liveByRule = () => ({});     // SHADOW registers: real-money results per rule id
 
 /**
@@ -204,7 +204,12 @@ let liveByRule = () => ({});     // SHADOW registers: real-money results per rul
 export function observe({ slug, start, end, now, up, down, consensus, pSide, lead = null, move = null }) {
   if (!slug || end - now > SNAP_FROM_MS || now >= end) return;
   let w = state.cur;
-  if (!w || w.slug !== slug) { w = state.cur = { slug, start, end, snaps: [], lastAt: 0 }; }
+  if (!w || w.slug !== slug) {
+    // The result of the window just recorded arrives ~5 min after it closes, by which time the
+    // next window is already being recorded: keep it waiting instead of dropping it.
+    if (w?.snaps.length) { state.awaiting.set(w.slug, w); if (state.awaiting.size > 8) state.awaiting.delete(state.awaiting.keys().next().value); }
+    w = state.cur = { slug, start, end, snaps: [], lastAt: 0 };
+  }
   if (now - w.lastAt < SNAP_EVERY_MS) return;
   w.lastAt = now;
   const c = consensus || {};
@@ -214,9 +219,10 @@ export function observe({ slug, start, end, now, up, down, consensus, pSide, lea
 
 /** Window settled: attach the outcome and save it to the log. */
 export async function settle(rec) {
-  const w = state.cur;
-  if (!w || w.slug !== rec.slug) return;
-  state.cur = null;
+  let w = state.awaiting.get(rec.slug);
+  if (w) state.awaiting.delete(rec.slug);
+  else if (state.cur?.slug === rec.slug) { w = state.cur; state.cur = null; }
+  if (!w) return;
   if (!w.snaps.length) return;
   const row = { slug: w.slug, start: w.start, end: w.end, outcome: rec.outcome ?? null, snaps: w.snaps };
   state.windows.push(row);
@@ -375,5 +381,5 @@ export function labStatus(currentRule) {
 }
 
 // Tests.
-export function _reset() { state.cur = null; state.windows = []; state.proposals = []; state.lineup = []; state.lastAutoAt = 0; state.autoLog = []; state.loaded = true; }
+export function _reset() { state.cur = null; state.awaiting.clear(); state.windows = []; state.proposals = []; state.lineup = []; state.lastAutoAt = 0; state.autoLog = []; state.loaded = true; }
 export function _push(w) { state.windows.push(w); }
