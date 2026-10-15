@@ -112,11 +112,29 @@ test("TUNER: waits for data, then turns a model reply into a backtested proposal
   const realFetch = globalThis.fetch, realKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test";
   let sent = null;
-  globalThis.fetch = async (url, opts) => { sent = JSON.parse(opts.body); return { ok: true, json: async () => ({ content: [{ type: "text", text: JSON.stringify({ name: "early-entry", rule: { ...RULE, maxLeftSec: 360 }, rationale: "test" }) }] }) }; };
+  // Windows after "now", so they count as forward bets whatever day the tests run.
+  const T = Date.now() + 60_000, later = (i, outcome) => ({ slug: `f${i}`, start: T + i * 900_000, end: T + (i + 1) * 900_000, outcome, snaps: [snap()] });
+  const reply = props => async (url, opts) => { sent = JSON.parse(opts.body); return { ok: true, json: async () => ({ content: [{ type: "text", text: JSON.stringify({ proposals: props }) }] }) }; };
   try {
-    const p = await agents.tune(log, lab);
-    assert.equal(p.id, "early-entry"); assert.equal(p.author, "TUNER");
-    assert.match(sent.messages[0].content, /Sensitivity/);
-    assert.match(lines.at(-1), /new SHADOW proposal early-entry/);
+    // SEARCH: no champion yet, two distinct ideas.
+    globalThis.fetch = reply([{ name: "early-entry", rule: { ...RULE, maxLeftSec: 360 }, rationale: "test" }, { name: "crowd-only", rule: { ...RULE, follow: "consensus" } }]);
+    const made = await agents.tune(log, lab);
+    assert.deepEqual(made.map(p => p.id), ["early-entry", "crowd-only"]); assert.equal(made[0].author, "TUNER"); assert.equal(made[0].parent, null);
+    assert.match(sent.system, /MODE: SEARCH/); assert.match(sent.messages[0].content, /Sensitivity/);
+    assert.match(lines.at(-1), /new SHADOW proposal crowd-only/);
+    // early-entry wins 20+ forward bets: it becomes the champion and the TUNER refines it.
+    for (let i = 1; i <= 30; i++) lab._push(later(i, i % 4 ? 1 : 0));
+    const champ = lab.champion()?.id;
+    assert.ok(["early-entry", "crowd-only"].includes(champ), "a proposal with 20+ profitable forward bets is the champion");
+    globalThis.fetch = reply([{ name: "champ-tighter", rule: { ...RULE, minShare: 0.95 } }]);
+    const ref = await agents.tune(log, lab);
+    assert.match(sent.system, /MODE: REFINE/); assert.match(sent.system, new RegExp(champ));
+    assert.equal(ref[0].parent, champ);
+    assert.match(lines.at(-1), new RegExp(`refining ${champ}`));
+    assert.equal(lab.labStatus(RULE).mode, "refine");
+    // The refinement is judged against the champion on the same windows.
+    for (let i = 31; i <= 55; i++) lab._push(later(i, 1));
+    const vs = lab.scoreProposal(ref[0]).vsParent;
+    assert.equal(vs.parent, champ); assert.equal(vs.n, vs.parentN, "same windows for both");
   } finally { globalThis.fetch = realFetch; if (realKey == null) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = realKey; }
 });

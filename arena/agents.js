@@ -157,9 +157,11 @@ const RULE_SCHEMA = `{
   },
   "rationale": "1-2 sentences citing the numbers"
 }`;
-const MIN_LAB_WINDOWS = 48;   // half a day of BTC15 before the TUNER says anything
+const MIN_LAB_WINDOWS = Number(process.env.AGENTS_TUNER_MIN_WINDOWS || 24);   // ~6 hours of BTC15 before the TUNER says anything
+const TUNER_EVERY_MIN = Math.max(30, Number(process.env.AGENTS_TUNER_EVERY_MIN || 60));
+const TUNER_PER_RUN = Math.max(1, Math.min(4, Number(process.env.AGENTS_TUNER_PER_RUN || 2)));
 
-export async function tune(log, labMod = null) {
+export async function tune(log, labMod = null, perRun = TUNER_PER_RUN) {
   const lab = labMod || await import("./shadow-lab.js");
   await lab.loadLab();
   const windows = lab.labWindows().filter(w => w.outcome != null);
@@ -169,26 +171,45 @@ export async function tune(log, labMod = null) {
   const v = lab.validateRule(cur || {});
   if (!v.ok) { log("TUNER", `can't read SHADOW's rule: ${v.error}`); return null; }
   const st = lab.labStatus(v.rule);
-  const sens = lab.sensitivity(v.rule, windows);
-  const system = `You are TUNER, the researcher who improves SHADOW, a bot that copies smart Polymarket wallets on 15-minute BTC Up/Down markets. You propose ONE change to SHADOW's entry rule at a time.
-You get: SHADOW's current rule and its backtest over the signal log (every window, every 15s in the last 10 minutes: smart-money side and share, wallets for and against, the primary wallet's side, live prices), a sensitivity table (what moving each setting alone does), and the proposals already being tested with their backtest and FORWARD numbers (forward = windows after the proposal was made, the only numbers that can't be fitted).
-Bets are $10, pay the ask plus a taker fee of 6% x p x (1-p) per share, and are held to the close. perBet is $ profit per $10 bet; lcb is the low end of its 95% range.
-Rules: the goal is a rule that makes money on FUTURE windows, not one that fits the past. Prefer simple changes with a clear reason (one or two settings), backed by many bets (the sample shrinks as filters tighten; under 40 bets proves nothing). Don't repeat an existing proposal. Never claim certainty.
-Reply with ONLY JSON: ${RULE_SCHEMA}`;
-  const brief = p => ({ id: p.id, rule: p.text, author: p.author, status: p.status, backtest: { n: p.backtest.n, winRate: p.backtest.winRate, perBet: p.backtest.perBet, lcb: p.backtest.lcb }, forward: { n: p.forward.n, winRate: p.forward.winRate, perBet: p.forward.perBet } });
+  const champ = lab.champion();
+  const base = champ ? champ.rule : v.rule;
+  const sens = lab.sensitivity(base, windows);
+  const goal = champ
+    ? `MODE: REFINE. "${champ.id}" is the champion: it has ${champ.forward.n} forward bets at ${champ.forward.perBet >= 0 ? "+" : ""}${champ.forward.perBet}/bet${lab.appliedRule()?.id === champ.id ? " and is live on SHADOW" : ""}. Your job now is to make IT better, not to search elsewhere. Each proposal is a variation of the champion that changes ONE or TWO settings, aimed at its weak spot (fewer losing bets, better prices, or more bets at the same edge). It will be judged head-to-head against the champion on the same future windows. The sensitivity table below is built around the champion.`
+    : `MODE: SEARCH. No strategy has proven itself on forward bets yet. Explore DIFFERENT ideas that could win: price bands, entry timing, how much smart money must agree, following the primary wallet vs the crowd, Up/Down only, hours. Make each proposal distinct from the others and from existing proposals. The sensitivity table below is built around SHADOW's current rule.`;
+  const system = `You are TUNER, the researcher who finds and improves SHADOW's edge. SHADOW copies smart Polymarket wallets on 15-minute BTC Up/Down markets; the goal is the rule that WINS MONEY on future windows.
+You get: the rule SHADOW runs now and its replay over the signal log (every window, every 15s in the last 10 minutes: smart-money side and share, wallets for and against, the primary wallet's side, live prices), a sensitivity table (what moving each setting alone does), and the proposals being tested with their replay and FORWARD numbers (forward = windows after the proposal was made, the only numbers that can't be fitted).
+Bets are $10, pay the ask plus a taker fee of 6% x p x (1-p) per share, and are held to the close. perBet is $ profit per $10 bet; lcb is the low end of its 95% range; total = perBet x bets.
+${goal}
+Rules: favour total profit backed by many bets over a high win rate on few (under 40 bets proves nothing). Prefer simple rules with a clear reason. Never repeat an existing proposal. Never claim certainty.
+Reply with ONLY JSON: {"proposals": [ ${RULE_SCHEMA} ]} with up to ${perRun} proposals.`;
+  const brief = p => ({ id: p.id, rule: p.text, author: p.author, parent: p.parent, status: p.status, replay: { n: p.backtest.n, winRate: p.backtest.winRate, perBet: p.backtest.perBet, lcb: p.backtest.lcb }, forward: { n: p.forward.n, winRate: p.forward.winRate, perBet: p.forward.perBet, total: p.forward.total }, vsParent: p.vsParent });
   const user = `Windows logged with a result: ${windows.length}.
 SHADOW now: ${st.current.text}. Rule JSON: ${JSON.stringify(v.rule)}
-Its backtest: ${JSON.stringify({ n: st.current.n, winRate: st.current.winRate, perBet: st.current.perBet, lcb: st.current.lcb, firstHalf: st.current.firstHalf, secondHalf: st.current.secondHalf })}
-Sensitivity (each setting moved alone): ${JSON.stringify(sens)}
-Proposals so far: ${JSON.stringify(st.proposals.slice(0, 12).map(brief))}
-Propose one rule now.`;
-  const out = await claude(system, user, 900);
-  if (!out?.rule) { log("TUNER", "returned no usable proposal this round"); return null; }
-  const res = await lab.addProposal({ name: out.name, rule: out.rule, rationale: out.rationale, author: "TUNER" });
-  if (!res.ok) { log("TUNER", `proposal rejected: ${res.error}`); return null; }
-  const sc = lab.scoreProposal(res.proposal);
-  log("TUNER", `new SHADOW proposal ${sc.id}: ${sc.text}. Backtest ${sc.backtest.n} bets, ${sc.backtest.winRate == null ? "—" : Math.round(sc.backtest.winRate * 100) + "%"} won, ${sc.backtest.perBet == null ? "—" : (sc.backtest.perBet >= 0 ? "+" : "") + sc.backtest.perBet.toFixed(2)}/bet. Forward test starts now.${out.rationale ? " " + String(out.rationale).slice(0, 200) : ""}`);
-  return res.proposal;
+Its replay: ${JSON.stringify({ n: st.current.n, winRate: st.current.winRate, perBet: st.current.perBet, lcb: st.current.lcb, firstHalf: st.current.firstHalf, secondHalf: st.current.secondHalf })}
+${champ ? `Champion "${champ.id}" rule JSON: ${JSON.stringify(champ.rule)}\n` : ""}Sensitivity (each setting moved alone): ${JSON.stringify(sens)}
+Proposals so far: ${JSON.stringify(st.proposals.slice(0, 16).map(brief))}
+Give up to ${perRun} proposals now.`;
+  const out = await claude(system, user, 600 + 500 * perRun);
+  const list = Array.isArray(out?.proposals) ? out.proposals : out?.rule ? [out] : [];
+  if (!list.length) { log("TUNER", "returned no usable proposal this round"); return null; }
+  const made = [];
+  for (const one of list.slice(0, perRun)) {
+    const res = await lab.addProposal({ name: one.name, rule: one.rule, rationale: one.rationale, author: "TUNER", parent: champ ? champ.id : null });
+    if (!res.ok) { log("TUNER", `proposal ${one?.name || "?"} rejected: ${res.error}`); continue; }
+    const sc = lab.scoreProposal(res.proposal);
+    log("TUNER", `${champ ? `refining ${champ.id}: ` : ""}new SHADOW proposal ${sc.id}: ${sc.text}. Replay ${sc.backtest.n} bets, ${sc.backtest.winRate == null ? "—" : Math.round(sc.backtest.winRate * 100) + "%"} won, ${sc.backtest.perBet == null ? "—" : (sc.backtest.perBet >= 0 ? "+" : "") + sc.backtest.perBet.toFixed(2)}/bet. Forward test starts now.${one.rationale ? " " + String(one.rationale).slice(0, 200) : ""}`);
+    made.push(res.proposal);
+  }
+  return made.length ? made : null;
+}
+
+let tuning = false;
+export async function runTuner() {
+  if (tuning) return null;
+  tuning = true;
+  const log = (who, msg) => console.log(`  🤖 [agents] ${who}: ${msg}`);
+  try { return await tune(log); } catch (err) { log("TUNER", `error: ${err.message}`); return null; } finally { tuning = false; status.tunerRuns = (status.tunerRuns || 0) + 1; status.tunerLastAt = Date.now(); }
 }
 
 export async function runCycle() {
@@ -209,7 +230,6 @@ export async function runCycle() {
       specs = await listSpecs();
     }
     if (result.built || result.retired) { onChange(); lb = await getLeaderboard(); }
-    try { if (await tune(log)) result.tuned = 1; } catch (err) { log("TUNER", `error: ${err.message}`); }
     try { result.ballots = await council(lb, log); } catch (err) { log("ORACLE", `vote error: ${err.message}`); }
   } catch (err) {
     status.lastError = err.message; log("WARDEN", `agent cycle failed: ${err.message}`);
@@ -228,7 +248,10 @@ export function startAgents(opts) {
   setTimeout(() => runCycle().catch(() => {}), 3 * 60_000);
   setTimeout(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; }, 3 * 60_000 + 1000);
   setInterval(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; runCycle().catch(() => {}); }, EVERY_MIN * 60_000);
-  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, TUNER (SHADOW), PRISM and the Council run every ${EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
+  // TUNER (SHADOW's edge) runs on its own, faster schedule.
+  setTimeout(() => runTuner().catch(() => {}), 4 * 60_000);
+  setInterval(() => runTuner().catch(() => {}), TUNER_EVERY_MIN * 60_000);
+  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, PRISM and the Council run every ${EVERY_MIN} min, TUNER (SHADOW's edge) every ${TUNER_EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
 }
 
 export function _setShadowRule(fn) { getShadowRule = fn; }   // tests

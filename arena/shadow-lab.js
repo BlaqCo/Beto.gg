@@ -11,7 +11,11 @@
  *   3. Proposals. The TUNER agent proposes rules (data, validated, never code). Each one is
  *      backtested on the whole log and tracked FORWARD on windows logged after it was made,
  *      the only numbers that can't have been fitted. PRISM retires losers.
- *   4. Apply. Only a person can apply a proposal to SHADOW (admin token), and only once it
+ *   4. Champion. The applied proposal, or else the best proposal with FORWARD_MIN+ forward
+ *      bets in profit. With no champion the TUNER searches broadly; with one it refines it:
+ *      variations that change one or two settings, judged head-to-head against the champion
+ *      on the same windows (both counted from the variation's creation).
+ *   5. Apply. Only a person can apply a proposal to SHADOW (admin token), and only once it
  *      has FORWARD_MIN forward bets and is profitable on them.
  *
  * No orders, no keys. Applying a proposal changes SHADOW's rule, which real money follows.
@@ -23,7 +27,7 @@ const KEY_SIGNALS = "arena:shadowlab:signals", KEEP_WINDOWS = 3000;      // ~31 
 const KEY_PROPOSALS = "arena:shadowlab:proposals", KEY_APPLIED = "arena:shadowlab:applied";
 const SNAP_EVERY_MS = 15_000, SNAP_FROM_MS = 600_000, STAKE = 10;
 export const FORWARD_MIN = 20;          // forward bets before a proposal can be applied
-const MAX_ACTIVE = 12;
+const MAX_ACTIVE = 16;
 
 // ── Rules ────────────────────────────────────────────────────────────
 /** Allowed ranges. Everything outside is clamped or rejected, so an agent can't break SHADOW. */
@@ -188,7 +192,7 @@ export const appliedRule = () => state.applied;
 // ── Proposals ────────────────────────────────────────────────────────
 const slugify = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
-export async function addProposal({ name, rule, rationale, author }, now = Date.now()) {
+export async function addProposal({ name, rule, rationale, author, parent = null }, now = Date.now()) {
   const v = validateRule(rule);
   if (!v.ok) return { ok: false, error: v.error };
   const id = slugify(name) || `p-${now}`;
@@ -196,7 +200,8 @@ export async function addProposal({ name, rule, rationale, author }, now = Date.
   if (state.proposals.filter(p => p.status === "active").length >= MAX_ACTIVE) return { ok: false, error: `${MAX_ACTIVE} active proposals already` };
   const same = state.proposals.find(p => p.status === "active" && JSON.stringify(p.rule) === JSON.stringify(v.rule));
   if (same) return { ok: false, error: `same rule as ${same.id}` };
-  const p = { id, rule: v.rule, rationale: String(rationale || "").slice(0, 300), author: author || "you", createdAt: now, status: "active" };
+  const p = { id, rule: v.rule, rationale: String(rationale || "").slice(0, 300), author: author || "you", createdAt: now, status: "active",
+    parent: parent && state.proposals.some(x => x.id === parent) ? parent : null };
   state.proposals.push(p);
   await saveJSON(KEY_PROPOSALS, state.proposals);
   return { ok: true, proposal: p };
@@ -206,7 +211,15 @@ export function scoreProposal(p, windows = state.windows) {
   const all = backtest(p.rule, windows), fwd = backtest(p.rule, windows, { since: p.createdAt });
   const { bets: _a, ...allS } = all, { bets: _f, ...fwdS } = fwd;
   const canApply = fwd.n >= FORWARD_MIN && fwd.perBet > 0;
-  return { ...p, text: describeRule(p.rule), backtest: allS, forward: fwdS, canApply,
+  // A refinement is judged against its parent on the same windows (both from its creation).
+  const par = p.parent && state.proposals.find(x => x.id === p.parent);
+  let vsParent = null;
+  if (par) {
+    const pf = backtest(par.rule, windows, { since: p.createdAt });
+    vsParent = { parent: par.id, n: fwd.n, perBet: fwd.perBet, total: fwd.total, parentN: pf.n, parentPerBet: pf.perBet, parentTotal: pf.total,
+      better: fwd.n >= FORWARD_MIN && pf.n > 0 && fwd.total > pf.total };
+  }
+  return { ...p, text: describeRule(p.rule), backtest: allS, forward: fwdS, canApply, vsParent,
     applyWhy: canApply ? null : fwd.n < FORWARD_MIN ? `needs ${FORWARD_MIN - fwd.n} more forward bets` : "losing on forward bets" };
 }
 
@@ -232,10 +245,26 @@ export async function applyProposal(id, now = Date.now()) {
 }
 export async function revertApplied() { state.applied = null; await saveJSON(KEY_APPLIED, null); return { ok: true }; }
 
+/**
+ * The strategy the agents are refining: the applied proposal, else the active proposal with
+ * FORWARD_MIN+ forward bets in profit and the best forward low-end estimate. null = keep searching.
+ */
+export function champion(windows = state.windows) {
+  if (state.applied?.id) {
+    const p = state.proposals.find(x => x.id === state.applied.id);
+    if (p) return scoreProposal(p, windows);
+  }
+  const ok = state.proposals.filter(p => p.status === "active").map(p => scoreProposal(p, windows)).filter(p => p.canApply);
+  ok.sort((a, b) => (b.forward.lcb ?? -99) - (a.forward.lcb ?? -99) || b.forward.total - a.forward.total);
+  return ok[0] || null;
+}
+
 export function labStatus(currentRule) {
   const windows = state.windows, settled = windows.filter(w => w.outcome != null).length;
   const cur = currentRule ? (() => { const { bets, ...s } = backtest(currentRule, windows); return { text: describeRule(currentRule), ...s }; })() : null;
+  const champ = champion(windows);
   return { windows: windows.length, settled, forwardMin: FORWARD_MIN, current: cur, applied: state.applied,
+    mode: champ ? "refine" : "search", champion: champ ? champ.id : null,
     proposals: state.proposals.map(p => scoreProposal(p, windows)).sort((a, b) => (a.status === "active" ? 0 : 1) - (b.status === "active" ? 0 : 1) || (b.forward.lcb ?? -99) - (a.forward.lcb ?? -99) || (b.backtest.lcb ?? -99) - (a.backtest.lcb ?? -99)) };
 }
 
