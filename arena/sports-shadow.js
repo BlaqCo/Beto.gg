@@ -19,10 +19,13 @@
  * inferred "other team" stays paper), only pre-game, priced 10-90¢, one per US market (a
  * Redis claim stops a deploy overlap from doubling it), with buying power checked first.
  * Stops for the day at -SPORTS_LIVE_DAILY_LOSS ($5) and for good at -SPORTS_LIVE_MAX_LOSS
- * ($10). SHADOW's STOP REAL MONEY button on /copy stops it too.
+ * ($10). SHADOW's STOP REAL MONEY button on /copy stops it too. Unless
+ * SPORTS_LIVE_REQUIRE_RECORD=false, real money also needs the wallet's own record in that
+ * league to be proven (arena/wallet-report.js: 20+ finished positions, in profit).
  */
 import { takerFee } from "../fees.js";
 import { saveJSON, loadJSON, claimOnce } from "./state.js";
+import { reportFor, leagueProven } from "./wallet-report.js";
 
 const DATA = process.env.COPY_DATA_URL || "https://data-api.polymarket.com";
 const KEY = "arena:sportsshadow:v1", POLL_MS = 60_000, STAKE = 10;
@@ -158,6 +161,13 @@ export function liveBlock(bet, m, now = Date.now()) {
   if (!LIVE.on) return "real sports money is off (SPORTS_LIVE is not true)";
   const h = isHalted(); if (h) return `real money halted: ${h}`;
   if (!m.exact) return "the team was inferred, not matched by name, so this one stays paper";
+  // Only copy real money in leagues where the wallet has a proven, profitable record.
+  if (process.env.SPORTS_LIVE_REQUIRE_RECORD !== "false") {
+    const rep = reportFor(bet.wallet);
+    if (!rep) return "the wallet's sports record hasn't loaded yet";
+    const p = leagueProven(rep, bet.league);
+    if (!p.ok) return `${p.why}; real money needs a proven record`;
+  }
   if (bet.px < LIVE.minPx || bet.px > LIVE.maxPx) return `price ${Math.round(bet.px * 100)}¢ is outside ${Math.round(LIVE.minPx * 100)}-${Math.round(LIVE.maxPx * 100)}¢`;
   const t = liveTotals(now);
   if (t.pnl <= -LIVE.maxLoss) return `total real sports loss $${(-t.pnl).toFixed(2)} reached the -$${LIVE.maxLoss} limit`;

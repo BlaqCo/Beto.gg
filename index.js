@@ -957,6 +957,16 @@ app.post("/api/shadowlab/remove", async (req, res) => {
     res.json(r);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+// A wallet's real track record by sport/league/price (?wallet=0x..; default the followed ones).
+app.get("/api/walletreport", async (req, res) => {
+  try {
+    const wr = await import("./arena/wallet-report.js");
+    const w = String(req.query.wallet || "").toLowerCase();
+    if (w && /^0x[0-9a-f]{40}$/.test(w) && !wr.reportFor(w)) await wr.refresh(w);
+    res.set("Cache-Control", "no-store");
+    res.json(w ? { [w]: wr.walletReportStatus()[w] || null } : wr.walletReportStatus());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get("/api/sportsshadow", async (req, res) => {
   try { res.set("Cache-Control", "no-store"); res.json((await import("./arena/sports-shadow.js")).sportsShadowStatus()); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -1264,6 +1274,8 @@ async function loadBots() {
   try { _ct = await import("./arena/copy-trader.js"); await _ct.startCopyTrader(); }
   catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
   // SPORTS SHADOW: practice copies of the primary wallet's sports bets. Off with SPORTS_SHADOW=false.
+  try { (await import("./arena/wallet-report.js")).startWalletReports([...(_ct?.CFG?.primaryWallets || []), ...String(process.env.COPY_SPORTS_WALLETS || "").split(",").map(s => s.trim()).filter(Boolean)]); }
+  catch (err) { console.log("📒 Wallet reports not loaded:", err.message); }
   try { await (await import("./arena/sports-shadow.js")).startSportsShadow({ wallets: _ct?.CFG?.primaryWallets || [], halted: () => _ct?.realHalted?.() || null }); }
   catch (err) { console.log("🏟 SPORTS SHADOW not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }

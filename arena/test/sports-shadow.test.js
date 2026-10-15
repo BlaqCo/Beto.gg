@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as ss from "../sports-shadow.js";
+import * as wr from "../wallet-report.js";
 
 const W = "0x424eb20fcd25113e3b98f42522a54580350b263b";
 const trade = (o = {}) => ({ proxyWallet: W, side: "BUY", price: 0.42, size: 100, timestamp: 1_790_000_000, transactionHash: "0xabc",
@@ -86,6 +87,7 @@ test("REAL sports: $1 FOK on name-matched pre-game bets only, with every brake",
     buyOutcomeFOK: async o => { orders.push(o); return { filled: true, qty: 2, cost: 0.92, fillPrice: 0.46, orderId: "o1" }; } };
   const setup = () => { ss._reset(); ss._state.wallets = [W]; ss._state.primed = true; ss._set({ pmMod, halted: () => halted, claimFn: async () => claimOk }); };
   ss.LIVE.on = true;
+  wr._put(W, { byLeague: [{ key: "sports:mlb", n: 40, wins: 26, winRate: 0.65, pnl: 310 }] });
   try {
     // Name match: the Guardians. One real $1 buy of YES (Up = long) at 44¢ + 2¢ slip.
     setup();
@@ -120,8 +122,9 @@ test("REAL sports: $1 FOK on name-matched pre-game bets only, with every brake",
 
 test("REAL sports brakes: price band, loss limits, one bet per game", () => {
   ss._reset(); ss.LIVE.on = true;
+  wr._put(W, { byLeague: [{ key: "sports:mlb", n: 40, wins: 26, winRate: 0.65, pnl: 310 }] });
   try {
-    const bet = { usSlug: "s1", px: 0.5 }, m = { exact: true };
+    const bet = { usSlug: "s1", px: 0.5, wallet: W, league: "mlb" }, m = { exact: true };
     assert.equal(ss.liveBlock(bet, m), null);
     assert.match(ss.liveBlock({ ...bet, px: 0.95 }, m), /outside 10-90/);
     assert.match(ss.liveBlock(bet, { exact: false }), /inferred/);
@@ -131,5 +134,38 @@ test("REAL sports brakes: price band, loss limits, one bet per game", () => {
     assert.match(ss.liveBlock(bet, m), /-\$10 limit/);
     ss._state.live.closed = []; ss._state.live.open = [{ usSlug: "s1" }];
     assert.match(ss.liveBlock(bet, m), /already has a real bet/);
+  } finally { ss.LIVE.on = false; }
+});
+
+test("wallet report: classifies positions, aggregates by league and price, gates real money", async () => {
+  assert.deepEqual(wr.classify({ eventSlug: "mlb-cle-tb-2026-10-13" }), { kind: "sports", league: "mlb" });
+  assert.equal(wr.classify({ eventSlug: "btc-updown-15m-1790000000" }).kind, "crypto");
+  assert.equal(wr.classify({ eventSlug: "presidential-election-winner-2028" }).kind, "other");
+  const rows = [
+    { eventSlug: "mlb-a-b-2026-10-01", avgPrice: 0.40, totalBought: 100, realizedPnl: 60 },
+    { eventSlug: "mlb-c-d-2026-10-02", avgPrice: 0.60, totalBought: 100, realizedPnl: -60 },
+    { eventSlug: "nba-e-f-2026-10-03", avgPrice: 0.70, totalBought: 50, realizedPnl: 15 },
+    { eventSlug: "btc-updown-15m-1790000000", avgPrice: 0.80, totalBought: 20, realizedPnl: 4 },
+    { eventSlug: "mlb-x", avgPrice: 2, realizedPnl: 1 },   // unusable price
+  ];
+  wr._set({ fetchFn: async () => ({ ok: true, json: async () => rows }) });
+  const rep = await wr.buildReport("0xabc");
+  assert.equal(rep.usable, 4);
+  const mlb = rep.byLeague.find(g => g.key === "sports:mlb");
+  assert.equal(mlb.n, 2); assert.equal(mlb.wins, 1); assert.equal(mlb.pnl, 0); assert.equal(mlb.cost, 100);
+  assert.equal(rep.byKind.find(g => g.key === "sports").n, 3);
+  assert.equal(rep.sportsByBand.length, 3);
+  // Gate: too few, losing, missing, proven.
+  assert.match(wr.leagueProven(rep, "mlb").why, /only 2/);
+  assert.match(wr.leagueProven({ byLeague: [{ key: "sports:nhl", n: 30, wins: 12, winRate: 0.4, pnl: -90 }] }, "nhl").why, /loses money/);
+  assert.match(wr.leagueProven(rep, "nfl").why, /no finished nfl/);
+  assert.equal(wr.leagueProven({ byLeague: [{ key: "sports:mlb", n: 40, wins: 26, winRate: 0.65, pnl: 310 }] }, "mlb").ok, true);
+  // SPORTS SHADOW real money obeys it.
+  ss._reset(); ss.LIVE.on = true;
+  try {
+    const bet = { usSlug: "s9", px: 0.5, wallet: "0xnorecord", league: "mlb" };
+    assert.match(ss.liveBlock(bet, { exact: true }), /record hasn't loaded/);
+    wr._put("0xnorecord", { byLeague: [{ key: "sports:mlb", n: 5, wins: 4, winRate: 0.8, pnl: 20 }] });
+    assert.match(ss.liveBlock(bet, { exact: true }), /needs a proven record/);
   } finally { ss.LIVE.on = false; }
 });
