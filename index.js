@@ -28,6 +28,21 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DRY_RUN = process.env.DRY_RUN !== "false";
 
+// ── Site lock ──────────────────────────────────────────────────
+// SITE_PASSWORD set = every page and API needs it (browser login box; any username).
+// /health stays open for Railway's health check. Writes still need ADMIN_TOKEN too.
+const SITE_PASSWORD = process.env.SITE_PASSWORD || "";
+if (SITE_PASSWORD) console.log("🔒 Site lock on: every page needs SITE_PASSWORD");
+app.use((req, res, next) => {
+  if (!SITE_PASSWORD || req.path === "/health") return next();
+  const m = /^Basic (.+)$/.exec(req.get("authorization") || "");
+  const pass = m ? Buffer.from(m[1], "base64").toString().split(":").slice(1).join(":") : "";
+  const a = Buffer.from(pass), b = Buffer.from(SITE_PASSWORD);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+  res.set("WWW-Authenticate", 'Basic realm="Beto", charset="UTF-8"');
+  return res.status(401).send("Password required.");
+});
+
 app.use(express.json());
 
 // ── Write lock ─────────────────────────────────────────────────
@@ -892,6 +907,41 @@ app.get("/api/pair", async (req, res) => {
     res.json({ ...pt.pairStatus(), fastBook: fb.fastBookStatus() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// SHADOW LAB: the signal log, the TUNER's proposals, and applying one to SHADOW.
+let _ct = null;
+const _shadowRule = () => _ct?.shadowRule ? _ct.shadowRule() : null;
+app.get("/api/shadowlab", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    const v = lab.validateRule(_ct.shadowRule());
+    res.set("Cache-Control", "no-store");
+    res.json(lab.labStatus(v.ok ? v.rule : null));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Your own proposal. Body: { name, rule, rationale }. POST, so ADMIN_TOKEN applies.
+app.post("/api/shadowlab/propose", async (req, res) => {
+  try { const lab = await import("./arena/shadow-lab.js"); await lab.loadLab(); res.json(await lab.addProposal({ ...req.body, author: "you" })); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// Put a proven proposal on SHADOW (paper and real money). Body: { id }. POST, so ADMIN_TOKEN applies.
+app.post("/api/shadowlab/apply", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    const r = await lab.applyProposal(String(req.body?.id || ""));
+    if (r.ok) _ct.applyLabRule(r.applied.rule, `proposal ${r.applied.id}`);
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/shadowlab/revert", async (req, res) => {
+  try {
+    _ct = _ct || await import("./arena/copy-trader.js");
+    const lab = await import("./arena/shadow-lab.js"); await lab.loadLab();
+    await lab.revertApplied(); _ct.applyLabRule(null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // Clear PAIR's practice record. POST, so ADMIN_TOKEN applies.
 app.post("/api/pair/reset", async (req, res) => {
   try { res.json(await (await import("./arena/pair-trader.js")).resetPair()); }
@@ -1189,7 +1239,7 @@ async function loadBots() {
   catch (err) { console.log("🔀 PAIR not loaded:", err.message); }
   // SHADOW copy trader: paper copies of smart global-Polymarket wallets. Started right
   // after the recorder so it hears every settlement. Off with COPY_TRADER=false.
-  try { await (await import("./arena/copy-trader.js")).startCopyTrader(); }
+  try { _ct = await import("./arena/copy-trader.js"); await _ct.startCopyTrader(); }
   catch (err) { console.log("👥 Copy trader not loaded:", err.message); }
   try { await (await import("./arena/sports-recorder.js")).startSportsRecorder(); }
   catch (err) { console.log("🏟 Sports recorder not loaded:", err.message); }
@@ -1198,6 +1248,7 @@ async function loadBots() {
     (await import("./arena/agents.js")).startAgents({
       getLeaderboard: () => getArenaLeaderboard(),
       onChange: () => { _arenaCache.ts = 0; _arenaCache.data = null; },
+      getShadowRule: () => _shadowRule(),
     });
   } catch (err) { console.log("🤖 AI agents not loaded:", err.message); }
 

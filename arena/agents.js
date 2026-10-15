@@ -4,7 +4,8 @@
  *   FORGE   writes BTC recipes from price patterns and timing
  *   VECTOR  writes BTC recipes from BTC spot vs strike (fair value)
  *   DUGOUT  writes sports recipes (pre-game)
- *   PRISM   retires recipes that are clearly losing (a rule, no AI call)
+ *   TUNER   studies SHADOW's signal log (SHADOW LAB) and proposes changes to SHADOW's rule
+ *   PRISM   retires recipes and SHADOW proposals that are clearly losing (a rule, no AI call)
  *   COUNCIL every agent casts a ballot for the strategy that deserves the
  *           next forward-test focus, with a reason grounded in the numbers
  *
@@ -26,7 +27,7 @@ const MAX_ACTIVE = Number(process.env.AGENTS_MAX_ACTIVE || 15);
 
 const status = { enabled: false, model: MODEL, everyMin: EVERY_MIN, runs: 0, lastRunAt: 0, nextRunAt: 0, running: false,
                  calls: 0, lastResult: null, lastError: null };
-let getLeaderboard = null, onChange = () => {};
+let getLeaderboard = null, onChange = () => {}, getShadowRule = null;
 
 const BUILDERS = [
   { name: "FORGE", families: ["btc15", "btc60"],
@@ -141,6 +142,55 @@ async function council(lb, log) {
   return cast;
 }
 
+// ── TUNER: SHADOW's edge ────────────────────────────────────────────
+const RULE_SCHEMA = `{
+  "name": "kebab-case-name",
+  "rule": {
+    "priceMin": 0.30-0.95, "priceMax": 0.35-0.97,        // price paid for the side bought (its ask)
+    "minLeftSec": 15-600, "maxLeftSec": 30-600,          // enter only while time left is in this range
+    "minShare": 0.5-1,                                    // share of smart-wallet vote weight on our side
+    "minAgree": 0-15,                                     // smart wallets on our side (not needed when following the primary wallet)
+    "maxAgainst": 0-50 or omit,                           // most smart wallets allowed on the other side
+    "follow": "either" | "consensus" | "primary" | "both", // either = primary wallet if it bet, else smart money
+    "side": "any" | "up" | "down",
+    "hoursUtc": [start, end] or null                      // whole UTC hours the window must start in
+  },
+  "rationale": "1-2 sentences citing the numbers"
+}`;
+const MIN_LAB_WINDOWS = 48;   // half a day of BTC15 before the TUNER says anything
+
+export async function tune(log, labMod = null) {
+  const lab = labMod || await import("./shadow-lab.js");
+  await lab.loadLab();
+  const windows = lab.labWindows().filter(w => w.outcome != null);
+  if (windows.length < MIN_LAB_WINDOWS) { log("TUNER", `waiting for data: ${windows.length} SHADOW LAB windows logged, need ${MIN_LAB_WINDOWS}`); return null; }
+  await lab.pruneProposals(log);
+  const cur = getShadowRule ? getShadowRule() : null;
+  const v = lab.validateRule(cur || {});
+  if (!v.ok) { log("TUNER", `can't read SHADOW's rule: ${v.error}`); return null; }
+  const st = lab.labStatus(v.rule);
+  const sens = lab.sensitivity(v.rule, windows);
+  const system = `You are TUNER, the researcher who improves SHADOW, a bot that copies smart Polymarket wallets on 15-minute BTC Up/Down markets. You propose ONE change to SHADOW's entry rule at a time.
+You get: SHADOW's current rule and its backtest over the signal log (every window, every 15s in the last 10 minutes: smart-money side and share, wallets for and against, the primary wallet's side, live prices), a sensitivity table (what moving each setting alone does), and the proposals already being tested with their backtest and FORWARD numbers (forward = windows after the proposal was made, the only numbers that can't be fitted).
+Bets are $10, pay the ask plus a taker fee of 6% x p x (1-p) per share, and are held to the close. perBet is $ profit per $10 bet; lcb is the low end of its 95% range.
+Rules: the goal is a rule that makes money on FUTURE windows, not one that fits the past. Prefer simple changes with a clear reason (one or two settings), backed by many bets (the sample shrinks as filters tighten; under 40 bets proves nothing). Don't repeat an existing proposal. Never claim certainty.
+Reply with ONLY JSON: ${RULE_SCHEMA}`;
+  const brief = p => ({ id: p.id, rule: p.text, author: p.author, status: p.status, backtest: { n: p.backtest.n, winRate: p.backtest.winRate, perBet: p.backtest.perBet, lcb: p.backtest.lcb }, forward: { n: p.forward.n, winRate: p.forward.winRate, perBet: p.forward.perBet } });
+  const user = `Windows logged with a result: ${windows.length}.
+SHADOW now: ${st.current.text}. Rule JSON: ${JSON.stringify(v.rule)}
+Its backtest: ${JSON.stringify({ n: st.current.n, winRate: st.current.winRate, perBet: st.current.perBet, lcb: st.current.lcb, firstHalf: st.current.firstHalf, secondHalf: st.current.secondHalf })}
+Sensitivity (each setting moved alone): ${JSON.stringify(sens)}
+Proposals so far: ${JSON.stringify(st.proposals.slice(0, 12).map(brief))}
+Propose one rule now.`;
+  const out = await claude(system, user, 900);
+  if (!out?.rule) { log("TUNER", "returned no usable proposal this round"); return null; }
+  const res = await lab.addProposal({ name: out.name, rule: out.rule, rationale: out.rationale, author: "TUNER" });
+  if (!res.ok) { log("TUNER", `proposal rejected: ${res.error}`); return null; }
+  const sc = lab.scoreProposal(res.proposal);
+  log("TUNER", `new SHADOW proposal ${sc.id}: ${sc.text}. Backtest ${sc.backtest.n} bets, ${sc.backtest.winRate == null ? "—" : Math.round(sc.backtest.winRate * 100) + "%"} won, ${sc.backtest.perBet == null ? "—" : (sc.backtest.perBet >= 0 ? "+" : "") + sc.backtest.perBet.toFixed(2)}/bet. Forward test starts now.${out.rationale ? " " + String(out.rationale).slice(0, 200) : ""}`);
+  return res.proposal;
+}
+
 export async function runCycle() {
   if (status.running) return status.lastResult;
   status.running = true; status.lastError = null;
@@ -159,6 +209,7 @@ export async function runCycle() {
       specs = await listSpecs();
     }
     if (result.built || result.retired) { onChange(); lb = await getLeaderboard(); }
+    try { if (await tune(log)) result.tuned = 1; } catch (err) { log("TUNER", `error: ${err.message}`); }
     try { result.ballots = await council(lb, log); } catch (err) { log("ORACLE", `vote error: ${err.message}`); }
   } catch (err) {
     status.lastError = err.message; log("WARDEN", `agent cycle failed: ${err.message}`);
@@ -169,7 +220,7 @@ export async function runCycle() {
 }
 
 export function startAgents(opts) {
-  getLeaderboard = opts.getLeaderboard; onChange = opts.onChange || (() => {});
+  getLeaderboard = opts.getLeaderboard; onChange = opts.onChange || (() => {}); getShadowRule = opts.getShadowRule || null;
   if (process.env.AGENTS_ENABLED !== "true") { console.log("🤖 AI agents off (set AGENTS_ENABLED=true to let them write strategies and vote)"); return; }
   if (!process.env.ANTHROPIC_API_KEY) { console.log("🤖 AI agents can't start: ANTHROPIC_API_KEY is not set"); return; }
   status.enabled = true;
@@ -177,7 +228,8 @@ export function startAgents(opts) {
   setTimeout(() => runCycle().catch(() => {}), 3 * 60_000);
   setTimeout(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; }, 3 * 60_000 + 1000);
   setInterval(() => { status.nextRunAt = Date.now() + EVERY_MIN * 60_000; runCycle().catch(() => {}); }, EVERY_MIN * 60_000);
-  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, PRISM and the Council run every ${EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
+  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, TUNER (SHADOW), PRISM and the Council run every ${EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
 }
 
+export function _setShadowRule(fn) { getShadowRule = fn; }   // tests
 export function agentsStatus() { return { ...status, lastResult: status.lastResult && { ...status.lastResult, lines: status.lastResult.lines.slice(-12) } }; }

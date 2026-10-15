@@ -40,7 +40,11 @@ const env = (k, d) => (process.env[k] != null && process.env[k] !== "" ? Number(
 export const CFG = {
   stake: env("COPY_STAKE", 10),                 // paper dollars per copy
   pollMs: env("COPY_POLL_MS", 5_000),           // live trade polling
-  fastEntry: process.env.COPY_FAST_ENTRY !== "false",  // re-check entries on every 1s fast-book tick
+  fastEntry: process.env.COPY_FAST_ENTRY !== "false",
+  // Rule options SHADOW LAB can set (see decideSmart). Env gives the starting point.
+  follow: process.env.COPY_FOLLOW || "either",
+  sideOnly: process.env.COPY_SIDE_ONLY || "any",
+  maxAgainst: process.env.COPY_MAX_AGAINST ? Number(process.env.COPY_MAX_AGAINST) : null,  // re-check entries on every 1s fast-book tick
   minWindows: env("COPY_MIN_WINDOWS", 20),      // settled windows before a wallet can be trusted
   minWinRate: env("COPY_MIN_WIN_RATE", 0.55),
   minRoi: env("COPY_MIN_ROI", 0.05),            // profit / money put in
@@ -539,11 +543,30 @@ function decidePrimary({ side, votes, us, now, cfg, globalPx }) {
     signal: { ...c, agree, against: side === "Up" ? c.nDown : c.nUp, share, price, ...fv, edge, tier } };
 }
 
-export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safety, primary }) {
+/**
+ * SHADOW's entry decision. Rule options (set by SHADOW LAB when a proposal is applied):
+ * follow = "either" (primary wallet if it bet, else smart money), "consensus" (ignore the
+ * primary), "primary" (only the primary), "both" (only when the two agree); sideOnly =
+ * "up"/"down"/"any"; maxAgainst = most smart wallets allowed on the other side.
+ */
+export function decideSmart(args) {
+  const d = decideSmartCore(args), cfg = args.cfg || CFG;
+  if (!d.enter) return d;
+  if (cfg.sideOnly && cfg.sideOnly !== "any" && d.side.toLowerCase() !== cfg.sideOnly) return { enter: false, code: "side", why: `rule bets ${cfg.sideOnly} only; the signal is ${d.side}` };
+  if (cfg.maxAgainst != null && (d.signal?.against ?? 0) > cfg.maxAgainst) return { enter: false, code: "against", why: `${d.signal.against} smart wallets on the other side, rule allows ${cfg.maxAgainst}` };
+  return d;
+}
+function decideSmartCore({ votes, us, holding, now, cfg = CFG, globalPx, safety, primary }) {
   if (holding) return { enter: false, code: "holding", why: "already holding this window" };
   const g = timeGate(us, now, cfg); if (g) return g;
   if (safety && !safety.ok) return { enter: false, code: safety.code, why: safety.why };
-  const pSide = primarySide(primary);
+  const follow = cfg.follow || "either";
+  const pSide = follow === "consensus" ? null : primarySide(primary);
+  if (!pSide && (follow === "primary" || follow === "both")) return { enter: false, code: "no-primary", why: "the rule follows the primary wallet, which hasn't bet this window" };
+  if (pSide && follow === "both") {
+    const c = consensus(votes);
+    if (c.side !== pSide) return { enter: false, code: "disagree", why: `primary wallet is on ${pSide}, smart money ${c.side ? `on ${c.side}` : "has no side"}; the rule needs both` };
+  }
   if (pSide) return decidePrimary({ side: pSide, votes, us, now, cfg, globalPx });
   const s = signalOf({ votes, us, globalPx, now, cfg });
   if (!s.side) return { enter: false, code: "no-side", why: "no smart-wallet side this window" };
@@ -564,6 +587,33 @@ export function decideSmart({ votes, us, holding, now, cfg = CFG, globalPx, safe
   return { enter: true, side: s.side, price: s.price, stake, tier, fallback: pp.fallback, signal: s };
 }
 const fairParts = s => { const p = [s.model != null && `BTC math ${cents(s.model)}`, s.global != null && `global ${cents(s.global)}`].filter(Boolean); return p.length ? `: ${p.join(", ")}` : ""; };
+
+// ── SHADOW LAB ──────────────────────────────────────────────────────
+/** SHADOW's current rule in SHADOW LAB's terms (what real money follows, hours included). */
+export function shadowRule(cfg = CFG) {
+  return { priceMin: cfg.minPrice, priceMax: cfg.maxPrice, minLeftSec: Math.round(cfg.minMsLeft / 1000), maxLeftSec: Math.round(cfg.entryWindowMs / 1000),
+    minShare: cfg.minShare, minAgree: cfg.minAgree, maxAgainst: cfg.maxAgainst ?? undefined, follow: cfg.follow || "either", side: cfg.sideOnly || "any", hoursUtc: cfg.liveHours || null };
+}
+const LAB_KEYS = ["minPrice", "maxPrice", "preferMax", "minMsLeft", "entryWindowMs", "minShare", "minAgree", "maxAgainst", "follow", "sideOnly", "liveHours"];
+const CFG_BASE = Object.fromEntries(LAB_KEYS.map(k => [k, CFG[k]]));
+/** Put a SHADOW LAB rule on SHADOW (paper and real), or null to go back to the env settings. */
+export function applyLabRule(rule, why = "") {
+  if (!rule) { Object.assign(CFG, CFG_BASE); emit("start", `SHADOW LAB: back to the original rule: ${ruleText(VARIANTS[0])}`, {}); return shadowRule(); }
+  Object.assign(CFG, { minPrice: rule.priceMin, maxPrice: rule.priceMax, preferMax: rule.priceMax, minMsLeft: rule.minLeftSec * 1000, entryWindowMs: rule.maxLeftSec * 1000,
+    minShare: rule.minShare, minAgree: rule.minAgree, maxAgainst: rule.maxAgainst ?? null, follow: rule.follow, sideOnly: rule.side, liveHours: rule.hoursUtc || null });
+  emit("start", `SHADOW LAB rule applied${why ? ` (${why})` : ""}: ${ruleText(VARIANTS[0])}`, {});
+  return shadowRule();
+}
+let lab = null;
+/** Hand SHADOW LAB what SHADOW sees now (it keeps one snapshot per 15s, last 10 minutes). */
+function labObserve(family, cur, now, book = null) {
+  if (!lab || family !== "btc15" || !cur) return;
+  const us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
+  if (!us?.slug) return;
+  const q = book && book.slug === us.slug ? book : fastQuote(us.slug, 20_000) || us;
+  if (q.bid == null || q.ask == null) return;
+  lab.observe({ slug: us.slug, start: cur.start, end: cur.end, now, up: q.ask, down: +(1 - q.bid).toFixed(4), consensus: consensus(cur.votes), pSide: primarySide(cur.primary) });
+}
 
 // ── Rules run side by side ──────────────────────────────────────────
 /**
@@ -789,6 +839,7 @@ async function pollLive(family, now) {
     if (!best || amt > best.usd) cur.smartBest[t.outcome] = { wallet: t.wallet, name: t.name, usd: amt, price: t.price, outcome: t.outcome, why: j.why };
     emit("spot", `smart wallet ${short(t.wallet)}${t.name ? ` (${t.name})` : ""} bought ${t.outcome} ${usd(amt)} @ ${cents(t.price)} on global ${family.toUpperCase()} [${j.why}]`, { family, wallet: t.wallet, side: t.outcome, usd: +amt.toFixed(2), price: t.price });
   }
+  labObserve(family, cur, now);
   await checkEntries(family, cur, now);
   stats.lastPollAt = Date.now();
   emit("poll", `${family.toUpperCase()} poll: ${fresh.length} new trades`, { family, n: fresh.length });
@@ -1244,6 +1295,15 @@ export async function startCopyTrader() {
     }
     busyLive = false;
   }, CFG.pollMs));
+  // SHADOW LAB: log what SHADOW sees each window, and put an applied rule back on after a restart.
+  try {
+    lab = await import("./shadow-lab.js");
+    await lab.loadLab();
+    recorder?.onWindowSettled(rec => { if (rec.family === "btc15") lab.settle(rec).catch(() => {}); });
+    (await import("./fast-book.js")).onTick(book => labObserve("btc15", live.btc15, Date.now(), book));
+    const a = lab.appliedRule();
+    if (a?.rule) applyLabRule(a.rule, `proposal ${a.id}, applied ${new Date(a.at).toISOString().slice(0, 16)}Z`);
+  } catch (err) { lab = null; stats.lastError = `shadow lab: ${err.message}`; }
   // Fast entries: every fast-book tick inside BTC15's entry window re-runs the entry check
   // with the votes so far and the second-old book.
   if (CFG.fastEntry && CFG.families.includes("btc15")) {
