@@ -165,7 +165,9 @@ const RULE_SCHEMA = `{
     "maxAgainst": 0-50 or omit,                           // most smart wallets allowed on the other side
     "follow": "either" | "consensus" | "primary" | "both", // either = primary wallet if it bet, else smart money
     "side": "any" | "up" | "down",
-    "hoursUtc": [start, end] or null                      // whole UTC hours the window must start in
+    "hoursUtc": [start, end] or null,                     // whole UTC hours the window must start in
+    "minLeadBps": -300-300 or omit, "maxLeadBps": -300-300 or omit,   // our side's lead over the window's start price, in bps (negative = behind)
+    "moveMinBps": 0-500 or omit, "moveMaxBps": 0-500 or omit          // size of BTC's move over the last 5 minutes, in bps (calm vs busy market)
   },
   "rationale": "1-2 sentences citing the numbers"
 }`;
@@ -186,6 +188,11 @@ export async function tune(log, labMod = null, perRun = TUNER_PER_RUN) {
   const champ = lab.champion();
   const base = champ ? champ.rule : v.rule;
   const sens = lab.sensitivity(base, windows);
+  const lineup = st.lineup || [];
+  const lineupNote = lineup.length
+    ? `LIVE LINEUP (SHADOW runs these now; first to fire takes the window; real money follows at $1 a bet): ${JSON.stringify(lineup.map(l => ({ id: l.id, rule: l.text, joined: new Date(l.at).toISOString().slice(0, 16), sinceJoined: { n: l.since.n, winRate: l.since.winRate, perBet: l.since.perBet, total: l.since.total }, realMoney: l.live })))}.
+Learn from it: a member losing since it joined, or losing real money, needs a fix or a replacement; a member winning only in some conditions can be split into narrower rules. The lineup holds up to ${st.lineupMax}; auto mode adds proven proposals, swaps in better ones and drops losers.`
+    : "LIVE LINEUP: empty (SHADOW runs its own rule). The first proven proposals will join it automatically.";
   const goal = champ
     ? `MODE: REFINE. "${champ.id}" is the champion: it has ${champ.forward.n} forward bets at ${champ.forward.perBet >= 0 ? "+" : ""}${champ.forward.perBet}/bet${lab.appliedRule()?.id === champ.id ? " and is live on SHADOW" : ""}. Your job now is to make IT better, not to search elsewhere. Each proposal is a variation of the champion that changes ONE or TWO settings, aimed at its weak spot (fewer losing bets, better prices, or more bets at the same edge). It will be judged head-to-head against the champion on the same future windows. The sensitivity table below is built around the champion.`
     : `MODE: SEARCH. No strategy has proven itself on forward bets yet. Explore DIFFERENT ideas that could win: price bands, entry timing, how much smart money must agree, following the primary wallet vs the crowd, Up/Down only, hours. Make each proposal distinct from the others and from existing proposals. The sensitivity table below is built around SHADOW's current rule.`;
@@ -193,6 +200,8 @@ export async function tune(log, labMod = null, perRun = TUNER_PER_RUN) {
 You get: the rule SHADOW runs now and its replay over the signal log (every window, every 15s in the last 10 minutes: smart-money side and share, wallets for and against, the primary wallet's side, live prices), a sensitivity table (what moving each setting alone does), and the proposals being tested with their replay and FORWARD numbers (forward = windows after the proposal was made, the only numbers that can't be fitted).
 Bets are $10, pay the ask plus a taker fee of 6% x p x (1-p) per share, and are held to the close. perBet is $ profit per $10 bet; lcb is the low end of its 95% range; total = perBet x bets.
 ${goal}
+MULTIPLE STRATEGIES: the lineup can hold several rules for different conditions (hours, Up vs Down, calm vs busy BTC, our side leading vs behind the start price). A rule that wins in one condition and loses in another is worth splitting. Proposals that cover conditions the lineup doesn't are valuable.
+${lineupNote}
 Rules: favour total profit backed by many bets over a high win rate on few (under 40 bets proves nothing). Prefer simple rules with a clear reason. Never repeat an existing proposal. Never claim certainty.
 Reply with ONLY JSON: {"proposals": [ ${RULE_SCHEMA} ]} with up to ${perRun} proposals.`;
   const brief = p => ({ id: p.id, rule: p.text, author: p.author, parent: p.parent, status: p.status, replay: { n: p.backtest.n, winRate: p.backtest.winRate, perBet: p.backtest.perBet, lcb: p.backtest.lcb }, forward: { n: p.forward.n, winRate: p.forward.winRate, perBet: p.forward.perBet, total: p.forward.total }, vsParent: p.vsParent });

@@ -92,13 +92,63 @@ test("SHADOW follows the lab's rule options", () => {
   assert.equal(lab.validateRule(ct.shadowRule()).ok, true);
 });
 
-test("applying a lab rule changes SHADOW, reverting restores it", () => {
+test("a lineup runs alongside SHADOW's own rule; clearing it restores the original", () => {
   const before = ct.shadowRule();
   const r = lab.validateRule({ ...before, priceMin: 0.60, priceMax: 0.70, follow: "consensus", hoursUtc: [0, 12] }).rule;
-  ct.applyLabRule(r);
-  assert.equal(ct.CFG.minPrice, 0.60); assert.equal(ct.CFG.preferMax, 0.70); assert.equal(ct.CFG.follow, "consensus"); assert.deepEqual(ct.CFG.liveHours, [0, 12]);
-  ct.applyLabRule(null);
+  ct.applyLineup([{ id: "a", rule: r }, { id: "b", rule: { ...r, side: "down" } }]);
+  assert.deepEqual(ct.activeLineup().map(l => l.id), ["a", "b"]);
+  assert.equal(ct.activeLineup()[0].over.minPrice, 0.60); assert.equal(ct.activeLineup()[0].over.follow, "consensus");
+  assert.equal(ct.CFG.liveHours, null, "each rule carries its own hours");
+  ct.applyLineup([]);
+  assert.equal(ct.activeLineup().length, 0);
   assert.deepEqual(ct.shadowRule(), before);
+});
+
+test("market conditions: BTC's lead over the start price and its 5-minute move", () => {
+  const now = 1_000_000;
+  const m = lab.marketState({ spot: 100_100, strike: 100_000, pxs: [[now - 6 * 60_000, 100_000], [now - 60_000, 100_050]] }, now);
+  assert.equal(m.lead, 10); assert.equal(m.move, 10);
+  assert.equal(lab.marketState({ spot: 100_000, strike: null, pxs: [] }, now).lead, null);
+  const r = lab.validateRule({ ...RULE, minLeadBps: 5, moveMaxBps: 20 }).rule;
+  assert.equal(lab.marketOk(r, "Up", 10, 10), true);
+  assert.equal(lab.marketOk(r, "Down", 10, 10), false, "Down is 10 bps behind");
+  assert.equal(lab.marketOk(r, "Up", 10, 30), false, "too busy");
+  assert.equal(lab.marketOk(r, "Up", null, 10), false, "no data fails a set condition");
+  assert.equal(lab.ruleEntry(r, snap({ lead: 12, move: 8 }), BASE).side, "Up");
+  assert.equal(lab.ruleEntry(r, snap({ lead: -12, move: 8 }), BASE), null);
+  assert.match(lab.describeRule(r), /bps vs the start price/);
+  assert.equal(lab.validateRule({ minLeadBps: 50, maxLeadBps: 10 }).ok, false);
+});
+
+test("auto mode: adds proven rules, swaps in a better one, drops a loser, one change per 3h", async () => {
+  lab._reset();
+  const t0 = BASE;
+  const good = (i, w) => win(i, w, [snap()]);
+  await lab.addProposal({ name: "a", rule: RULE }, t0);
+  await lab.addProposal({ name: "b", rule: { ...RULE, priceMax: 0.70 } }, t0);
+  for (let i = 1; i <= 25; i++) lab._push(good(i, i % 4 ? 1 : 0));          // both win 75% at 64¢
+  let r = await lab.autoManage(t0 + 30 * 900_000);
+  assert.equal(r.changed, true); assert.equal(lab.lineup().length, 1);
+  assert.equal((await lab.autoManage(t0 + 31 * 900_000)).changed, false, "cooldown");
+  r = await lab.autoManage(t0 + 31 * 900_000 + 3 * 3600_000);
+  assert.equal(r.changed, true); assert.equal(lab.lineup().length, 2, "room for a second winner");
+  // Everything turns into a loser: the first member is dropped once it has 30 losing bets since joining.
+  for (let i = 60; i <= 100; i++) lab._push(good(i, 0));
+  r = await lab.autoManage(t0 + 200 * 900_000);
+  assert.match(r.msg, /dropped/); assert.equal(lab.lineup().length, 1);
+  assert.ok(lab.labStatus(RULE).autoLog.length >= 3);
+});
+
+test("lineup by hand: full lineup replaces its weakest member", async () => {
+  lab._reset();
+  const t0 = BASE;
+  for (const n of ["p1", "p2", "p3", "p4"]) await lab.addProposal({ name: n, rule: { ...RULE, priceMax: 0.66 + ["p1", "p2", "p3", "p4"].indexOf(n) * 0.02 } }, t0);
+  for (let i = 1; i <= 25; i++) lab._push(win(i, i % 4 ? 1 : 0, [snap()]));
+  for (const n of ["p1", "p2", "p3"]) assert.equal((await lab.applyProposal(n, t0 + 26 * 900_000)).ok, true);
+  const r = await lab.applyProposal("p4", t0 + 26 * 900_000);
+  assert.equal(r.ok, true); assert.ok(r.dropped); assert.equal(lab.lineup().length, lab.LINEUP_MAX);
+  assert.equal((await lab.removeFromLineup("p4")).ok, true);
+  assert.equal((await lab.applyProposal("nope")).ok, false);
 });
 
 test("TUNER: waits for data, then turns a model reply into a backtested proposal", async () => {

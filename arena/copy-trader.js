@@ -596,13 +596,38 @@ export function shadowRule(cfg = CFG) {
 }
 const LAB_KEYS = ["minPrice", "maxPrice", "preferMax", "minMsLeft", "entryWindowMs", "minShare", "minAgree", "maxAgainst", "follow", "sideOnly", "liveHours"];
 const CFG_BASE = Object.fromEntries(LAB_KEYS.map(k => [k, CFG[k]]));
-/** Put a SHADOW LAB rule on SHADOW (paper and real), or null to go back to the env settings. */
-export function applyLabRule(rule, why = "") {
-  if (!rule) { Object.assign(CFG, CFG_BASE); emit("start", `SHADOW LAB: back to the original rule: ${ruleText(VARIANTS[0])}`, {}); return shadowRule(); }
-  Object.assign(CFG, { minPrice: rule.priceMin, maxPrice: rule.priceMax, preferMax: rule.priceMax, minMsLeft: rule.minLeftSec * 1000, entryWindowMs: rule.maxLeftSec * 1000,
-    minShare: rule.minShare, minAgree: rule.minAgree, maxAgainst: rule.maxAgainst ?? null, follow: rule.follow, sideOnly: rule.side, liveHours: rule.hoursUtc || null });
-  emit("start", `SHADOW LAB rule applied${why ? ` (${why})` : ""}: ${ruleText(VARIANTS[0])}`, {});
-  return shadowRule();
+/** A SHADOW LAB rule as SHADOW config overrides. */
+export const ruleOver = rule => ({ minPrice: rule.priceMin, maxPrice: rule.priceMax, preferMax: rule.priceMax, minMsLeft: rule.minLeftSec * 1000, entryWindowMs: rule.maxLeftSec * 1000,
+  minShare: rule.minShare, minAgree: rule.minAgree, maxAgainst: rule.maxAgainst ?? null, follow: rule.follow, sideOnly: rule.side });
+/**
+ * The lineup SHADOW runs: SHADOW LAB rules, tried in order each window, first to fire takes
+ * it (paper and real). Empty = SHADOW's own rule from the env settings. With a lineup, each
+ * rule carries its own hours, so real money's hour window is lifted.
+ */
+let lineupRules = [];
+export const activeLineup = () => lineupRules;
+export function applyLineup(list = [], why = "") {
+  lineupRules = (list || []).map(l => ({ id: l.id, rule: l.rule, over: ruleOver(l.rule) }));
+  if (lineupRules.length) { CFG.liveHours = null; emit("start", `SHADOW LAB lineup${why ? ` (${why})` : ""}: ${lineupRules.map(l => l.id).join(", ")}`, {}); }
+  else { Object.assign(CFG, CFG_BASE); emit("start", `SHADOW LAB: back to the original rule: ${ruleText(VARIANTS[0])}`, {}); }
+  return lineupRules;
+}
+/** One rule on its own (kept for tools and tests): a lineup of one, or null to clear. */
+export const applyLabRule = (rule, why = "") => applyLineup(rule ? [{ id: "manual", rule }] : [], why);
+/** The longest entry window across the lineup (or SHADOW's own). */
+const entryMsNow = () => Math.max(CFG.entryWindowMs, ...lineupRules.map(l => l.over.entryWindowMs));
+/** A lineup rule's own conditions SHADOW's decision doesn't cover: hours and BTC's state. */
+function ruleConditionsOk(rule, cur, us, side, now) {
+  if (rule.hoursUtc && !inHours(new Date(cur.start).getUTCHours(), rule.hoursUtc)) return false;
+  if (!lab) return true;
+  const m = lab.marketState(us || {}, now);
+  return lab.marketOk(rule, side, m.lead, m.move);
+}
+/** Real-money results per lineup rule (bets tagged with ruleId). */
+export function liveByRule() {
+  const out = {};
+  for (const p of liveBook.closed) { if (!p.ruleId || p.won == null) continue; const g = (out[p.ruleId] ||= { n: 0, wins: 0, pnl: 0 }); g.n++; if (p.won) g.wins++; g.pnl = +(g.pnl + p.pnl).toFixed(2); }
+  return out;
 }
 let lab = null;
 /** Hand SHADOW LAB what SHADOW sees now (it keeps one snapshot per 15s, last 10 minutes). */
@@ -614,7 +639,8 @@ function labObserve(family, cur, now, book = null) {
   // in the log would make every replay too optimistic. No fresh book = no snapshot.
   const q = book && book.slug === us.slug ? book : fastQuote(us.slug, 10_000);
   if (!q || q.bid == null || q.ask == null) return;
-  lab.observe({ slug: us.slug, start: cur.start, end: cur.end, now, up: q.ask, down: +(1 - q.bid).toFixed(4), consensus: consensus(cur.votes), pSide: primarySide(cur.primary) });
+  const m = lab.marketState(us, now);
+  lab.observe({ slug: us.slug, start: cur.start, end: cur.end, now, up: q.ask, down: +(1 - q.bid).toFixed(4), consensus: consensus(cur.votes), pSide: primarySide(cur.primary), lead: m.lead, move: m.move });
 }
 
 // ── Rules run side by side ──────────────────────────────────────────
@@ -862,14 +888,24 @@ async function checkEntries(family, cur, now, book = null) {
 }
 async function entriesFor(family, cur, now, book) {
   let us = recorder?.liveQuote ? recorder.liveQuote(family, cur.end) : null;
-  if (us && us.end - now <= CFG.entryWindowMs && us.end - now >= CFG.minMsLeft)
+  if (us && us.end - now <= entryMsNow() && us.end - now >= Math.min(CFG.minMsLeft, ...lineupRules.map(l => l.over.minMsLeft)))
     us = book && book.slug === us.slug ? { ...us, bid: book.bid, ask: book.ask, t: book.t, src: "fast" } : await withBook(us);
   for (const v of activeVariants()) {
     const cfg = cfgOf(v), bk = bookOf(v.id);
     const holding = bk.open.some(p => p.family === family && Math.abs(p.end - cur.end) < 60_000);
-    const d = v.smart
-      ? decideSmart({ votes: cur.votes, us, holding, now, cfg, globalPx: cur.lastPx, safety: safetyCheck(bk, now, cfg), primary: cur.primary })
-      : decideEntry({ smartFlow: cur.smartFlow, us, holding, now, cfg });
+    const ask = c => decideSmart({ votes: cur.votes, us, holding, now, cfg: c, globalPx: cur.lastPx, safety: safetyCheck(bk, now, c), primary: cur.primary });
+    let d;
+    if (v.id === "main" && family === "btc15" && lineupRules.length) {
+      // The lineup: first rule that fires (with its hours and BTC conditions) takes the window.
+      let first = null;
+      for (const L of lineupRules) {
+        const x = ask({ ...cfg, ...L.over });
+        if (x.enter && !ruleConditionsOk(L.rule, cur, us, x.side, now)) { first ||= { enter: false, code: `cond-${L.id}`, why: `[${L.id}] hours or BTC conditions not met` }; continue; }
+        if (x.enter) { d = { ...x, ruleId: L.id }; break; }
+        first ||= { ...x, why: `[${L.id}] ${x.why}` };
+      }
+      d ||= first;
+    } else d = v.smart ? ask(cfg) : decideEntry({ smartFlow: cur.smartFlow, us, holding, now, cfg });
     if (d.enter) {
       if (v.id === "main") { cur.diag.copies++; if (CFG.live) maybeLive({ family, us, d, now }).catch(err => emit("error", `LIVE: ${err.message}`, { family, live: true })); }
       if (v.smart) {
@@ -879,7 +915,7 @@ async function entriesFor(family, cur, now, book) {
           : [...cur.votes[d.side].entries()].sort((a, b) => b[1].weight - a[1].weight)[0];
         openPaper({ v, family, us, price: d.price, now, stake: d.stake,
           trade: { wallet, name: top.name, outcome: d.side, price: top.price, usd: top.usd, why: d.primary ? "primary wallet" : judge(wallets.get(wallet), now).why },
-          extra: { tier: d.tier, primary: !!d.primary, fallback: !!d.fallback, signal: { agree: d.signal.agree, against: d.signal.against, share: d.signal.share, model: d.signal.model, global: d.signal.global, fair: d.signal.fair, edge: d.signal.edge } } });
+          extra: { tier: d.tier, primary: !!d.primary, fallback: !!d.fallback, ruleId: d.ruleId || null, signal: { agree: d.signal.agree, against: d.signal.against, share: d.signal.share, model: d.signal.model, global: d.signal.global, fair: d.signal.fair, edge: d.signal.edge } } });
       } else {
         openPaper({ v, family, us, price: d.price, now, stake: cfg.stake, trade: cur.smartBest[d.side] });
       }
@@ -990,7 +1026,7 @@ async function maybeLive({ family, us, d, now }) {
     const paid = await actualCost(pm, us.slug, r.qty, r.cost, r.fillPrice);
     const price = +(paid / r.qty).toFixed(4);
     const fee = takerFee(r.qty, price);
-    const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, price, contracts: r.qty, fee: +fee.toFixed(4),
+    const pos = { id: us.slug, usSlug: us.slug, family, end: us.end, side: d.side, tier: d.tier, ruleId: d.ruleId || null, price, contracts: r.qty, fee: +fee.toFixed(4),
       cost: +(paid + fee).toFixed(4), staked: +paid.toFixed(2), dcaUsd: size * CFG.liveDcaMult, avg: price, dca: null, openedAt: now, orderId: r.orderId || null, limit: r.fillPrice };
     liveBook.open.push(pos); liveDirty = true;
     emit("live", `REAL BUY ${d.side} BTC15: ${r.qty} shares at ${cents(price)} = $${paid.toFixed(2)} (limit ${cents(r.fillPrice)}, ${d.tier} signal)${r.viaPositions ? " (fill confirmed from positions)" : ""}`, { family, live: true, pos });
@@ -1306,8 +1342,13 @@ export async function startCopyTrader() {
     await lab.loadLab();
     recorder?.onWindowSettled(rec => { if (rec.family === "btc15") lab.settle(rec).catch(() => {}); });
     (await import("./fast-book.js")).onTick(book => labObserve("btc15", live.btc15, Date.now(), book));
-    const a = lab.appliedRule();
-    if (a?.rule) applyLabRule(a.rule, `proposal ${a.id}, applied ${new Date(a.at).toISOString().slice(0, 16)}Z`);
+    lab.setLiveSource(liveByRule);
+    if (lab.lineup().length) applyLineup(lab.lineup(), "restored after restart");
+    // Auto mode: keep the lineup made of winners (the lab rate-limits itself to one change per 3h).
+    timers.push(setInterval(async () => {
+      try { const ch = await lab.autoManage(Date.now(), (who, msg) => emit("start", `SHADOW LAB ${who}: ${msg}`, {})); if (ch.changed) applyLineup(lab.lineup(), ch.msg); }
+      catch (err) { stats.lastError = `lab auto: ${err.message}`; }
+    }, 10 * 60_000));
   } catch (err) { lab = null; stats.lastError = `shadow lab: ${err.message}`; }
   // Fast entries: every fast-book tick inside BTC15's entry window re-runs the entry check
   // with the votes so far and the second-old book.
@@ -1317,7 +1358,7 @@ export async function startCopyTrader() {
         const cur = live.btc15, now = Date.now();
         if (!cur?.market || Math.abs(cur.end - book.end) > 60_000) return;
         const left = cur.end - now;
-        if (left > CFG.entryWindowMs || left < CFG.minMsLeft) return;
+        if (left > entryMsNow() || left < 15_000) return;
         stats.fastChecks = (stats.fastChecks || 0) + 1;
         return checkEntries("btc15", cur, now, book);
       });
