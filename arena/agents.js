@@ -38,6 +38,12 @@ const BUILDERS = [
     focus: "pre-game sports moneylines: how many hours before the start to enter, favorite vs underdog, and which price bands; learn from SPORTS SHADOW (the primary wallet's copied sports bets) which leagues and bands hold value" },
 ];
 
+// AGENTS_BUILDERS=FORGE,VECTOR runs only those builders (e.g. drop DUGOUT when sports betting is off).
+const activeBuilders = () => {
+  const only = String(process.env.AGENTS_BUILDERS || "").toUpperCase().split(",").map(x => x.trim()).filter(Boolean);
+  return only.length ? BUILDERS.filter(b => only.includes(b.name)) : BUILDERS;
+};
+
 const SCHEMA = `{
   "name": "kebab-case-name-3-to-41-chars",
   "family": "btc15" | "btc60" | "sports",
@@ -250,7 +256,7 @@ export async function runCycle() {
     result.retired = await prune(lb, specs, log);
     const active = specs.filter(r => r.status === "active").length - result.retired;
     if (active >= MAX_ACTIVE) log("PRISM", `holding: ${active} active recipes (limit ${MAX_ACTIVE}); no new ones until some are retired`);
-    else for (const b of BUILDERS) {
+    else for (const b of activeBuilders()) {
       try { if (await build(b, lb, specs, log)) result.built++; }
       catch (err) { log(b.name, `error: ${err.message}`); }
       specs = await listSpecs();
@@ -277,7 +283,7 @@ export function startAgents(opts) {
   // TUNER (SHADOW's edge) runs on its own, faster schedule.
   setTimeout(() => runTuner().catch(() => {}), 4 * 60_000);
   setInterval(() => runTuner().catch(() => {}), TUNER_EVERY_MIN * 60_000);
-  console.log(`🤖 AI agents on — FORGE, VECTOR, DUGOUT, PRISM and the Council run every ${EVERY_MIN} min, TUNER (SHADOW's edge) every ${TUNER_EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
+  console.log(`🤖 AI agents on — ${activeBuilders().map(b => b.name).join(", ")}, PRISM and the Council run every ${EVERY_MIN} min, TUNER (SHADOW's edge) every ${TUNER_EVERY_MIN} min (model ${MODEL}); they can add recipes and vote, nothing else`);
 }
 
 export function _setShadowRule(fn) { getShadowRule = fn; }   // tests
