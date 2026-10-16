@@ -213,8 +213,17 @@ test("PRISM retires early losers and rules that hardly fire; a full lab replaces
 
   lab._reset();
   for (let k = 0; k < 16; k++) assert.equal((await lab.addProposal({ name: `p${k}`, rule: { ...RULE, priceMax: 0.60 + k * 0.01 } }, t0 + k * H)).ok, true);
+  assert.equal(lab.roomForProposal(t0 + 16 * H + 1), true);
   const fresh = await lab.addProposal({ name: "too-soon", rule: { ...RULE, minAgree: 3 } }, t0 + 16 * H + 1);
   assert.equal(fresh.ok, true, "the oldest ones are 6h+ old, so one is replaced");
   const retired = lab.labStatus(RULE).proposals.filter(p => p.status === "retired");
   assert.equal(retired.length, 1); assert.match(retired[0].retiredWhy, /replaced by too-soon/);
+});
+
+test("a full lab of fresh proposals has no room, so TUNER skips its model call", async () => {
+  const t0 = BASE;
+  lab._reset();
+  for (let k = 0; k < 16; k++) await lab.addProposal({ name: `f${k}`, rule: { ...RULE, priceMax: 0.60 + k * 0.01 } }, t0);
+  assert.equal(lab.roomForProposal(t0 + H), false);
+  assert.equal(lab.roomForProposal(t0 + 7 * H), true, "6h on, the weakest can be replaced");
 });

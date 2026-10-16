@@ -129,9 +129,21 @@ Propose one new recipe now.`;
 
 async function prune(lb, specs, log) {
   let retired = 0;
+  const families = new Set(activeBuilders().flatMap(b => b.families));
   for (const rec of specs.filter(r => r.status === "active")) {
+    // A family no running builder covers (sports while DUGOUT sits out) only holds a slot.
+    if (rec.spec.family && !families.has(rec.spec.family)) {
+      if (await retireSpec(rec.spec.name, `${rec.spec.family} is off: no builder covers it`)) { retired++; log("PRISM", `retired ${rec.spec.name}: ${rec.spec.family} is off`); }
+      continue;
+    }
     const row = (lb.rows || []).find(r => r.name === rec.spec.name && r.family === rec.spec.family);
     if (!row) continue;
+    if (row.all?.n >= 30 && row.all?.mean != null && row.all.mean < 0 && !(row.all?.n >= 60 && row.all.ucb >= 0)) {
+      if (await retireSpec(rec.spec.name, `losing early: ${row.all.n} trades, ${r2(row.all.mean)}/trade`)) {
+        retired++; log("PRISM", `retired ${rec.spec.name}: losing after ${row.all.n} trades (${r2(row.all.mean)}/trade)`);
+      }
+      continue;
+    }
     if (row.all?.n >= 60 && row.all?.ucb != null && row.all.ucb < 0) {
       if (await retireSpec(rec.spec.name, `losing: ${row.all.n} trades, best case ${r2(row.all.ucb)}/trade`)) {
         retired++; log("PRISM", `retired ${rec.spec.name}: ${row.all.n} trades and even the optimistic estimate loses money`);
@@ -142,7 +154,8 @@ async function prune(lb, specs, log) {
 }
 
 async function council(lb, log) {
-  const cands = (lb.rows || []).filter(r => r.verdict?.label !== "control" && (r.all?.n ?? 0) >= 30)
+  const families = new Set(activeBuilders().flatMap(b => b.families));
+  const cands = (lb.rows || []).filter(r => r.verdict?.label !== "control" && (r.all?.n ?? 0) >= 30 && families.has(r.family))
     .sort((a, b) => (b.all.lcb ?? -9) - (a.all.lcb ?? -9)).slice(0, 5);
   if (cands.length < 2) { log("ORACLE", `no vote this round: ${cands.length} strategy(ies) have 30+ trades, need 2`); return 0; }
   const voters = ["FORGE", "VECTOR", "PRISM", "DUGOUT", "WARDEN"];
@@ -192,6 +205,8 @@ export async function tune(log, labMod = null, perRun = TUNER_PER_RUN) {
   const windows = lab.labWindows().filter(w => w.outcome != null);
   if (windows.length < MIN_LAB_WINDOWS) { log("TUNER", `waiting for data: ${windows.length} SHADOW LAB windows logged, need ${MIN_LAB_WINDOWS}`); return null; }
   await lab.pruneProposals(log);
+  // Don't spend a model call on ideas the lab can't take yet.
+  if (lab.roomForProposal && !lab.roomForProposal()) { log("TUNER", "lab full: every proposal is still inside its fair-test period; skipping this run"); return null; }
   const cur = getShadowRule ? getShadowRule() : null;
   const v = lab.validateRule(cur || {});
   if (!v.ok) { log("TUNER", `can't read SHADOW's rule: ${v.error}`); return null; }
