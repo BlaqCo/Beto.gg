@@ -34,7 +34,7 @@ const KEY_PROPOSALS = "arena:shadowlab:proposals", KEY_APPLIED = "arena:shadowla
 const SNAP_EVERY_MS = 15_000, SNAP_FROM_MS = 600_000, STAKE = 10;
 export const LINEUP_MAX = Math.max(1, Math.min(5, Number(process.env.LAB_LINEUP_MAX || 3)));
 const AUTO = () => process.env.LAB_AUTO !== "false";
-const AUTO_COOLDOWN_MS = 3 * 3600_000, DROP_MIN = 30, SWAP_MARGIN = 2;
+const AUTO_COOLDOWN_MS = Math.max(30, Number(process.env.LAB_AUTO_COOLDOWN_MIN || 180)) * 60_000, DROP_MIN = 30, SWAP_MARGIN = 2;
 export const FORWARD_MIN = 20;          // forward bets before a proposal can be applied
 const MAX_ACTIVE = 16;
 
