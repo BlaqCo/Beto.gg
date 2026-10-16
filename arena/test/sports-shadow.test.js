@@ -232,3 +232,15 @@ test("US 'Who will win' game markets match by their side names", () => {
   const blind = [{ ...us[0], sides: [{ long: true, name: "Yes" }, { long: false, name: "No" }] }];
   assert.match(ss.matchUs(sig({ outcome: "Raptors" }), blind).why, /no US market/);
 });
+
+test("an evening game matches when the US slug carries the local date, a day before UTC", () => {
+  const us = [{ slug: "aec-nfl-sea-den-2026-10-15", question: "Who will win in the upcoming football event SEA Seahawks vs DEN Broncos?",
+    sides: [{ long: true, name: "Seattle Seahawks" }, { long: false, name: "Denver Broncos" }], gameStartIso: "2099-01-01T00:00:00Z", ask: 0.5, bid: 0.48 }];
+  const m = ss.matchUs(ss.toSignal(trade({ eventSlug: "nfl-sea-den-2026-10-16", slug: "nfl-sea-den-2026-10-16", title: "Seahawks vs. Broncos", outcome: "Seahawks" })), us);
+  assert.equal(m.market?.slug, "aec-nfl-sea-den-2026-10-15"); assert.equal(m.buy, "YES"); assert.equal(m.exact, true);
+  const far = ss.matchUs(ss.toSignal(trade({ eventSlug: "nfl-sea-den-2026-10-18", slug: "nfl-sea-den-2026-10-18", title: "Seahawks vs. Broncos", outcome: "Seahawks" })), us);
+  assert.ok(!far.market, "three days apart is a different game");
+  const series = [{ ...us[0], slug: "aec-nfl-sea-den-2026-10-16", sides: [{ long: true, name: "Denver Broncos" }, { long: false, name: "Seattle Seahawks" }] }, ...us];
+  const exact = ss.matchUs(ss.toSignal(trade({ eventSlug: "nfl-sea-den-2026-10-16", slug: "nfl-sea-den-2026-10-16", title: "Seahawks vs. Broncos", outcome: "Seahawks" })), series);
+  assert.equal(exact.market.slug, "aec-nfl-sea-den-2026-10-16", "the same-date game wins over the day before");
+});

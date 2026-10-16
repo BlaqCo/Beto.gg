@@ -109,7 +109,11 @@ export function matchUs(sig, markets) {
     // Same league, date and team codes: "mlb-cle-tb-2026-10-13" → codes [cle, tb], date 2026-10-13.
     const parts = ev.split("-"), date = (ev.match(/\d{4}-\d{2}-\d{2}/) || [])[0];
     const codes = parts.slice(1).filter(p => /^[a-z]{2,4}$/.test(p));
-    if (date && codes.length >= 2) cands = markets.filter(m => { const s = String(m.slug || "").toLowerCase(); return s.includes(date) && s.includes(`${sig.league}-`) && codes.every(c => s.includes(`-${c}-`) || s.endsWith(`-${c}`)); });
+    // Dates can differ by a day: global slugs use the UTC date, US slugs the US local date (evening games).
+    const near = date ? [0, -1, 1].map(d => new Date(Date.parse(date) + d * 86400_000).toISOString().slice(0, 10)) : [];
+    // Exact date first, so back-to-back games between the same teams (a baseball series) stay apart.
+    const same = d => markets.filter(m => { const s = String(m.slug || "").toLowerCase(); return s.includes(d) && s.includes(`${sig.league}-`) && codes.every(c => s.includes(`-${c}-`) || s.endsWith(`-${c}`)); });
+    if (date && codes.length >= 2) for (const d of near) { cands = same(d); if (cands.filter(m => sideTeams(m)).length) break; }
   }
   // Only "Will <team> win ..." markets (spreads and totals ask other questions).
   cands = cands.filter(m => sideTeams(m));
