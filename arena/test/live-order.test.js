@@ -83,3 +83,15 @@ test("real-order slip: none past the band's top unless COPY_LIVE_OVER_CAP allows
     assert.equal(ct.liveSlipFor(0.72), 0.02, "up to 74¢ at the top of the band"); assert.equal(ct.liveSlipFor(0.60), 0.03);
   } finally { Object.assign(ct.CFG, keep); }
 });
+
+test("owner real-money band: never pays past COPY_LIVE_MAX_PRICE, whatever the rule's band", async () => {
+  const ct = await import("../copy-trader.js");
+  const keep = { maxPrice: ct.CFG.maxPrice, liveSlip: ct.CFG.liveSlip, liveOverCap: ct.CFG.liveOverCap, liveEntryMs: ct.CFG.liveEntryMs, liveMinPrice: ct.CFG.liveMinPrice, liveMaxPrice: ct.CFG.liveMaxPrice };
+  try {
+    Object.assign(ct.CFG, { maxPrice: 0.92, liveSlip: 0.03, liveOverCap: 0.02, liveEntryMs: 240_000, liveMinPrice: 0.65, liveMaxPrice: 0.89 });
+    assert.equal(ct.liveSlipFor(0.89), 0, "at the top: no slip");
+    assert.equal(ct.liveSlipFor(0.87), 0.02, "up to 89¢, not the rule's 92¢");
+    assert.equal(ct.liveSlipFor(0.70), 0.03);
+    assert.deepEqual(ct.liveOver(), { minPrice: 0.65, maxPrice: 0.89, preferMax: 0.89, entryWindowMs: 240_000, minMsLeft: ct.CFG.minMsLeft });
+  } finally { Object.assign(ct.CFG, keep); }
+});

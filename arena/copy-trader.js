@@ -82,6 +82,11 @@ export const CFG = {
   liveMaxLoss: env("COPY_LIVE_MAX_LOSS", 15),   // real trading switches itself off at this total loss
   liveSlip: env("COPY_LIVE_SLIP", 0.03),        // real orders may pay this much over the quote...
   liveOverCap: env("COPY_LIVE_OVER_CAP", 0),    // ...and at most this much over the band's top (maxPrice)
+  // Owner's real-money timing and price band. When COPY_LIVE_ENTRY_SECONDS is set, real bets take the
+  // lineup's signal (side, agreement) but enter only this close to the end, inside this band, at the
+  // first moment it qualifies (the favorite usually gets dearer toward the close). Paper is unchanged.
+  liveEntryMs: process.env.COPY_LIVE_ENTRY_SECONDS ? env("COPY_LIVE_ENTRY_SECONDS", 240) * 1000 : null,
+  liveMinPrice: env("COPY_LIVE_MIN_PRICE", 0.65), liveMaxPrice: env("COPY_LIVE_MAX_PRICE", 0.89),
   // UTC hours real bets may be placed, "start-end" (end not included); "" = any hour. Paper keeps
   // betting around the clock so the hours can be re-checked. Oct 10-11: 00-12 UTC won 25 of 30,
   // 12-24 UTC won 11 of 27 (US trading hours, when BTC swings late in the window).
@@ -616,7 +621,7 @@ export function applyLineup(list = [], why = "") {
 /** One rule on its own (kept for tools and tests): a lineup of one, or null to clear. */
 export const applyLabRule = (rule, why = "") => applyLineup(rule ? [{ id: "manual", rule }] : [], why);
 /** The longest entry window across the lineup (or SHADOW's own). */
-const entryMsNow = () => Math.max(CFG.entryWindowMs, ...lineupRules.map(l => l.over.entryWindowMs));
+const entryMsNow = () => Math.max(CFG.entryWindowMs, CFG.liveEntryMs || 0, ...lineupRules.map(l => l.over.entryWindowMs));
 /** A lineup rule's own conditions SHADOW's decision doesn't cover: hours and BTC's state. */
 function ruleConditionsOk(rule, cur, us, side, now) {
   if (rule.hoursUtc && !inHours(new Date(cur.start).getUTCHours(), rule.hoursUtc)) return false;
@@ -908,7 +913,7 @@ async function entriesFor(family, cur, now, book) {
       d ||= first;
     } else d = v.smart ? ask(cfg) : decideEntry({ smartFlow: cur.smartFlow, us, holding, now, cfg });
     if (d.enter) {
-      if (v.id === "main") { cur.diag.copies++; if (CFG.live) maybeLive({ family, us, d, now }).catch(err => emit("error", `LIVE: ${err.message}`, { family, live: true })); }
+      if (v.id === "main") { cur.diag.copies++; if (CFG.live && !CFG.liveEntryMs) maybeLive({ family, us, d, now }).catch(err => emit("error", `LIVE: ${err.message}`, { family, live: true })); }
       if (v.smart) {
         // The wallet "copied": the primary wallet when following it, else the heaviest smart voter on our side.
         const [wallet, top] = d.primary
@@ -921,6 +926,26 @@ async function entriesFor(family, cur, now, book) {
         openPaper({ v, family, us, price: d.price, now, stake: cfg.stake, trade: cur.smartBest[d.side] });
       }
     } else if (v.id === "main" && !d.wait && !holding && !cur.skips.has(d.code)) { cur.skips.add(d.code); emit("skip", `not entering: ${d.why}`, { family }); }
+  }
+  if (CFG.live && CFG.liveEntryMs && family === "btc15") await ownerLive(family, cur, us, now).catch(err => emit("error", `LIVE: ${err.message}`, { family, live: true }));
+}
+
+/** Real money on the owner's timing: the lineup's (or SHADOW's) signal, entered in the last
+ *  COPY_LIVE_ENTRY_SECONDS at COPY_LIVE_MIN_PRICE..COPY_LIVE_MAX_PRICE, first qualifying moment. */
+export const liveOver = () => ({ minPrice: CFG.liveMinPrice, maxPrice: CFG.liveMaxPrice, preferMax: CFG.liveMaxPrice, entryWindowMs: CFG.liveEntryMs, minMsLeft: CFG.minMsLeft });
+async function ownerLive(family, cur, us, now) {
+  if (!us || us.end - now > CFG.liveEntryMs || us.end - now < CFG.minMsLeft || liveTried.has(`${family}:${us.end}`)) return;
+  const v = activeVariants().find(x => x.id === "main");
+  if (!v) return;
+  const cfg = cfgOf(v);
+  const ask = c => decideSmart({ votes: cur.votes, us, holding: false, now, cfg: c, globalPx: cur.lastPx, safety: { ok: true }, primary: cur.primary });
+  const rules = lineupRules.length ? lineupRules : [{ id: null, rule: null, over: {} }];
+  for (const L of rules) {
+    const x = ask({ ...cfg, ...L.over, ...liveOver() });
+    if (!x.enter) continue;
+    if (L.rule && !ruleConditionsOk(L.rule, cur, us, x.side, now)) continue;
+    await maybeLive({ family, us, d: { ...x, ruleId: L.id }, now });
+    return;
   }
 }
 
@@ -981,7 +1006,8 @@ export async function withBook(us) {
  * no room at all, and a fill-or-kill order at exactly 72¢ expired whenever the ask ticked up
  * (Oct 15, 05:25 UTC: two expiries on a winning-looking entry).
  */
-export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.round((CFG.maxPrice + CFG.liveOverCap - price) * 100) / 100));
+const liveTop = () => (CFG.liveEntryMs ? CFG.liveMaxPrice : CFG.maxPrice + CFG.liveOverCap);
+export const liveSlipFor = price => Math.max(0, Math.min(CFG.liveSlip, Math.round((liveTop() - price) * 100) / 100));
 
 export const liveSize = tier => (tier === "strong" ? CFG.liveStrong : tier === "weak" ? CFG.liveWeak : CFG.liveStake);
 
@@ -1022,7 +1048,8 @@ async function maybeLive({ family, us, d, now }) {
       // Usually the ask moved in the second between quote and order. One retry at the fresh
       // book price, only if it's still inside the band and the window is still open.
       const fresh = await withBook(us), px = sidePrice(d.side, fresh);
-      if (px != null && px >= CFG.minPrice && px <= CFG.maxPrice && us.end - Date.now() >= CFG.minMsLeft) {
+      const [lo, hi] = CFG.liveEntryMs ? [CFG.liveMinPrice, CFG.liveMaxPrice] : [CFG.minPrice, CFG.maxPrice];
+      if (px != null && px >= lo && px <= hi && us.end - Date.now() >= CFG.minMsLeft) {
         emit("live", `REAL order for ${d.side} didn't fill (${r.error}); retrying once at the fresh price ${cents(px)}`, { family, live: true });
         r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: px, slip: liveSlipFor(px) });
       }
@@ -1312,7 +1339,7 @@ export async function startCopyTrader() {
   const savedLive = await loadJSON(KEY_LIVE);
   if (savedLive?.closed) liveBook = { open: savedLive.open || [], closed: savedLive.closed, halted: savedLive.halted || null, missed: savedLive.missed || 0 };
   if (CFG.live) {
-    try { const bp = await (await getPm()).getBuyingPower(); emit("live", `REAL MONEY on: BTC15 only, $${CFG.liveWeak}/$${CFG.liveStake}/$${CFG.liveStrong} by signal, DCA ${CFG.liveDcaMult}x, stop ${cents(CFG.stopPrice)}, -$${CFG.liveDailyLoss}/day, switches off at -$${CFG.liveMaxLoss}. Buying power $${bp.buyingPower.toFixed(2)}${liveBook.halted ? `. HALTED: ${liveBook.halted}` : ""}`, { live: true }); }
+    try { const bp = await (await getPm()).getBuyingPower(); emit("live", `REAL MONEY on: BTC15 only, $${CFG.liveWeak}/$${CFG.liveStake}/$${CFG.liveStrong} by signal,${CFG.liveEntryMs ? ` last ${mmss(CFG.liveEntryMs)} at ${cents(CFG.liveMinPrice)}-${cents(CFG.liveMaxPrice)},` : ""} DCA ${CFG.liveDcaMult}x, stop ${cents(CFG.stopPrice)}, -$${CFG.liveDailyLoss}/day, switches off at -$${CFG.liveMaxLoss}. Buying power $${bp.buyingPower.toFixed(2)}${liveBook.halted ? `. HALTED: ${liveBook.halted}` : ""}`, { live: true }); }
     catch (err) { emit("error", `REAL MONEY on, but the Polymarket US account can't be read: ${err.message}. No real bets until it can.`, { live: true }); }
   }
   const savedEvents = await loadJSON(KEY_EVENTS);
