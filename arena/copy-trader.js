@@ -1046,7 +1046,12 @@ async function maybeLive({ family, us, d, now }) {
     const pm = await getPm(), size = liveSize(d.tier);
     const bp = await pm.getBuyingPower();
     if (!(bp.buyingPower >= size)) { emit("live", `REAL bet skipped: buying power $${(bp.buyingPower || 0).toFixed(2)} is under $${size}`, { family, live: true }); return; }
-    let r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price, slip: liveSlipFor(d.price) });
+    // Price the order at the level where the whole size fills (thin books at $18 killed
+    // fill-or-kill orders priced at the top quote), never past the band's top.
+    let slip = liveSlipFor(d.price);
+    const depth = pm.depthPrice ? await pm.depthPrice({ slug: us.slug, side: d.side, sizeUsd: size, cap: liveTop() }) : null;
+    if (depth?.price != null && depth.price > d.price + slip) slip = Math.min(+(depth.price - d.price).toFixed(2), Math.max(0, +(liveTop() - d.price).toFixed(2)));
+    let r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: d.price, slip });
     if (!r.filled) {
       // Usually the ask moved in the second between quote and order. One retry at the fresh
       // book price, only if it's still inside the band and the window is still open.
@@ -1054,7 +1059,9 @@ async function maybeLive({ family, us, d, now }) {
       const [lo, hi] = CFG.liveEntryMs ? [CFG.liveMinPrice, CFG.liveMaxPrice] : [CFG.minPrice, CFG.maxPrice];
       if (px != null && px >= lo && px <= hi && us.end - Date.now() >= CFG.minMsLeft) {
         emit("live", `REAL order for ${d.side} didn't fill (${r.error}); retrying once at the fresh price ${cents(px)}`, { family, live: true });
-        r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: px, slip: liveSlipFor(px) });
+        const dp = pm.depthPrice ? await pm.depthPrice({ slug: us.slug, side: d.side, sizeUsd: size, cap: liveTop() }) : null;
+        const rs = dp?.price != null && dp.price > px ? Math.min(+(dp.price - px).toFixed(2), Math.max(0, +(liveTop() - px).toFixed(2))) : liveSlipFor(px);
+        r = await pm.buyOutcomeFOK({ slug: us.slug, side: d.side, sizeUsd: size, price: px, slip: rs });
       }
     }
     if (!r.filled) { liveBook.missed = (liveBook.missed || 0) + 1; liveDirty = true; emit("live", `REAL order for ${d.side} at up to ${cents(Math.min(0.99, d.price + liveSlipFor(d.price)))} didn't fill (${r.error}); no real bet this window`, { family, live: true }); return; }
