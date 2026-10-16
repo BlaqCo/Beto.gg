@@ -1132,12 +1132,12 @@ export async function buyYesFOK({ slug, sizeUsd, ask, tick = 0.01, minQty = 0.01
 // ── buyOutcomeFOK ─────────────────────────────────────────────────
 // Fill-or-kill buy of either side of a market (Up = long, Down = short) for
 // SHADOW's small live mode. It has its own tripwire, separate from the sports
-// sizes above: $0.50-$20 per order, never more. Polymarket US always takes
+// sizes above: $0.50-$30 per order, never more. Polymarket US always takes
 // price.value as the LONG (Up) price, so a Down buy at X sends 1 - X.
 // `price` is what our side costs now; we pay at most price + slip.
 // `adding` = we already hold this market (a DCA add), so a position showing up
 // in the portfolio can't be taken as proof that THIS order filled.
-const SMALL_ORDER_MIN_USD = 0.5, SMALL_ORDER_MAX_USD = 20;
+const SMALL_ORDER_MIN_USD = 0.5, SMALL_ORDER_MAX_USD = 30;
 const absNum = v => { const n = Math.abs(parseFloat(v?.value ?? v)); return Number.isFinite(n) ? n : 0; };
 /** How many contracts we hold in a market, long or short (raw portfolio, any quantity field). */
 export async function heldQty(slug) {
