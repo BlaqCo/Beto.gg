@@ -244,3 +244,16 @@ test("an evening game matches when the US slug carries the local date, a day bef
   const exact = ss.matchUs(ss.toSignal(trade({ eventSlug: "nfl-sea-den-2026-10-16", slug: "nfl-sea-den-2026-10-16", title: "Seahawks vs. Broncos", outcome: "Seahawks" })), series);
   assert.equal(exact.market.slug, "aec-nfl-sea-den-2026-10-16", "the same-date game wins over the day before");
 });
+
+test("REAL sports: price floor and no chasing a price that already ran", () => {
+  const save = { ...ss.LIVE };
+  Object.assign(ss.LIVE, { on: true, minPx: 0.63, maxPx: 0.9, maxChase: 0.10 });
+  ss._set({ halted: () => null });
+  const m = { exact: true };
+  try {
+    process.env.SPORTS_LIVE_REQUIRE_RECORD = "false";
+    assert.match(ss.liveBlock({ px: 0.55, theirPx: 0.55, usSlug: "a" }, m), /outside 63-90¢/);
+    assert.equal(ss.liveBlock({ px: 0.70, theirPx: 0.66, usSlug: "b" }, m), null);
+    assert.match(ss.liveBlock({ px: 0.80, theirPx: 0.64, usSlug: "c" }, m), /ran more than 10¢ past the wallet's 64¢/);
+  } finally { Object.assign(ss.LIVE, save); delete process.env.SPORTS_LIVE_REQUIRE_RECORD; }
+});
