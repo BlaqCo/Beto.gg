@@ -255,7 +255,12 @@ export async function addProposal({ name, rule, rationale, author, parent = null
   if (!v.ok) return { ok: false, error: v.error };
   const id = slugify(name) || `p-${now}`;
   if (state.proposals.some(p => p.id === id)) return { ok: false, error: `name ${id} already used` };
-  if (state.proposals.filter(p => p.status === "active").length >= MAX_ACTIVE) return { ok: false, error: `${MAX_ACTIVE} active proposals already` };
+  if (state.proposals.filter(p => p.status === "active").length >= MAX_ACTIVE) {
+    // Full: make room by retiring the weakest proposal that has had a fair chance, rather than refusing new ideas.
+    const out = weakestProposal(now);
+    if (!out) return { ok: false, error: `${MAX_ACTIVE} active proposals already, none old enough to replace` };
+    out.p.status = "retired"; out.p.retiredWhy = `replaced by ${id}: weakest (${out.why})`;
+  }
   const same = state.proposals.find(p => p.status === "active" && JSON.stringify(p.rule) === JSON.stringify(v.rule));
   if (same) return { ok: false, error: `same rule as ${same.id}` };
   const p = { id, rule: v.rule, rationale: String(rationale || "").slice(0, 300), author: author || "you", createdAt: now, status: "active",
@@ -281,12 +286,28 @@ export function scoreProposal(p, windows = state.windows) {
     applyWhy: canApply ? null : fwd.n < FORWARD_MIN ? `needs ${FORWARD_MIN - fwd.n} more forward bets` : "losing on forward bets" };
 }
 
-/** PRISM's rule: 40+ forward bets and even the optimistic end of the range loses. */
-export async function pruneProposals(log = () => {}) {
-  let n = 0;
-  for (const p of state.proposals.filter(x => x.status === "active")) {
+const REPLACE_AFTER_MS = 6 * 3600_000, DORMANT_MS = 24 * 3600_000;
+const inLineup = id => state.lineup.some(l => l.id === id);
+/** The active proposal (not in the lineup, 6h+ old) with the worst forward result; no forward bets counts as worst. */
+function weakestProposal(now = Date.now()) {
+  let worst = null;
+  for (const p of state.proposals.filter(x => x.status === "active" && !inLineup(x.id) && now - x.createdAt >= REPLACE_AFTER_MS)) {
     const f = backtest(p.rule, state.windows, { since: p.createdAt });
-    if (f.n >= 40 && f.ucb != null && f.ucb < 0) { p.status = "retired"; p.retiredWhy = `losing: ${f.n} forward bets, best case ${f.ucb}/bet`; n++; log("PRISM", `retired SHADOW proposal ${p.id}: ${p.retiredWhy}`); }
+    const score = f.n ? f.perBet : -1e9 + f.n;
+    if (!worst || score < worst.score) worst = { p, score, why: f.n ? `${f.n} forward bets, ${f.perBet}/bet` : "no forward bets yet" };
+  }
+  return worst;
+}
+
+/** PRISM's rules: retire proposals that are clearly losing, or that hardly ever fire, so new ideas get tested. */
+export async function pruneProposals(log = () => {}, now = Date.now()) {
+  let n = 0;
+  const retire = (p, why) => { p.status = "retired"; p.retiredWhy = why; n++; log("PRISM", `retired SHADOW proposal ${p.id}: ${why}`); };
+  for (const p of state.proposals.filter(x => x.status === "active" && !inLineup(x.id))) {
+    const f = backtest(p.rule, state.windows, { since: p.createdAt });
+    if (f.n >= 40 && f.ucb != null && f.ucb < 0) retire(p, `losing: ${f.n} forward bets, best case ${f.ucb}/bet`);
+    else if (f.n >= 15 && f.perBet < 0) retire(p, `losing early: ${f.n} forward bets, ${f.perBet}/bet`);
+    else if (now - p.createdAt >= DORMANT_MS && f.n < 3) retire(p, `too rare: ${f.n} forward bets in ${Math.round((now - p.createdAt) / 3600_000)}h`);
   }
   if (n) await saveJSON(KEY_PROPOSALS, state.proposals);
   return n;

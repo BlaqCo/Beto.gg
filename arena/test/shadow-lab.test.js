@@ -199,3 +199,22 @@ test("signal log keeps a window whose result arrives after the next window has s
   await lab.settle({ slug: "w2", outcome: 0 });
   assert.equal(lab.labWindows().length, 2, "the current window settles too");
 });
+
+test("PRISM retires early losers and rules that hardly fire; a full lab replaces its weakest", async () => {
+  const t0 = BASE - 30 * H;
+  lab._reset();
+  await lab.addProposal({ name: "early-loser", rule: RULE }, t0);
+  await lab.addProposal({ name: "never-fires", rule: { ...RULE, minAgree: 9 } }, t0);
+  for (let i = 1; i <= 16; i++) lab._push(win(i, i % 4 ? 0 : 1, [snap()]));   // 25% wins at 64¢
+  assert.equal(await lab.pruneProposals(() => {}, BASE), 2);
+  const st = Object.fromEntries(lab.labStatus(RULE).proposals.map(p => [p.id, p.retiredWhy || p.status]));
+  assert.match(st["early-loser"], /losing early: 16 forward bets/);
+  assert.match(st["never-fires"], /too rare: 0 forward bets/);
+
+  lab._reset();
+  for (let k = 0; k < 16; k++) assert.equal((await lab.addProposal({ name: `p${k}`, rule: { ...RULE, priceMax: 0.60 + k * 0.01 } }, t0 + k * H)).ok, true);
+  const fresh = await lab.addProposal({ name: "too-soon", rule: { ...RULE, minAgree: 3 } }, t0 + 16 * H + 1);
+  assert.equal(fresh.ok, true, "the oldest ones are 6h+ old, so one is replaced");
+  const retired = lab.labStatus(RULE).proposals.filter(p => p.status === "retired");
+  assert.equal(retired.length, 1); assert.match(retired[0].retiredWhy, /replaced by too-soon/);
+});
