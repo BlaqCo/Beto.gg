@@ -95,3 +95,15 @@ test("owner real-money band: never pays past COPY_LIVE_MAX_PRICE, whatever the r
     assert.deepEqual(ct.liveOver(), { minPrice: 0.65, maxPrice: 0.89, preferMax: 0.89, entryWindowMs: 240_000, minMsLeft: ct.CFG.minMsLeft });
   } finally { Object.assign(ct.CFG, keep); }
 });
+
+test("depth pricing: the level where the whole size fills, capped", async () => {
+  const pm = await import("../../polymarket-us.js");
+  const book = { marketData: { offers: [{ px: { value: "0.70" }, qty: "10" }, { px: { value: "0.72" }, qty: "10" }, { px: { value: "0.90" }, qty: "100" }],
+    bids: [{ px: { value: "0.28" }, qty: "5" }, { px: { value: "0.25" }, qty: "50" }] } };
+  assert.deepEqual(pm.depthPriceFrom(book, "Up", 5, 0.89), { price: 0.70, depthUsd: 7 });
+  assert.deepEqual(pm.depthPriceFrom(book, "Up", 12, 0.89), { price: 0.72, depthUsd: 14.2 });
+  assert.equal(pm.depthPriceFrom(book, "Up", 18, 0.89).price, null, "not enough under 89¢");
+  // Down buys at 1 - bid: 72¢ for 5, then 75¢.
+  assert.deepEqual(pm.depthPriceFrom(book, "Down", 18, 0.89), { price: 0.75, depthUsd: 41.1 });
+  assert.equal(pm.depthPriceFrom({}, "Up", 5), null);
+});

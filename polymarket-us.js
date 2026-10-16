@@ -1146,6 +1146,33 @@ export async function heldQty(slug) {
   if (!p) return 0;
   return Math.max(...["qtyBoughtDecimal", "netPositionDecimal", "qtyBought", "netPosition", "qtySoldDecimal", "qtySold", "quantity"].map(k => absNum(p[k])));
 }
+/**
+ * The price at which sizeUsd of `side` fills right now, read from the book's levels
+ * (Up buys the asks; Down buys at 1 - bid). { price, depthUsd } or null when the book
+ * can't be read. price is null when the whole size isn't there at or under `cap`.
+ */
+export function depthPriceFrom(book, side, sizeUsd, cap = 0.99) {
+  const d = book?.marketData || book || {};
+  const lv = side === "Up"
+    ? (d.offers || d.asks || []).map(l => ({ px: amountVal(l.px ?? l.price), qty: Number(l.qty ?? l.quantity ?? 0) }))
+    : (d.bids || []).map(l => { const b = amountVal(l.px ?? l.price); return { px: b == null ? null : +(1 - b).toFixed(4), qty: Number(l.qty ?? l.quantity ?? 0) }; });
+  const levels = lv.filter(l => l.px > 0 && l.px < 1 && l.qty > 0).sort((a, b) => a.px - b.px);
+  if (!levels.length) return null;
+  let usd = 0;
+  for (const l of levels) {
+    if (l.px > cap + 1e-9) break;
+    usd += l.px * l.qty;
+    if (usd >= sizeUsd - 1e-9) return { price: l.px, depthUsd: +usd.toFixed(2) };
+  }
+  return { price: null, depthUsd: +usd.toFixed(2) };
+}
+export async function depthPrice({ slug, side, sizeUsd, cap }) {
+  try {
+    const { data } = await axios.get(`${GATEWAY}/v1/markets/${encodeURIComponent(slug)}/book`, { timeout: 5_000 });
+    return depthPriceFrom(data, side, sizeUsd, cap);
+  } catch { return null; }
+}
+
 export async function buyOutcomeFOK({ slug, side, sizeUsd, price, slip = 0.01, minQty = 0.01, adding = false }) {
   if (!(sizeUsd >= SMALL_ORDER_MIN_USD && sizeUsd <= SMALL_ORDER_MAX_USD)) {
     console.log(`🛑 [TRIPWIRE] small order $${sizeUsd} outside $${SMALL_ORDER_MIN_USD}-$${SMALL_ORDER_MAX_USD} REFUSED | ${slug}`);
