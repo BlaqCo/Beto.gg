@@ -36,7 +36,7 @@ export const LINEUP_MAX = Math.max(1, Math.min(5, Number(process.env.LAB_LINEUP_
 const AUTO = () => process.env.LAB_AUTO !== "false";
 const AUTO_COOLDOWN_MS = Math.max(30, Number(process.env.LAB_AUTO_COOLDOWN_MIN || 180)) * 60_000, DROP_MIN = 30, SWAP_MARGIN = 2;
 export const FORWARD_MIN = 20;          // forward bets before a proposal can be applied
-const MAX_ACTIVE = 16;
+const MAX_ACTIVE = Math.max(4, Number(process.env.LAB_MAX_PROPOSALS || 16));
 
 // ── Rules ────────────────────────────────────────────────────────────
 /** Allowed ranges. Everything outside is clamped or rejected, so an agent can't break SHADOW. */
@@ -286,7 +286,7 @@ export function scoreProposal(p, windows = state.windows) {
     applyWhy: canApply ? null : fwd.n < FORWARD_MIN ? `needs ${FORWARD_MIN - fwd.n} more forward bets` : "losing on forward bets" };
 }
 
-const REPLACE_AFTER_MS = 6 * 3600_000, DORMANT_MS = 24 * 3600_000;
+const REPLACE_AFTER_MS = Math.max(60, Number(process.env.LAB_REPLACE_AFTER_MIN || 360)) * 60_000, DORMANT_MS = 24 * 3600_000;
 const inLineup = id => state.lineup.some(l => l.id === id);
 /** The active proposal (not in the lineup, 6h+ old) with the worst forward result; no forward bets counts as worst. */
 function weakestProposal(now = Date.now()) {
@@ -297,6 +297,12 @@ function weakestProposal(now = Date.now()) {
     if (!worst || score < worst.score) worst = { p, score, why: f.n ? `${f.n} forward bets, ${f.perBet}/bet` : "no forward bets yet" };
   }
   return worst;
+}
+
+/** Room for a new proposal right now: a free slot, or one old enough to replace. */
+export function roomForProposal(now = Date.now()) {
+  const active = state.proposals.filter(p => p.status === "active").length;
+  return active < MAX_ACTIVE || !!weakestProposal(now);
 }
 
 /** PRISM's rules: retire proposals that are clearly losing, or that hardly ever fire, so new ideas get tested. */
