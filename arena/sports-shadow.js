@@ -48,7 +48,10 @@ export function uncopyable(s, leagues) {
 export const LEAGUES = ["mlb", "nba", "nfl", "nhl", "wnba", "ncaaf", "ncaab", "cfb", "cbb", "epl", "laliga", "la-liga", "seriea", "serie-a", "bundesliga", "ligue1", "ligue-1", "mls", "ucl", "uel", "ufc", "atp", "wta"];
 const envNum = (k, d) => { const v = Number(process.env[k]); return process.env[k] != null && process.env[k] !== "" && Number.isFinite(v) ? v : d; };
 export const LIVE = { on: process.env.SPORTS_LIVE === "true", stake: envNum("SPORTS_LIVE_STAKE", 1), dailyLoss: envNum("SPORTS_LIVE_DAILY_LOSS", 5),
-  maxLoss: envNum("SPORTS_LIVE_MAX_LOSS", 10), minPx: 0.10, maxPx: 0.90, slip: 0.02 };
+  maxLoss: envNum("SPORTS_LIVE_MAX_LOSS", 10), minPx: envNum("SPORTS_LIVE_MIN_PRICE", 0.10), maxPx: envNum("SPORTS_LIVE_MAX_PRICE", 0.90), slip: 0.02,
+  // Copy bets placed after the start too (in-game), but never pay more than this over the wallet's own price.
+  inGame: process.env.SPORTS_IN_GAME === "true", maxChase: envNum("SPORTS_MAX_CHASE", 0.10) };
+const when = () => (LIVE.inGame ? "pre-game or in-game" : "pre-game");
 const THREE_WAY = new Set(["epl", "laliga", "la-liga", "seriea", "serie-a", "bundesliga", "ligue1", "ligue-1", "mls", "ucl", "uel"]);
 
 const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -177,7 +180,7 @@ async function poll(now = Date.now()) {
     const m = matchUs(s, list);
     if (!m.market) { miss(s, m.why); continue; }
     const start = Date.parse(m.market.gameStartIso || "");
-    if (Number.isFinite(start) && start <= now) { miss(s, `game already started (${m.market.slug}); pre-game only`); continue; }
+    if (!LIVE.inGame && Number.isFinite(start) && start <= now) { miss(s, `game already started (${m.market.slug}); pre-game only`); continue; }
     if (state.open.concat(state.closed).some(b => b.wallet === s.wallet && b.usSlug === m.market.slug)) continue;   // one bet per wallet per market
     let ask = m.market.ask, bid = m.market.bid;
     try { const b = await pm.getBBO(m.market.slug); if (b?.ask > 0 && b?.bid > 0) { ask = b.ask; bid = b.bid; } } catch { /* list price */ }
@@ -215,6 +218,7 @@ export function liveBlock(bet, m, now = Date.now()) {
     }
   }
   if (bet.px < LIVE.minPx || bet.px > LIVE.maxPx) return `price ${Math.round(bet.px * 100)}¢ is outside ${Math.round(LIVE.minPx * 100)}-${Math.round(LIVE.maxPx * 100)}¢`;
+  if (bet.theirPx > 0 && bet.px > bet.theirPx + LIVE.maxChase + 1e-9) return `price ${Math.round(bet.px * 100)}¢ ran more than ${Math.round(LIVE.maxChase * 100)}¢ past the wallet's ${Math.round(bet.theirPx * 100)}¢`;
   const t = liveTotals(now);
   if (t.pnl <= -LIVE.maxLoss) return `total real sports loss $${(-t.pnl).toFixed(2)} reached the -$${LIVE.maxLoss} limit`;
   if (t.today <= -LIVE.dailyLoss) return `today's real sports loss $${(-t.today).toFixed(2)} reached the -$${LIVE.dailyLoss} daily limit`;
@@ -290,7 +294,7 @@ export function setScoutedWallets(list = []) {
 
 export function sportsShadowStatus() {
   return { enabled: state.enabled, wallets: state.wallets, base: state.base, scouted: state.scouted, skipped: state.skipped, lastPollAt: state.lastPollAt, lastError: state.lastError, usListAt: pm?.cachedSportsMoneylines?.()?.at || null,
-    live: { on: LIVE.on, stake: LIVE.stake, dailyLoss: LIVE.dailyLoss, maxLoss: LIVE.maxLoss, halted: isHalted() || null, missed: state.live.missed, ...liveTotals(),
+    live: { on: LIVE.on, stake: LIVE.stake, dailyLoss: LIVE.dailyLoss, maxLoss: LIVE.maxLoss, minPx: LIVE.minPx, maxPx: LIVE.maxPx, when: when(), halted: isHalted() || null, missed: state.live.missed, ...liveTotals(),
       open: state.live.open.slice(-20).reverse(), recent: state.live.closed.slice(-20).reverse() },
     summary: summary(state.closed), open: state.open.slice(-20).reverse(), recent: state.closed.slice(-20).reverse(), misses: state.misses.slice(-15).reverse(), events: events.slice(-30) };
 }
@@ -311,7 +315,7 @@ export async function startSportsShadow({ wallets, halted }) {
   const run = async () => { try { await poll(); await settleOpen(); state.lastError = null; } catch (err) { state.lastError = err.message; } };
   setTimeout(run, 30_000);
   setInterval(run, POLL_MS);
-  if (LIVE.on) console.log(`🏟 SPORTS SHADOW REAL MONEY on: $${LIVE.stake} per copied bet (name-matched, pre-game, 10-90¢), -$${LIVE.dailyLoss}/day, off at -$${LIVE.maxLoss}`);
+  if (LIVE.on) console.log(`🏟 SPORTS SHADOW REAL MONEY on: $${LIVE.stake} per copied bet (name-matched, ${when()}, ${Math.round(LIVE.minPx * 100)}-${Math.round(LIVE.maxPx * 100)}¢), -$${LIVE.dailyLoss}/day, off at -$${LIVE.maxLoss}`);
   console.log(`🏟 SPORTS SHADOW on: practice copies of ${state.wallets.length} wallet(s)' sports bets onto Polymarket US, checked every ${POLL_MS / 1000}s`);
 }
 
