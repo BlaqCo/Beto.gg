@@ -940,13 +940,16 @@ async function ownerLive(family, cur, us, now) {
   const cfg = cfgOf(v);
   const ask = c => decideSmart({ votes: cur.votes, us, holding: false, now, cfg: c, globalPx: cur.lastPx, safety: { ok: true }, primary: cur.primary });
   const rules = lineupRules.length ? lineupRules : [{ id: null, rule: null, over: {} }];
+  let first = null;
   for (const L of rules) {
     const x = ask({ ...cfg, ...L.over, ...liveOver() });
-    if (!x.enter) continue;
-    if (L.rule && !ruleConditionsOk(L.rule, cur, us, x.side, now)) continue;
+    if (!x.enter) { first ||= { code: x.code, why: `${L.id ? `[${L.id}] ` : ""}${x.why}`, wait: x.wait }; continue; }
+    if (L.rule && !ruleConditionsOk(L.rule, cur, us, x.side, now)) { first ||= { code: "cond", why: `[${L.id}] hours or BTC conditions not met` }; continue; }
     await maybeLive({ family, us, d: { ...x, ruleId: L.id }, now });
     return;
   }
+  // Say once per reason per window why real money passed in the last minutes.
+  if (first && !first.wait && !cur.skips.has(`live-${first.code}`)) { cur.skips.add(`live-${first.code}`); emit("live", `REAL (last ${mmss(CFG.liveEntryMs)}, ${cents(CFG.liveMinPrice)}-${cents(CFG.liveMaxPrice)}) not entering: ${first.why}`, { family, live: true }); }
 }
 
 async function workScoreQueue(now) {
