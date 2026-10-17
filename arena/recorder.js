@@ -76,12 +76,27 @@ export function quoteFromListing(m) {
   return { bid, ask };
 }
 
+const LISTING_PAGE = 500, LISTING_PAGES = 6;
+let lastListingSig = "";
 async function refreshListing(now) {
   if (now - listing.ts < LISTING_MS) return false;
   try {
-    const res = await axios.get(`${GATEWAY}/v1/markets`, { params: { categories: "crypto", closed: false, limit: 500 }, timeout: 12_000 });
-    const markets = Array.isArray(res.data) ? res.data : (res.data?.markets || []);
+    // Page through every open crypto market: with more than one page listed, the live
+    // 15-minute window can sort past the first 500 (Oct 17: BTC15 vanished, BTC60 stayed).
+    const markets = [], seen = new Set();
+    for (let page = 0; page < LISTING_PAGES; page++) {
+      const params = { categories: "crypto", closed: false, limit: LISTING_PAGE };
+      if (page) params.offset = page * LISTING_PAGE;
+      const res = await axios.get(`${GATEWAY}/v1/markets`, { params, timeout: 12_000 });
+      const batch = Array.isArray(res.data) ? res.data : (res.data?.markets || []);
+      let added = 0;
+      for (const m of batch) { const k = m.slug ?? m.id; if (k == null || seen.has(k)) continue; seen.add(k); markets.push(m); added++; }
+      if (batch.length < LISTING_PAGE || !added) break;   // last page, or the API ignores offset
+    }
     listing = { ts: now, markets };
+    const counts = markets.reduce((a, m) => { const f = familyOf(m); if (f) a[f] = (a[f] || 0) + 1; return a; }, {});
+    const sig = `${markets.length}|${counts.btc15 || 0}|${counts.btc60 || 0}`;
+    if (sig !== lastListingSig) { lastListingSig = sig; console.log(`  🎞 [arena] US crypto listing: ${markets.length} open markets, ${counts.btc15 || 0} BTC 15-min and ${counts.btc60 || 0} BTC 1-hour windows`); }
     return true;
   } catch (err) {
     stats.lastError = `listing: ${err.message}`;
